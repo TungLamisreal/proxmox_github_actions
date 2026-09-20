@@ -24,4 +24,9 @@ jobs:
         # Chạy Terraform đẻ/cập nhật 8 máy ảo
         run: terraform apply -auto-approve
 
-      # Giai đoạn Ansible sẽ được bổ sung vào đây sau khi chúng ta viết xong Playbook cho Tunnels
+      - name: Ansible - Config Zero Trust Tunnels
+        working-directory: ./ansible-iac
+        run: |
+          # Tạm thời tắt check host key để không bị hỏi Yes/No khi SSH
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible-playbook -i inventory.ini setup_tunnels.yml

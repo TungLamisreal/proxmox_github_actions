@@ -1,0 +1,58 @@
+---
+- name: Setup Zero Trust Tunnels (Official APT Method)
+  hosts: tunnels
+  become: yes
+  tasks:
+    - name: Doi may ao san sang ket noi SSH
+      wait_for_connection:
+        delay: 5
+        timeout: 300
+
+    - name: Cap nhat APT Cache va cai dat cong cu tien quyet
+      apt:
+        name:
+          - curl
+          - wget
+          - gnupg2
+          - ca-certificates
+        update_cache: yes
+        state: present
+
+    - name: Tao thu muc chua GPG key (chmod 0755)
+      file:
+        path: /usr/share/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Tai GPG Key cua Cloudflare
+      get_url:
+        url: https://pkg.cloudflare.com/cloudflare-public-v2.gpg
+        dest: /usr/share/keyrings/cloudflare-public-v2.gpg
+        mode: '0644'
+
+    - name: Them Cloudflare APT Repository
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/cloudflare-public-v2.gpg] https://pkg.cloudflare.com/cloudflared any main"
+        state: present
+        filename: cloudflared
+
+    - name: Cai dat cloudflared tu Repository
+      apt:
+        name: cloudflared
+        state: latest
+        update_cache: yes
+
+    - name: Kich hoat Cloudflare Tunnel Agent (Cai dat Service)
+      command: cloudflared service install eyJhIjoiYWEyOTFiNGI3YzEyZjVkMGFjMDg5OWQxNWNmNDMwZWUiLCJ0IjoiMjI0YWM0OTgtZjg2ZS00NDE0LWI3MzQtZjcyMTUzYWEwMjE5IiwicyI6IlptRTBaVGMzTldFdFlqSTFOUzAwWmpreUxXSTJZV1V0T0Rjd00yWXpNRGxsT1RrNCJ9
+      args:
+        # Thuoc tinh creates giup Ansible biet rang neu file service da ton tai thi khong chay lai lenh nay (Idempotent)
+        creates: /etc/systemd/system/cloudflared.service
+      notify: Restart Cloudflared
+
+  handlers:
+    - name: Restart Cloudflared
+      systemd:
+        name: cloudflared
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
