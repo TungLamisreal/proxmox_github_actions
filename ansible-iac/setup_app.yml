@@ -35,7 +35,7 @@
       wait_for_connection: { delay: 5, timeout: 300 }
 
     - name: Cai dat Nginx (Proxy) va Keepalived
-      apt: { name: ['nginx', 'keepalived'], state: present }
+      apt: { name: ['nginx', 'keepalived'], state: present, update_cache: yes }
 
     - name: Cho phep bind IP Ao (Non-local bind)
       sysctl:
