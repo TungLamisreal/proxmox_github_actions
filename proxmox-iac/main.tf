@@ -36,6 +36,9 @@ resource "proxmox_lxc" "observer" {
   cores        = 2
   memory       = 2048 
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+  
+  start  = true
+  onboot = true
 
   features { nesting = true }
 
@@ -67,6 +70,9 @@ resource "proxmox_lxc" "tunnels" {
   memory       = 512
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
 
+  start  = true
+  onboot = true
+
   features { nesting = true }
 
   rootfs {
@@ -95,6 +101,9 @@ resource "proxmox_lxc" "loadbalancer" {
   cores        = 1
   memory       = 1024
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+
+  start  = true
+  onboot = true
 
   features { nesting = true }
 
@@ -128,6 +137,9 @@ resource "proxmox_lxc" "backend" {
   cores        = 2
   memory       = 1024
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+
+  start  = true
+  onboot = true
 
   features { nesting = true }
 
