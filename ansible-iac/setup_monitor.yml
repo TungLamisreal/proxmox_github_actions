@@ -1,0 +1,70 @@
+---
+# ==========================================
+# PLAY 1: RẢI ĐIỆP VIÊN (NODE EXPORTER) LÊN TOÀN HỆ THỐNG
+# ==========================================
+- name: Deploy Node Exporters to ALL machines
+  hosts: proxmox_project
+  become: yes
+  tasks:
+    - name: Cai dat Prometheus Node Exporter tu kho Debian
+      apt:
+        name: prometheus-node-exporter
+        state: present
+        update_cache: yes
+
+    - name: Dam bao Node Exporter luon chay
+      systemd:
+        name: prometheus-node-exporter
+        state: started
+        enabled: yes
+
+# ==========================================
+# PLAY 2: XÂY DỰNG TRẠM CHỈ HUY OBSERVER
+# ==========================================
+- name: Setup Prometheus and Grafana on Observer Node
+  hosts: observer
+  become: yes
+  tasks:
+    - name: Cai dat Prometheus
+      apt: { name: prometheus, state: present }
+
+    - name: Cau hinh Prometheus tu dong quet toan bo may ao hien co
+      copy:
+        dest: /etc/prometheus/prometheus.yml
+        content: |
+          global:
+            scrape_interval: 15s
+          scrape_configs:
+            - job_name: 'proxmox_infrastructure'
+              static_configs:
+                - targets:
+                  # Vòng lặp Jinja2: Tự động lôi tất cả IP từ inventory vào đây
+                  {% for host in groups['all'] %}
+                  - '{{ host }}:9100'
+                  {% endfor %}
+      notify: Restart Prometheus
+
+    - name: Tao thu muc chua GPG key cho Grafana
+      file: { path: /etc/apt/keyrings, state: directory, mode: '0755' }
+
+    - name: Tai GPG Key cua Grafana
+      get_url:
+        url: https://apt.grafana.com/gpg.key
+        dest: /etc/apt/keyrings/grafana.asc
+        mode: '0644'
+
+    - name: Them Grafana Repository
+      apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+        state: present
+        filename: grafana
+
+    - name: Cai dat Grafana (Dashboard)
+      apt: { name: grafana, state: present, update_cache: yes }
+
+    - name: Khoi dong Grafana Server
+      systemd: { name: grafana-server, state: started, enabled: yes }
+
+  handlers:
+    - name: Restart Prometheus
+      systemd: { name: prometheus, state: restarted }

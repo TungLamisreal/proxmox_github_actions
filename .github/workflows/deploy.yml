@@ -36,3 +36,9 @@ jobs:
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
           ansible-playbook -i inventory.ini setup_app.yml
+
+      - name: Ansible - Config Observability (Prometheus & Grafana)
+        working-directory: ./ansible-iac
+        run: |
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible-playbook -i inventory.ini setup_monitor.yml
