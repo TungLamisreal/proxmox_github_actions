@@ -1,0 +1,23 @@
+---
+- name: Cài đặt và cấu hình Nginx cho cụm Backend
+  hosts: backends
+
+  tasks:
+    - name: Cập nhật danh sách gói (apt update)
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Cài đặt các gói phần mềm (Nginx, Curl)
+      apt:
+        name:
+          - nginx
+          - curl
+        state: present
+
+    - name: Đảm bảo Nginx đang chạy và tự bật cùng hệ thống
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+

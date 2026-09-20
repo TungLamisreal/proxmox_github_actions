@@ -1,0 +1,29 @@
+name: Proxmox Zero Trust CI/CD
+
+on:
+  push:
+    branches:
+      - main # Nếu nhánh mặc định của bạn là master thì sửa lại thành master
+
+jobs:
+  deploy-infrastructure:
+    runs-on: self-hosted # Ép luồng này chạy trên trạm auto-vm của bạn
+
+    steps:
+      - name: 📥 Kéo Code từ GitHub về máy
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Khởi tạo Terraform
+        working-directory: ./proxmox-iac
+        run: terraform init
+
+      - name: 🚀 Cấp phát máy ảo Backend (Terraform)
+        working-directory: ./proxmox-iac
+        # Thêm biến môi trường API Token vào đây NẾU bạn chưa code cứng (hardcode) nó trong file main.tf
+        run: terraform apply -auto-approve
+
+      - name: ⚙️ Cấu hình Nginx và OS (Ansible)
+        working-directory: ./ansible-iac
+        run: |
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible-playbook -i inventory.ini install_nginx.yml
