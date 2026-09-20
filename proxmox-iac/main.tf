@@ -31,7 +31,14 @@ resource "proxmox_lxc" "observer" {
   cores        = 2
   memory       = 2048 
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+
   features { nesting = true }
+
+  rootfs {
+    storage = "local-lvm"
+    size    = "15G" 
+  }
+
   network {
     name   = "eth0"
     bridge = "vmbr0"
@@ -54,7 +61,14 @@ resource "proxmox_lxc" "tunnels" {
   cores        = 1
   memory       = 512
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+
   features { nesting = true }
+
+  rootfs {
+    storage = "local-lvm"
+    size    = "4G" »§
+  }
+ 
   network {
     name   = "eth0"
     bridge = "vmbr0"
@@ -76,7 +90,14 @@ resource "proxmox_lxc" "loadbalancer" {
   cores        = 1
   memory       = 1024
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+
   features { nesting = true }
+
+  rootfs {
+    storage = "local-lvm"
+    size    = "4G" »§
+  }
+
   network {
     name   = "eth0"
     bridge = "vmbr0"
@@ -102,7 +123,14 @@ resource "proxmox_lxc" "backend" {
   cores        = 2
   memory       = 1024
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+
   features { nesting = true }
+
+  rootfs {
+    storage = "local-lvm"
+    size    = "4G" »§
+  }
+
   network {
     name   = "eth0"
     bridge = "vmbr0"
