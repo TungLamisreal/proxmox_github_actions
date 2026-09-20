@@ -31,6 +31,10 @@ resource "proxmox_lxc" "backend_node" {
   memory = 512
   swap   = 512
 
+  features {
+    nesting = true
+  }
+
   rootfs {
     storage = "local-lvm"
     size    = "8G"
