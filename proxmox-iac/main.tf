@@ -26,7 +26,7 @@ resource "proxmox_lxc" "observer" {
   target_node  = var.pve_nodes[0] # Nằm cố định ở Node 1
   vmid         = 160
   hostname     = "observer"
-  ostemplate   = "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+  ostemplate   = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   unprivileged = true
   cores        = 2
   memory       = 2048 
@@ -56,7 +56,7 @@ resource "proxmox_lxc" "tunnels" {
   target_node  = var.pve_nodes[count.index % length(var.pve_nodes)] 
   vmid         = 161 + count.index
   hostname     = "tunnel-${count.index + 1}"
-  ostemplate   = "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+  ostemplate   = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   unprivileged = true
   cores        = 1
   memory       = 512
@@ -85,7 +85,7 @@ resource "proxmox_lxc" "loadbalancer" {
   target_node  = var.pve_nodes[count.index % length(var.pve_nodes)] # Rải ra node 1 và 2
   vmid         = 171 + count.index
   hostname     = count.index == 0 ? "lb-master" : "lb-backup"
-  ostemplate   = "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+  ostemplate   = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   unprivileged = true
   cores        = 1
   memory       = 1024
@@ -118,7 +118,7 @@ resource "proxmox_lxc" "backend" {
   target_node  = var.pve_nodes[count.index % length(var.pve_nodes)] # Rải ra đủ 3 node
   vmid         = 181 + count.index
   hostname     = "be-${count.index + 1}"
-  ostemplate   = "local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst"
+  ostemplate   = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   unprivileged = true
   cores        = 2
   memory       = 1024
