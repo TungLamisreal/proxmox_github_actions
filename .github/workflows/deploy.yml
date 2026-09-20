@@ -30,3 +30,9 @@ jobs:
           # Tạm thời tắt check host key để không bị hỏi Yes/No khi SSH
           export ANSIBLE_HOST_KEY_CHECKING=False
           ansible-playbook -i inventory.ini setup_tunnels.yml
+
+      - name: Ansible - Config Loadbalancer & Backend
+        working-directory: ./ansible-iac
+        run: |
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible-playbook -i inventory.ini setup_app.yml

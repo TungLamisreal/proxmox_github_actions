@@ -1,0 +1,87 @@
+---
+# ==========================================
+# PLAY 1: CẤU HÌNH CỤM BACKEND (WEB APP)
+# ==========================================
+- name: Setup Backend Web Servers
+  hosts: backends
+  become: yes
+  tasks:
+    - name: Doi may ao san sang
+      wait_for_connection: { delay: 5, timeout: 300 }
+
+    - name: Cai dat Nginx
+      apt: { name: nginx, state: present, update_cache: yes }
+
+    - name: Tao trang web nhan dien tung node
+      copy:
+        dest: /var/www/html/index.html
+        content: |
+          <h1>He thong hoat dong hoan hao!</h1>
+          <p>Ban dang truy cap vao Backend Node: <b>{{ inventory_hostname }}</b></p>
+      notify: Restart Backend Nginx
+
+  handlers:
+    - name: Restart Backend Nginx
+      systemd: { name: nginx, state: restarted, enabled: yes }
+
+# ==========================================
+# PLAY 2: CẤU HÌNH CỤM LOAD BALANCER (HA)
+# ==========================================
+- name: Setup High Availability Load Balancers
+  hosts: loadbalancers
+  become: yes
+  tasks:
+    - name: Doi may ao san sang
+      wait_for_connection: { delay: 5, timeout: 300 }
+
+    - name: Cai dat Nginx (Proxy) va Keepalived
+      apt: { name: ['nginx', 'keepalived'], state: present }
+
+    - name: Cho phep bind IP Ao (Non-local bind)
+      sysctl:
+        name: net.ipv4.ip_nonlocal_bind
+        value: '1'
+        state: present
+
+    - name: Cau hinh Keepalived (Active/Passive)
+      copy:
+        dest: /etc/keepalived/keepalived.conf
+        content: |
+          vrrp_instance VI_1 {
+              state {{ 'MASTER' if inventory_hostname == '192.168.150.171' else 'BACKUP' }}
+              interface eth0
+              virtual_router_id 51
+              priority {{ 100 if inventory_hostname == '192.168.150.171' else 90 }}
+              advert_int 1
+              authentication {
+                  auth_type PASS
+                  auth_pass 1111
+              }
+              virtual_ipaddress {
+                  192.168.150.170/24
+              }
+          }
+      notify: Restart Keepalived
+
+    - name: Cau hinh Nginx Load Balancing (Round Robin)
+      copy:
+        dest: /etc/nginx/sites-available/default
+        content: |
+          upstream backend_pool {
+              server 192.168.150.181;
+              server 192.168.150.182;
+              server 192.168.150.183;
+          }
+          server {
+              listen 80;
+              location / {
+                  proxy_pass http://backend_pool;
+              }
+          }
+      notify: Restart LB Nginx
+
+  handlers:
+    - name: Restart Keepalived
+      systemd: { name: keepalived, state: restarted, enabled: yes }
+    - name: Restart LB Nginx
+      systemd: { name: nginx, state: restarted }
