@@ -66,7 +66,7 @@ resource "proxmox_lxc" "tunnels" {
 
   rootfs {
     storage = "Ceph-Storage"
-    size    = "4G" »§
+    size    = "4G"
   }
  
   network {
@@ -95,7 +95,7 @@ resource "proxmox_lxc" "loadbalancer" {
 
   rootfs {
     storage = "Ceph-Storage"
-    size    = "4G" »§
+    size    = "4G"
   }
 
   network {
@@ -128,7 +128,7 @@ resource "proxmox_lxc" "backend" {
 
   rootfs {
     storage = "Ceph-Storage"
-    size    = "4G" »§
+    size    = "4G"
   }
 
   network {
