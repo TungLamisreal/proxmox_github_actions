@@ -35,7 +35,7 @@ resource "proxmox_lxc" "observer" {
   features { nesting = true }
 
   rootfs {
-    storage = "local-lvm"
+    storage = "Ceph-Storage"
     size    = "15G" 
   }
 
@@ -65,7 +65,7 @@ resource "proxmox_lxc" "tunnels" {
   features { nesting = true }
 
   rootfs {
-    storage = "local-lvm"
+    storage = "Ceph-Storage"
     size    = "4G" »§
   }
  
@@ -94,7 +94,7 @@ resource "proxmox_lxc" "loadbalancer" {
   features { nesting = true }
 
   rootfs {
-    storage = "local-lvm"
+    storage = "Ceph-Storage"
     size    = "4G" »§
   }
 
@@ -127,7 +127,7 @@ resource "proxmox_lxc" "backend" {
   features { nesting = true }
 
   rootfs {
-    storage = "local-lvm"
+    storage = "Ceph-Storage"
     size    = "4G" »§
   }
 
