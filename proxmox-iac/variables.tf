@@ -23,4 +23,6 @@ variable "pve_nodes" {
 
 variable "instance_count" {
   type = number
+  description = "Số lượng máy ảo"
+  default     = 3
 }
