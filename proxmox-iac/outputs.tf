@@ -1,5 +1,5 @@
 output "backend_ips" {
-  value       = proxmox_lxc.backend_servers[*].default_ipv4_address
+  value       = proxmox_lxc.backend[*].default_ipv4_address
   description = "Danh sách IP của các máy ảo Backend"
 }
 
