@@ -1,5 +1,5 @@
 output "backend_ips" {
-  value       = proxmox_lxc.backend[*].default_ipv4_address
+  value       = [for ip in proxmox_lxc.backend[*].network[0].ip : split("/", ip)[0]]
   description = "Danh sách IP của các máy ảo Backend"
 }
 
@@ -8,6 +8,6 @@ resource "local_file" "ansible_inventory" {
 
   content = <<-EOT
     [backend]
-    ${join("\n", proxmox_lxc.backend[*].default_ipv4_address)}
+    ${join("\n", [for ip in proxmox_lxc.backend[*].network[0].ip : split("/", ip)[0]])}
   EOT
 }
