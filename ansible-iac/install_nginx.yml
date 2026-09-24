@@ -1,6 +1,6 @@
 ---
 - name: Cài đặt và cấu hình Nginx cho cụm Backend
-  hosts: backends
+  hosts: loadbalancers
   gather_facts: no
 
   tasks:
@@ -55,8 +55,8 @@
         dest: /etc/nginx/conf.d/loadbalancer.conf
         content: |
           upstream backend_pool {
-              # Ma thuật Jinja2: Tự động lặp qua tất cả IP trong nhóm [backend]
-              {% for ip in groups['backend'] %}
+              # Ma thuật Jinja2: Tự động lặp qua tất cả IP trong nhóm [backends]
+              {% for ip in groups['backends'] %}
               server {{ ip }}:80;
               {% endfor %}
           }
