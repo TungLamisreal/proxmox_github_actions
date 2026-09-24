@@ -5,9 +5,16 @@
 - name: Setup Backend Web Servers
   hosts: backends
   become: yes
+  gather_facts: no
+
   tasks:
-    - name: Doi may ao san sang
-      wait_for_connection: { delay: 5, timeout: 300 }
+    - name: Chờ máy ảo khởi động và mở cổng SSH
+      wait_for_connection:
+        delay: 5      # Đợi 5 giây rồi mới bắt đầu gõ cửa
+        timeout: 120  # Kiên nhẫn đứng gõ cửa tối đa 120 giây (2 phút)
+
+    - name: Bật lại tính năng thu thập thông tin (Gather Facts)
+      setup:
 
     - name: Cai dat Nginx
       apt: { name: nginx, state: present, update_cache: yes }
@@ -30,9 +37,16 @@
 - name: Setup High Availability Load Balancers
   hosts: loadbalancers
   become: yes
+  gather_facts: no
+
   tasks:
-    - name: Doi may ao san sang
-      wait_for_connection: { delay: 5, timeout: 300 }
+    - name: Chờ máy ảo khởi động và mở cổng SSH
+      wait_for_connection:
+        delay: 5      # Đợi 5 giây rồi mới bắt đầu gõ cửa
+        timeout: 120  # Kiên nhẫn đứng gõ cửa tối đa 120 giây (2 phút)
+
+    - name: Bật lại tính năng thu thập thông tin (Gather Facts)
+      setup:
 
     - name: Cai dat Nginx (Proxy) va Keepalived
       apt: { name: ['nginx', 'keepalived'], state: present, update_cache: yes }

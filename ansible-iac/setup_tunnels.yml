@@ -2,11 +2,16 @@
 - name: Setup Zero Trust Tunnels (Official APT Method)
   hosts: tunnels
   become: yes
+  gather_facts: no
+
   tasks:
     - name: Doi may ao san sang ket noi SSH
       wait_for_connection:
         delay: 5
         timeout: 300
+
+    - name: Bật lại tính năng thu thập thông tin (Gather Facts)
+      setup:
 
     - name: Cap nhat APT Cache va cai dat cong cu tien quyet
       apt:

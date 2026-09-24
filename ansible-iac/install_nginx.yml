@@ -1,8 +1,17 @@
 ---
 - name: Cài đặt và cấu hình Nginx cho cụm Backend
   hosts: backends
+  gather_facts: no
 
   tasks:
+    - name: Chờ máy ảo khởi động và mở cổng SSH
+      wait_for_connection:
+        delay: 5      # Đợi 5 giây rồi mới bắt đầu gõ cửa
+        timeout: 120  # Kiên nhẫn đứng gõ cửa tối đa 120 giây (2 phút)
+
+    - name: Bật lại tính năng thu thập thông tin (Gather Facts)
+      setup:
+
     - name: Cập nhật danh sách gói (apt update)
       apt:
         update_cache: yes

@@ -5,7 +5,17 @@
 - name: Deploy Node Exporters to ALL machines
   hosts: proxmox_project # Chỉ định Ansible chui vào TẤT CẢ các IP thuộc nhóm proxmox_project trong file inventory.ini
   become: yes # Trở thành user 'root' để có quyền cài đặt phần mềm
+  gather_facts: no
+
   tasks:
+    - name: Chờ máy ảo khởi động và mở cổng SSH
+      wait_for_connection:
+        delay: 5      # Đợi 5 giây rồi mới bắt đầu gõ cửa
+        timeout: 120  # Kiên nhẫn đứng gõ cửa tối đa 120 giây (2 phút)
+
+    - name: Bật lại tính năng thu thập thông tin (Gather Facts)
+      setup:
+
     - name: Cai dat Prometheus Node Exporter tu kho Debian
       apt: # Gọi module 'apt' (quản lý gói của Debian/Ubuntu)
         name: prometheus-node-exporter # Tên phần mềm cần cài
@@ -24,7 +34,17 @@
 - name: Setup Prometheus and Grafana on Observer Node
   hosts: observer # Chỉ chạy kịch bản này trên IP nằm trong nhóm [observer] (192.168.150.160)
   become: yes
+  gather_facts: no
+
   tasks:
+    - name: Chờ máy ảo khởi động và mở cổng SSH
+      wait_for_connection:
+        delay: 5      # Đợi 5 giây rồi mới bắt đầu gõ cửa
+        timeout: 120  # Kiên nhẫn đứng gõ cửa tối đa 120 giây (2 phút)
+
+    - name: Bật lại tính năng thu thập thông tin (Gather Facts)
+      setup:
+
   # --- PHẦN 1: CÀI VÀ CẤU HÌNH PROMETHEUS ---
     - name: Cai dat Prometheus
       apt: { name: prometheus, state: present } # Cài đặt bộ não Prometheus
@@ -71,3 +91,4 @@
   handlers:
     - name: Restart Prometheus
       systemd: { name: prometheus, state: restarted } # Đoạn code này CHỈ chạy khi được lệnh 'notify' gọi ở trên (nhằm tránh việc restart dư thừa nếu cấu hình không đổi).
+
