@@ -32,6 +32,9 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
+      - name: Wait for SSH to be ready
+        run: sleep 20 # Bắt băng chuyền đứng chờ 20 giây cho các máy ảo kịp thở
+
       - name: Ansible - Config Zero Trust Tunnels
         working-directory: ./ansible-iac
         run: |
