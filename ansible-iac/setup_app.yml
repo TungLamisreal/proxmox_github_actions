@@ -40,22 +40,17 @@
   gather_facts: no
 
   tasks:
-    - name: Chờ máy ảo khởi động và mở cổng SSH
-      wait_for_connection:
-        delay: 5      # Đợi 5 giây rồi mới bắt đầu gõ cửa
-        timeout: 120  # Kiên nhẫn đứng gõ cửa tối đa 120 giây (2 phút)
+    - name: Cho may ao khoi dong va mo cong SSH
+      wait_for_connection: { delay: 5, timeout: 120 }
 
-    - name: Bật lại tính năng thu thập thông tin (Gather Facts)
+    - name: Bat lai tinh nang thu thap thong tin (Gather Facts)
       setup:
 
-    - name: Cai dat Nginx (Proxy) va Keepalived
-      apt: { name: ['nginx', 'keepalived'], state: present, update_cache: yes }
+    - name: Cai dat Nginx, Keepalived va OpenSSL
+      apt: { name: ['nginx', 'keepalived', 'openssl'], state: present, update_cache: yes }
 
     - name: Cho phep bind IP Ao (Non-local bind)
-      sysctl:
-        name: net.ipv4.ip_nonlocal_bind
-        value: '1'
-        state: present
+      sysctl: { name: net.ipv4.ip_nonlocal_bind, value: '1', state: present }
 
     - name: Cau hinh Keepalived (Active/Passive)
       copy:
@@ -77,19 +72,49 @@
           }
       notify: Restart Keepalived
 
-    - name: Cau hinh Nginx Load Balancing (Round Robin)
+    - name: Tao chung chi SSL tu ky (Self-signed) cho Nginx
+      command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /etc/ssl/private/nginx-selfsigned.key
+        -out /etc/ssl/certs/nginx-selfsigned.crt
+        -subj "/C=VN/ST=HCM/L=HCM/O=DevOps/CN=api.meowcloud.io.vn"
+      args:
+        creates: /etc/ssl/certs/nginx-selfsigned.crt
+
+    - name: Xoa file Nginx mac dinh (Tranh xung dot cong 80)
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Cau hinh Nginx Load Balancing (HTTPS + Jinja2 Dynamic IPs)
       copy:
-        dest: /etc/nginx/sites-available/default
+        dest: /etc/nginx/conf.d/loadbalancer.conf
         content: |
           upstream backend_pool {
-              server 192.168.150.181;
-              server 192.168.150.182;
-              server 192.168.150.183;
+              {% for ip in groups['backends'] %}
+              server {{ ip }}:80;
+              {% endfor %}
           }
+
           server {
               listen 80;
+              server_name _;
+              return 301 https://$host$request_uri;
+          }
+
+          server {
+              listen 443 ssl;
+              server_name _;
+
+              ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+              ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
               location / {
                   proxy_pass http://backend_pool;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
               }
           }
       notify: Restart LB Nginx
@@ -98,4 +123,4 @@
     - name: Restart Keepalived
       systemd: { name: keepalived, state: restarted, enabled: yes }
     - name: Restart LB Nginx
-      systemd: { name: nginx, state: restarted }
+      systemd: { name: nginx, state: restarted, enabled: yes }
