@@ -1,5 +1,4 @@
 name: Proxmox Zero Trust CI/CD
-
 on:
   push:
     branches: [ main ]
@@ -7,10 +6,8 @@ on:
 jobs:
   deploy-infrastructure:
     runs-on: self-hosted
-
     env:
       RUNNER_ALLOW_RUNASROOT: 1
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -21,24 +18,34 @@ jobs:
 
       - name: Terraform Apply
         working-directory: ./proxmox-iac
-        # Chạy Terraform đẻ/cập nhật 8 máy ảo
+        # Bơm token từ GitHub Secrets cho Terraform qua Biến môi trường
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
+          TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+          TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
         run: terraform apply -auto-approve
+
+      - name: Setup SSH Key for Ansible
+        # Bước MỚI: Lấy chìa khóa từ két sắt, đúc thành file vật lý và cấp quyền 600
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
 
       - name: Ansible - Config Zero Trust Tunnels
         working-directory: ./ansible-iac
         run: |
-          # Tạm thời tắt check host key để không bị hỏi Yes/No khi SSH
           export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i inventory.ini setup_tunnels.yml
+          ansible-playbook -i inventory.ini setup_tunnels.yml --private-key ~/.ssh/id_ed25519
 
       - name: Ansible - Config Loadbalancer & Backend
         working-directory: ./ansible-iac
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i inventory.ini setup_app.yml
+          ansible-playbook -i inventory.ini setup_app.yml --private-key ~/.ssh/id_ed25519
 
       - name: Ansible - Config Observability (Prometheus & Grafana)
         working-directory: ./ansible-iac
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i inventory.ini setup_monitor.yml
+          ansible-playbook -i inventory.ini setup_monitor.yml --private-key ~/.ssh/id_ed25519

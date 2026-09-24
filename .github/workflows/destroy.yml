@@ -1,0 +1,26 @@
+name: Destroy Proxmox Infrastructure
+
+on:
+  workflow_dispatch: # Từ khóa ma thuật tạo ra nút bấm "Run workflow" trên Web
+
+jobs:
+  destroy-infrastructure:
+    runs-on: self-hosted
+    env:
+      RUNNER_ALLOW_RUNASROOT: 1
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        working-directory: ./proxmox-iac
+        run: terraform init
+
+      - name: Terraform Destroy
+        working-directory: ./proxmox-iac
+        env:
+          TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
+          TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+          TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+        # Lệnh dọn dẹp không thương tiếc
+        run: terraform destroy -auto-approve

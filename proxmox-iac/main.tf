@@ -1,28 +1,8 @@
-terraform {
-  # Bổ sung 3 dòng này để cất sổ bộ nhớ ra chỗ an toàn tuyệt đối
-  backend "local" {
-    path = "/root/terraform-state/terraform.tfstate"
-  }
+# khối terraform đã được cắt ra và đưa vào file provider.tf
 
-  required_providers {
-    proxmox = {
-      source  = "telmate/proxmox"
-      version = "3.0.2-rc10"
-    }
-  }
-}
+# khối provider đã được tách ra và đưa vào file provider.tf
 
-provider "proxmox" {
-  pm_api_url          = "https://192.168.150.10:8006/api2/json"
-  pm_api_token_id     = "root@pam!terraform"
-  pm_api_token_secret = "fed223eb-1d17-4708-a9ad-cc5607ce31c6"
-  pm_tls_insecure     = true
-}
-
-variable "pve_nodes" {
-  type    = list(string)
-  default = ["node1", "pve2", "pve3"] # <--- THAY TÊN 3 NODE CỦA BẠN VÀO ĐÂY
-}
+# khối variable "pve_nodes" đã được cắt ra và đưa vào file variables.tf
 
 # ==========================================
 # 1. HỆ THỐNG GIÁM SÁT (OBSERVER) - 160
@@ -31,7 +11,7 @@ resource "proxmox_lxc" "observer" {
   target_node  = var.pve_nodes[0] # Nằm cố định ở Node 1
   vmid         = 160
   hostname     = "observer"
-  ostemplate   = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+  ostemplate   = var.os_template
   unprivileged = true
   cores        = 2
   memory       = 2048 
@@ -64,7 +44,7 @@ resource "proxmox_lxc" "tunnels" {
   target_node  = var.pve_nodes[count.index % length(var.pve_nodes)] 
   vmid         = 161 + count.index
   hostname     = "tunnel-${count.index + 1}"
-  ostemplate   = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+  ostemplate   = var.os_template
   unprivileged = true
   cores        = 1
   memory       = 512
@@ -96,7 +76,7 @@ resource "proxmox_lxc" "loadbalancer" {
   target_node  = var.pve_nodes[count.index % length(var.pve_nodes)] # Rải ra node 1 và 2
   vmid         = 171 + count.index
   hostname     = count.index == 0 ? "lb-master" : "lb-backup"
-  ostemplate   = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+  ostemplate   = var.os_template
   unprivileged = true
   cores        = 1
   memory       = 1024
@@ -123,16 +103,12 @@ resource "proxmox_lxc" "loadbalancer" {
 # ==========================================
 # 4. CỤM BACKEND - 181, 182, 183
 # ==========================================
-variable "backend_count" {
-  default = 3 
-}
-
 resource "proxmox_lxc" "backend" {
-  count        = var.backend_count
+  count        = var.instance_count
   target_node  = var.pve_nodes[count.index % length(var.pve_nodes)] # Rải ra đủ 3 node
   vmid         = 181 + count.index
   hostname     = "be-${count.index + 1}"
-  ostemplate   = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+  ostemplate   = var.os_template
   unprivileged = true
   cores        = 2
   memory       = 1024
@@ -153,6 +129,13 @@ resource "proxmox_lxc" "backend" {
     bridge = "vmbr0"
     ip     = "192.168.150.${181 + count.index}/24"
     gw     = "192.168.150.2"
+  }
+  
+  lifecycle {
+    ignore_changes = [
+      target_node, 
+      network      
+    ]
   }
 }
 
