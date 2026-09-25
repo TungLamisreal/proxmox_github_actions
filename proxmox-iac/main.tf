@@ -64,7 +64,7 @@ resource "proxmox_virtual_environment_firewall_rules" "observer_rules" {
     proto  = "tcp"
     dport  = "22"
     source = "192.168.150.1"
-    enable = true
+    enabled = true
   }
   rule {
     action = "ACCEPT"
@@ -72,7 +72,7 @@ resource "proxmox_virtual_environment_firewall_rules" "observer_rules" {
     proto  = "tcp"
     dport  = "3000,9090"
     source = "192.168.150.1"
-    enable = true
+    enabled = true
   }
 }
 
