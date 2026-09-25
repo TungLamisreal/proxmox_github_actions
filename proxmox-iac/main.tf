@@ -7,224 +7,266 @@
 # ==========================================
 # 1. HỆ THỐNG GIÁM SÁT (OBSERVER) - 160
 # ==========================================
-resource "proxmox_lxc" "observer" {
-  target_node  = var.pve_nodes[0] # Nằm cố định ở Node 1
-  vmid         = 160
-  hostname     = "observer"
-  ostemplate   = var.os_template
+resource "proxmox_virtual_environment_container" "observer" {
+  node_name    = var.pve_nodes[0]
+  vm_id        = 160
   unprivileged = true
-  cores        = 2
-  memory       = 2048 
-  ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
-  firewall = true
-  
-  start  = true
-  onboot = true
+  started      = true
 
+  initialization {
+    hostname = "observer"
+    ip_config {
+      ipv4 {
+        address = "192.168.150.160/24"
+        gateway = "192.168.150.2"
+      }
+    }
+    user_account {
+      keys = [trimspace(file("/root/.ssh/id_ed25519.pub"))]
+    }
+  }
+
+  operating_system {
+    template_file_id = var.os_template
+    type             = "debian" # BPG yêu cầu khai báo loại HĐH (chuẩn nhất cho template ubuntu)
+  }
+
+  cpu { cores = 2 }
+  memory { dedicated = 2048 }
+  disk {
+    datastore_id = "Ceph-Storage"
+    size         = 15
+  }
+
+  network_interface {
+    name     = "eth0"
+    bridge   = "vmbr0"
+    firewall = true # Công tắc 1
+  }
   features { nesting = true }
+}
 
-  rootfs {
-    storage = "Ceph-Storage"
-    size    = "15G" 
-  }
+# Bật công tắc 2 (Cầu dao tổng Firewall) cho Observer
+resource "proxmox_virtual_environment_firewall_options" "observer_fw" {
+  node_name    = proxmox_virtual_environment_container.observer.node_name
+  container_id = proxmox_virtual_environment_container.observer.vm_id
+  enable       = true
+}
 
-  network {
-    name   = "eth0"
-    bridge = "vmbr0"
-    ip     = "192.168.150.160/24"
-    gw     = "192.168.150.2"
-    firewall = true
-  }
+# Gắn luật lẻ cho Observer (Vì cụm này không dùng Security Group)
+resource "proxmox_virtual_environment_firewall_rules" "observer_rules" {
+  node_name    = proxmox_virtual_environment_container.observer.node_name
+  container_id = proxmox_virtual_environment_container.observer.vm_id
 
-  # MỞ CỔNG QUẢN TRỊ (SSH)
-  firewall {
+  rule {
     action = "ACCEPT"
     type   = "in"
     proto  = "tcp"
-    dport  = 22
-    source = "192.168.150.1" # Chỉ cho IP quản trị / GitHub Runner vào cài đặt
+    dport  = "22"
+    source = "192.168.150.1"
+    enable = true
   }
-
-  # MỞ CỔNG XEM DASHBOARD CHO ADMIN
-  firewall {
+  rule {
     action = "ACCEPT"
     type   = "in"
     proto  = "tcp"
-    dport  = "3000,9090" # 3000 (Grafana) và 9090 (Prometheus UI)
-    source = "192.168.150.1" # Tránh việc ai trong LAN cũng mò được vào xem log
+    dport  = "3000,9090"
+    source = "192.168.150.1"
+    enable = true
   }
 }
 
 # ==========================================
 # 2. CỤM CỔNG BẢO MẬT (TUNNELS) - 161, 162, 163
 # ==========================================
-resource "proxmox_lxc" "tunnels" {
+resource "proxmox_virtual_environment_container" "tunnels" {
   count        = 3
-  # Trò ảo thuật ở đây: rải đều 3 máy ra 3 node vật lý khác nhau
-  target_node  = var.pve_nodes[count.index % length(var.pve_nodes)] 
-  vmid         = 161 + count.index
-  hostname     = "tunnel-${count.index + 1}"
-  ostemplate   = var.os_template
+  node_name    = var.pve_nodes[count.index % length(var.pve_nodes)] 
+  vm_id        = 161 + count.index
   unprivileged = true
-  cores        = 1
-  memory       = 512
-  ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
-  firewall = true
+  started      = true
 
-  start  = true
-  onboot = true
-
-  features { nesting = true }
-
-  rootfs {
-    storage = "Ceph-Storage"
-    size    = "4G"
+  initialization {
+    hostname = "tunnel-${count.index + 1}"
+    ip_config {
+      ipv4 {
+        address = "192.168.150.${161 + count.index}/24"
+        gateway = "192.168.150.2"
+      }
+    }
+    user_account { keys = [trimspace(file("/root/.ssh/id_ed25519.pub"))] }
   }
- 
-  network {
-    name   = "eth0"
-    bridge = "vmbr0"
-    ip     = "192.168.150.${161 + count.index}/24"
-    gw     = "192.168.150.2"
+
+  operating_system {
+    template_file_id = var.os_template
+    type             = "debian"
+  }
+
+  cpu { cores = 1 }
+  memory { dedicated = 512 }
+  disk { 
+    datastore_id = "Ceph-Storage"
+    size         = 4 
+  }
+
+  network_interface {
+    name     = "eth0"
+    bridge   = "vmbr0"
     firewall = true
   }
+  features { nesting = true }
+}
 
-  # RULE MỞ CỔNG 22 CHO ĐÚNG IP ADMIN
-  firewall {
-    action = "ACCEPT"
-    type   = "in"
-    proto  = "tcp"
-    dport  = 22
-    source = "192.168.150.1"  # Ép cứng đúng IP này mới được SSH
+resource "proxmox_virtual_environment_firewall_options" "tunnels_fw" {
+  count        = 3
+  node_name    = proxmox_virtual_environment_container.tunnels[count.index].node_name
+  container_id = proxmox_virtual_environment_container.tunnels[count.index].vm_id
+  enable       = true
+}
+
+# ỐP SECURITY GROUP VÀO TUNNELS
+resource "proxmox_virtual_environment_firewall_rules" "tunnels_rules" {
+  count        = 3
+  node_name    = proxmox_virtual_environment_container.tunnels[count.index].node_name
+  container_id = proxmox_virtual_environment_container.tunnels[count.index].vm_id
+
+  rule {
+    security_group = "sg_tunnel" # Gọi đúng tên SG bác đã tạo
+    enable         = true
   }
 }
 
 # ==========================================
 # 3. CỤM LOAD BALANCER (HA) - 171, 172
 # ==========================================
-resource "proxmox_lxc" "loadbalancer" {
+resource "proxmox_virtual_environment_container" "loadbalancer" {
   count        = 2
-  target_node  = var.pve_nodes[count.index % length(var.pve_nodes)] # Rải ra node 1 và 2
-  vmid         = 171 + count.index
-  hostname     = count.index == 0 ? "lb-master" : "lb-backup"
-  ostemplate   = var.os_template
+  node_name    = var.pve_nodes[count.index % length(var.pve_nodes)]
+  vm_id        = 171 + count.index
   unprivileged = true
-  cores        = 1
-  memory       = 1024
-  ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
-  firewall = true
+  started      = true
 
-  start  = true
-  onboot = true
-
-  features { nesting = true }
-
-  rootfs {
-    storage = "Ceph-Storage"
-    size    = "4G"
+  initialization {
+    hostname = count.index == 0 ? "lb-master" : "lb-backup"
+    ip_config {
+      ipv4 {
+        address = "192.168.150.${171 + count.index}/24"
+        gateway = "192.168.150.2"
+      }
+    }
+    user_account { keys = [trimspace(file("/root/.ssh/id_ed25519.pub"))] }
   }
 
-  network {
-    name   = "eth0"
-    bridge = "vmbr0"
-    ip     = "192.168.150.${171 + count.index}/24"
-    gw     = "192.168.150.2"
+  operating_system {
+    template_file_id = var.os_template
+    type             = "debian"
+  }
+
+  cpu { cores = 1 }
+  memory { dedicated = 1024 }
+  disk { 
+    datastore_id = "Ceph-Storage"
+    size         = 4 
+  }
+
+  network_interface {
+    name     = "eth0"
+    bridge   = "vmbr0"
     firewall = true
   }
- 
-  # Rule 1: Cho phép Ansible SSH vào cài đặt (Mở từ dải mạng GitHub Runner/Admin)
-  firewall {
-    action = "ACCEPT"
-    type   = "in"
-    proto  = "tcp"
-    dport  = 22
-    source = "192.168.150.0/24" # Thay bằng var.admin_cidr
-  }
+  features { nesting = true }
+}
 
-  # Rule 2: Cứu sống Keepalived - Giao thức VRRP (Quan trọng nhất)
-  firewall {
-    action = "ACCEPT"
-    type   = "in"
-    proto  = "vrrp" 
-  }
+resource "proxmox_virtual_environment_firewall_options" "lb_fw" {
+  count        = 2
+  node_name    = proxmox_virtual_environment_container.loadbalancer[count.index].node_name
+  container_id = proxmox_virtual_environment_container.loadbalancer[count.index].vm_id
+  enable       = true
+}
 
-  # Rule 3: Đón luồng HTTP/HTTPS từ Cloudflare Tunnel
-  firewall {
-    action = "ACCEPT"
-    type   = "in"
-    proto  = "tcp"
-    dport  = "80,443"
-    # source có thể giới hạn chỉ nhận từ IP của các con Tunnel
+# ỐP SECURITY GROUP VÀO LOAD BALANCER
+resource "proxmox_virtual_environment_firewall_rules" "lb_rules" {
+  count        = 2
+  node_name    = proxmox_virtual_environment_container.loadbalancer[count.index].node_name
+  container_id = proxmox_virtual_environment_container.loadbalancer[count.index].vm_id
+
+  rule {
+    security_group = "sg_loadbalancer"
+    enable         = true
   }
 }
 
 # ==========================================
 # 4. CỤM BACKEND - 181, 182, 183
 # ==========================================
-resource "proxmox_lxc" "backend" {
+resource "proxmox_virtual_environment_container" "backend" {
   count        = var.instance_count
-  target_node  = var.pve_nodes[count.index % length(var.pve_nodes)] # Rải ra đủ 3 node
-  vmid         = 181 + count.index
-  hostname     = "be-${count.index + 1}"
-  ostemplate   = var.os_template
+  node_name    = var.pve_nodes[count.index % length(var.pve_nodes)]
+  vm_id        = 181 + count.index
   unprivileged = true
-  cores        = 2
-  memory       = 1024
-  ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
-  firewall = true
+  started      = true
 
-  start  = true
-  onboot = true
-
-  features { nesting = true }
-
-  rootfs {
-    storage = "Ceph-Storage"
-    size    = "4G"
+  initialization {
+    hostname = "be-${count.index + 1}"
+    ip_config {
+      ipv4 {
+        address = "192.168.150.${181 + count.index}/24"
+        gateway = "192.168.150.2"
+      }
+    }
+    user_account { keys = [trimspace(file("/root/.ssh/id_ed25519.pub"))] }
   }
 
-  network {
-    name   = "eth0"
-    bridge = "vmbr0"
-    ip     = "192.168.150.${181 + count.index}/24"
-    gw     = "192.168.150.2"
+  operating_system {
+    template_file_id = var.os_template
+    type             = "debian"
+  }
+
+  cpu { cores = 2 }
+  memory { dedicated = 1024 }
+  disk { 
+    datastore_id = "Ceph-Storage"
+    size         = 4 
+  }
+
+  network_interface {
+    name     = "eth0"
+    bridge   = "vmbr0"
     firewall = true
   }
+  features { nesting = true }
 
-  # Rule 1: SSH cho Ansible
-  firewall {
-    action = "ACCEPT"
-    type   = "in"
-    proto  = "tcp"
-    dport  = 22
-  }
-
-  # Rule 2: Chỉ nhận traffic web từ cụm Load Balancer
-  firewall {
-    action = "ACCEPT"
-    type   = "in"
-    proto  = "tcp"
-    dport  = "80"
-    # Bí quyết IaC: Bơm thẳng dải IP của subnet nội bộ chứa LB vào đây
-    source = "192.168.150.0/24" 
-  }
-
-  # Rule 3: Mở cổng cho Grafana/Prometheus (Cổng 9100 Node Exporter)
-  firewall {
-    action = "ACCEPT"
-    type   = "in"
-    proto  = "tcp"
-    dport  = 9100
-  }
-  
+  # Cập nhật Lifecycle cho hợp chuẩn BPG
   lifecycle {
     ignore_changes = [
-      target_node, 
-      network      
+      node_name, 
+      network_interface,
+      initialization[0].ip_config
     ]
   }
 }
 
+resource "proxmox_virtual_environment_firewall_options" "backend_fw" {
+  count        = var.instance_count
+  node_name    = proxmox_virtual_environment_container.backend[count.index].node_name
+  container_id = proxmox_virtual_environment_container.backend[count.index].vm_id
+  enable       = true
+}
+
+# ỐP SECURITY GROUP VÀO BACKEND
+resource "proxmox_virtual_environment_firewall_rules" "backend_rules" {
+  count        = var.instance_count
+  node_name    = proxmox_virtual_environment_container.backend[count.index].node_name
+  container_id = proxmox_virtual_environment_container.backend[count.index].vm_id
+
+  rule {
+    security_group = "sg_backend"
+    enable         = true
+  }
+}
+
 # ==========================================
-# 5. KHO DỮ LIỆU (DATABASE) - 190
+# 5. KHO DỮ LIỆU (DATABASE) - 190 (Chờ update sau)
 # ==========================================
+
+

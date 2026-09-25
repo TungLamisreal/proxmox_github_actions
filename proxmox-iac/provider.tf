@@ -1,20 +1,20 @@
 terraform {
-  # B  ^u sung 3 d  ng n  y  ^q  ^c c   t s  ^u b  ^y nh  ^{ ra ch  ^w an to  n tuy  ^gt  ^q  ^qi
+  # Giữ nguyên cấu hình lưu state nội bộ của bác
   backend "local" {
     path = "/root/terraform-state/terraform.tfstate"
   }
 
   required_providers {
     proxmox = {
-      source  = "telmate/proxmox"
-      version = "3.0.2-rc10"
+      source  = "bpg/proxmox"
+      version = "0.66.1" # Nâng cấp lên lõi BPG mới nhất
     }
   }
 }
 
 provider "proxmox" {
-  pm_api_url          = var.proxmox_api_url
-  pm_api_token_id     = var.proxmox_api_token_id
-  pm_api_token_secret = var.proxmox_api_token_secret
-  pm_tls_insecure     = true
+  # Cú pháp của BPG khác Telmate một chút, nó gom chung token và đổi tên biến
+  endpoint  = var.proxmox_api_url
+  api_token = "${var.proxmox_api_token_id}=${var.proxmox_api_token_secret}"
+  insecure  = true
 }
