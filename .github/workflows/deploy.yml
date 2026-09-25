@@ -23,7 +23,7 @@ jobs:
           TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
           TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
           TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
-        run: terraform apply -auto-approve
+        run: terraform apply -parallelism=5 -auto-approve
 
       - name: Setup SSH Key for Ansible
         # Bước MỚI: Lấy chìa khóa từ két sắt, đúc thành file vật lý và cấp quyền 600
@@ -31,9 +31,6 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-
-      - name: Wait for SSH to be ready
-        run: sleep 20 # Bắt băng chuyền đứng chờ 20 giây cho các máy ảo kịp thở
 
       - name: Ansible - Config Zero Trust Tunnels
         working-directory: ./ansible-iac
