@@ -50,7 +50,7 @@ resource "proxmox_virtual_environment_container" "observer" {
 resource "proxmox_virtual_environment_firewall_options" "observer_fw" {
   node_name    = proxmox_virtual_environment_container.observer.node_name
   container_id = proxmox_virtual_environment_container.observer.vm_id
-  enable       = true
+  enabled       = true
 }
 
 # Gắn luật lẻ cho Observer (Vì cụm này không dùng Security Group)
@@ -121,7 +121,7 @@ resource "proxmox_virtual_environment_firewall_options" "tunnels_fw" {
   count        = 3
   node_name    = proxmox_virtual_environment_container.tunnels[count.index].node_name
   container_id = proxmox_virtual_environment_container.tunnels[count.index].vm_id
-  enable       = true
+  enabled       = true
 }
 
 # ỐP SECURITY GROUP VÀO TUNNELS
@@ -132,7 +132,7 @@ resource "proxmox_virtual_environment_firewall_rules" "tunnels_rules" {
 
   rule {
     security_group = "sg_tunnel" # Gọi đúng tên SG bác đã tạo
-    enable         = true
+    enabled         = true
   }
 }
 
@@ -181,7 +181,7 @@ resource "proxmox_virtual_environment_firewall_options" "lb_fw" {
   count        = 2
   node_name    = proxmox_virtual_environment_container.loadbalancer[count.index].node_name
   container_id = proxmox_virtual_environment_container.loadbalancer[count.index].vm_id
-  enable       = true
+  enabled       = true
 }
 
 # ỐP SECURITY GROUP VÀO LOAD BALANCER
@@ -192,7 +192,7 @@ resource "proxmox_virtual_environment_firewall_rules" "lb_rules" {
 
   rule {
     security_group = "sg_loadbalancer"
-    enable         = true
+    enabled         = true
   }
 }
 
@@ -250,7 +250,7 @@ resource "proxmox_virtual_environment_firewall_options" "backend_fw" {
   count        = var.instance_count
   node_name    = proxmox_virtual_environment_container.backend[count.index].node_name
   container_id = proxmox_virtual_environment_container.backend[count.index].vm_id
-  enable       = true
+  enabled       = true
 }
 
 # ỐP SECURITY GROUP VÀO BACKEND
@@ -261,7 +261,7 @@ resource "proxmox_virtual_environment_firewall_rules" "backend_rules" {
 
   rule {
     security_group = "sg_backend"
-    enable         = true
+    enabled         = true
   }
 }
 
