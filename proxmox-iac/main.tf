@@ -16,6 +16,7 @@ resource "proxmox_lxc" "observer" {
   cores        = 2
   memory       = 2048 
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+  firewall = true
   
   start  = true
   onboot = true
@@ -32,6 +33,25 @@ resource "proxmox_lxc" "observer" {
     bridge = "vmbr0"
     ip     = "192.168.150.160/24"
     gw     = "192.168.150.2"
+    firewall = true
+  }
+
+  # MỞ CỔNG QUẢN TRỊ (SSH)
+  firewall {
+    action = "ACCEPT"
+    type   = "in"
+    proto  = "tcp"
+    dport  = 22
+    source = "192.168.150.1" # Chỉ cho IP quản trị / GitHub Runner vào cài đặt
+  }
+
+  # MỞ CỔNG XEM DASHBOARD CHO ADMIN
+  firewall {
+    action = "ACCEPT"
+    type   = "in"
+    proto  = "tcp"
+    dport  = "3000,9090" # 3000 (Grafana) và 9090 (Prometheus UI)
+    source = "192.168.150.1" # Tránh việc ai trong LAN cũng mò được vào xem log
   }
 }
 
@@ -49,6 +69,7 @@ resource "proxmox_lxc" "tunnels" {
   cores        = 1
   memory       = 512
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+  firewall = true
 
   start  = true
   onboot = true
@@ -65,6 +86,16 @@ resource "proxmox_lxc" "tunnels" {
     bridge = "vmbr0"
     ip     = "192.168.150.${161 + count.index}/24"
     gw     = "192.168.150.2"
+    firewall = true
+  }
+
+  # RULE MỞ CỔNG 22 CHO ĐÚNG IP ADMIN
+  firewall {
+    action = "ACCEPT"
+    type   = "in"
+    proto  = "tcp"
+    dport  = 22
+    source = "192.168.150.1"  # Ép cứng đúng IP này mới được SSH
   }
 }
 
@@ -81,6 +112,7 @@ resource "proxmox_lxc" "loadbalancer" {
   cores        = 1
   memory       = 1024
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+  firewall = true
 
   start  = true
   onboot = true
@@ -97,6 +129,32 @@ resource "proxmox_lxc" "loadbalancer" {
     bridge = "vmbr0"
     ip     = "192.168.150.${171 + count.index}/24"
     gw     = "192.168.150.2"
+    firewall = true
+  }
+ 
+  # Rule 1: Cho phép Ansible SSH vào cài đặt (Mở từ dải mạng GitHub Runner/Admin)
+  firewall {
+    action = "ACCEPT"
+    type   = "in"
+    proto  = "tcp"
+    dport  = 22
+    source = "192.168.150.0/24" # Thay bằng var.admin_cidr
+  }
+
+  # Rule 2: Cứu sống Keepalived - Giao thức VRRP (Quan trọng nhất)
+  firewall {
+    action = "ACCEPT"
+    type   = "in"
+    proto  = "vrrp" 
+  }
+
+  # Rule 3: Đón luồng HTTP/HTTPS từ Cloudflare Tunnel
+  firewall {
+    action = "ACCEPT"
+    type   = "in"
+    proto  = "tcp"
+    dport  = "80,443"
+    # source có thể giới hạn chỉ nhận từ IP của các con Tunnel
   }
 }
 
@@ -113,6 +171,7 @@ resource "proxmox_lxc" "backend" {
   cores        = 2
   memory       = 1024
   ssh_public_keys = trimspace(file("/root/.ssh/id_ed25519.pub"))
+  firewall = true
 
   start  = true
   onboot = true
@@ -129,6 +188,33 @@ resource "proxmox_lxc" "backend" {
     bridge = "vmbr0"
     ip     = "192.168.150.${181 + count.index}/24"
     gw     = "192.168.150.2"
+    firewall = true
+  }
+
+  # Rule 1: SSH cho Ansible
+  firewall {
+    action = "ACCEPT"
+    type   = "in"
+    proto  = "tcp"
+    dport  = 22
+  }
+
+  # Rule 2: Chỉ nhận traffic web từ cụm Load Balancer
+  firewall {
+    action = "ACCEPT"
+    type   = "in"
+    proto  = "tcp"
+    dport  = "80"
+    # Bí quyết IaC: Bơm thẳng dải IP của subnet nội bộ chứa LB vào đây
+    source = "192.168.150.0/24" 
+  }
+
+  # Rule 3: Mở cổng cho Grafana/Prometheus (Cổng 9100 Node Exporter)
+  firewall {
+    action = "ACCEPT"
+    type   = "in"
+    proto  = "tcp"
+    dport  = 9100
   }
   
   lifecycle {
