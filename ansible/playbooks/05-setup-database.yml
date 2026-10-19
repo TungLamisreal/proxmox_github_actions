@@ -3,20 +3,20 @@
   hosts: databases
   gather_facts: yes
   tasks:
-    - name: Format second NVMe disk (/dev/nvme1n1) as ext4
+    - name: Format second disk (/dev/sdb) as ext4
       filesystem:
         fstype: ext4
-        dev: /dev/nvme1n1
+        dev: /dev/sdb
 
     - name: Create mount point for database
       file:
         path: /opt/pgdata
         state: directory
 
-    - name: Mount /dev/nvme1n1 to /opt/pgdata (Ceph db_pool LZ4)
+    - name: Mount /dev/sdb to /opt/pgdata (Ceph db_pool LZ4)
       mount:
         path: /opt/pgdata
-        src: /dev/nvme1n1
+        src: /dev/sdb
         fstype: ext4
         opts: defaults,noatime,discard
         state: mounted

@@ -43,21 +43,28 @@ resource "proxmox_virtual_environment_vm" "db" {
     floating  = 0
   }
 
-  # Ổ đĩa 1 (OS Disk): Chuẩn NVMe, lưu trên general_pool
+  # Khởi tạo Controller VirtIO SCSI Single
+  scsi_hardware = "virtio-scsi-single"
+
+  # Ổ đĩa 1 (OS Disk): 10GB trên general_pool
   disk {
     datastore_id = var.general_pool
-    interface    = "nvme0"
+    interface    = "scsi0"
     size         = 10
     file_format  = "raw"
+    iothread     = true
+    ssd          = true
     discard      = "on"
   }
 
-  # Ổ đĩa 2 (Data Disk): Chuẩn NVMe, lưu trên db_pool (LZ4 Compression)
+  # Ổ đĩa 2 (Data Disk): 32GB trên db_pool
   disk {
     datastore_id = var.db_pool
-    interface    = "nvme1"
+    interface    = "scsi1"
     size         = 32
     file_format  = "raw"
+    iothread     = true
+    ssd          = true
     discard      = "on"
     backup       = true
   }
