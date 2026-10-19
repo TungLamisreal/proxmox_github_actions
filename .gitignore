@@ -1,0 +1,15 @@
+# Chặn file state và backup của Terraform
+*.tfstate
+*.tfstate.*
+state/
+.terraform/
+.terraform.lock.hcl
+
+# Chặn file biến chứa mật khẩu/token nếu sau này có tạo
+*.tfvars
+*.tfvars.json
+
+# Chặn SSH private keys
+*.pem
+id_ed25519
+id_rsa

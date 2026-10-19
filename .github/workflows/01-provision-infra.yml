@@ -1,0 +1,54 @@
+name: "01 - Provision Infrastructure & Config"
+on:
+  workflow_dispatch:
+    inputs:
+      backend_count:
+        description: 'Số lượng LXC Backend cần tạo'
+        required: true
+        default: '3'
+      frontend_count:
+        description: 'Số lượng LXC Frontend cần tạo'
+        required: true
+        default: '3'
+
+jobs:
+  provision_and_configure:
+    name: "Terraform Apply & Ansible Playbooks"
+    runs-on: self-hosted # Chạy trên máy auto-vm nội bộ
+
+    env:
+      TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+      TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+      TF_VAR_backend_count: ${{ github.event.inputs.backend_count }}
+      TF_VAR_frontend_count: ${{ github.event.inputs.frontend_count }}
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: 🚀 Terraform Apply (Auto-Approve)
+        working-directory: ./terraform
+        run: terraform apply -auto-approve
+
+      - name: 🔑 Cấp quyền thực thi cho file SSH Key
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /home/github-runner/.ssh/id_ed25519
+          chmod 600 /home/github-runner/.ssh/id_ed25519
+
+      - name: ⏳ Chờ các dịch vụ khởi động (Sleep 30s)
+        run: sleep 30
+
+      - name: ⚙️ Chạy toàn bộ Ansible Playbooks (từ 01 đến 06)
+        working-directory: ./ansible
+        run: |
+          ansible-playbook playbooks/01-setup-tunnels.yml
+          ansible-playbook playbooks/02-setup-lb.yml
+          ansible-playbook playbooks/05-setup-database.yml
+          ansible-playbook playbooks/03-setup-backend.yml
+          ansible-playbook playbooks/04-setup-frontend.yml
+          ansible-playbook playbooks/06-setup-observer.yml

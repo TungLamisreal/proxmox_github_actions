@@ -1,0 +1,56 @@
+---
+- name: Configure KVM Database Cluster (Dockerized Postgres)
+  hosts: databases
+  gather_facts: yes
+  tasks:
+    - name: Format second NVMe disk (/dev/nvme1n1) as ext4
+      filesystem:
+        fstype: ext4
+        dev: /dev/nvme1n1
+
+    - name: Create mount point for database
+      file:
+        path: /opt/pgdata
+        state: directory
+
+    - name: Mount /dev/nvme1n1 to /opt/pgdata (Ceph db_pool LZ4)
+      mount:
+        path: /opt/pgdata
+        src: /dev/nvme1n1
+        fstype: ext4
+        opts: defaults,noatime,discard
+        state: mounted
+
+    - name: Install dependencies and Node Exporter
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - prometheus-node-exporter
+        state: present
+        update_cache: yes
+
+    - name: Install Docker Engine
+      shell: |
+        curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add -
+        add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable"
+        apt-get update
+        apt-get install -y docker-ce docker-ce-cli containerd.io
+
+    - name: Run PostgreSQL Docker Container
+      shell: |
+        docker run -d \
+          --name meow-postgres \
+          --restart always \
+          -p 5432:5432 \
+          -e POSTGRES_PASSWORD=meow_secret_password \
+          -v /opt/pgdata:/var/lib/postgresql/data \
+          postgres:15-alpine
+
+    - name: Ensure Node Exporter is running
+      service:
+        name: prometheus-node-exporter
+        state: started
+        enabled: yes

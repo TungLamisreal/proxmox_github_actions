@@ -1,0 +1,41 @@
+name: "03 - Auto-Scale Backend Pool"
+on:
+  repository_dispatch:
+    types: [scale_up_backend] # Sự kiện nhận từ Alertmanager Webhook
+
+jobs:
+  scale_out:
+    name: "Scale Out Backend to 5 Nodes"
+    runs-on: self-hosted
+
+    env:
+      TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+      TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+      TF_VAR_backend_count: 5 # Cưỡng chế mở rộng lên 5 node
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: 🚀 Terraform Apply (Cấp phát thêm máy)
+        working-directory: ./terraform
+        run: terraform apply -auto-approve
+
+      - name: ⏳ Chờ các máy ảo mới khởi động (Sleep 15s)
+        run: sleep 15
+
+      - name: ⚙️ Ansible: Cấu hình các Backend mới
+        working-directory: ./ansible
+        run: ansible-playbook playbooks/03-setup-backend.yml
+
+      - name: ⚙️ Ansible: Cập nhật cấu hình Nginx & Reload
+        working-directory: ./ansible
+        run: ansible-playbook playbooks/02-setup-lb.yml
+
+      - name: ⚙️ Ansible: Cập nhật điểm quét Prometheus
+        working-directory: ./ansible
+        run: ansible-playbook playbooks/06-setup-observer.yml

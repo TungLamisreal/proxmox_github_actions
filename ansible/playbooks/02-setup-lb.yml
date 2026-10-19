@@ -1,0 +1,75 @@
+---
+- name: Configure Nginx HA Load Balancers & Keepalived VIP (.100)
+  hosts: loadbalancers
+  gather_facts: yes
+  tasks:
+    - name: Install Nginx, Keepalived and Exporters
+      apt:
+        name:
+          - nginx
+          - keepalived
+          - prometheus-node-exporter
+          - prometheus-nginx-exporter
+        state: present
+        update_cache: yes
+
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Render dynamic Upstream Load Balancer configuration
+      template:
+        src: ../templates/loadbalancer.conf.j2
+        dest: /etc/nginx/conf.d/loadbalancer.conf
+        mode: '0644'
+      notify: Reload Nginx
+
+    - name: Configure Keepalived for VIP 192.168.150.100
+      copy:
+        dest: /etc/keepalived/keepalived.conf
+        content: |
+          vrrp_script chk_nginx {
+              script "/usr/bin/killall -0 nginx"
+              interval 2
+              weight 2
+          }
+          vrrp_instance VI_MEOW_LB {
+              state {{ keepalived_state | default('BACKUP') }}
+              interface eth0
+              virtual_router_id 51
+              priority {{ keepalived_priority | default(90) }}
+              advert_int 1
+              authentication {
+                  auth_type PASS
+                  auth_pass MeowLB100
+              }
+              virtual_ipaddress {
+                  192.168.150.100/24
+              }
+              track_script {
+                  chk_nginx
+              }
+          }
+      notify: Restart Keepalived
+
+    - name: Ensure services are enabled and started
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - nginx
+        - keepalived
+        - prometheus-node-exporter
+
+  handlers:
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Restart Keepalived
+      service:
+        name: keepalived
+        state: restarted

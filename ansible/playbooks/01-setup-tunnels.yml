@@ -1,0 +1,38 @@
+---
+- name: Configure Cloudflare Tunnels (Ingress Edge)
+  hosts: tunnels
+  gather_facts: yes
+  vars:
+    cf_token: "{{ lookup('env', 'CLOUDFLARE_TUNNEL_TOKEN') }}"
+  tasks:
+    - name: Install required packages and Node Exporter
+      apt:
+        name:
+          - curl
+          - gnupg
+          - lsb-release
+          - prometheus-node-exporter
+        state: present
+        update_cache: yes
+
+    - name: Download cloudflared Debian package
+      get_url:
+        url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+        dest: /tmp/cloudflared.deb
+
+    - name: Install cloudflared package
+      apt:
+        deb: /tmp/cloudflared.deb
+
+    - name: Register and start Cloudflare Tunnel service
+      shell: |
+        if [ ! -f /etc/systemd/system/cloudflared.service ]; then
+          cloudflared service install {{ cf_token }}
+        fi
+      when: cf_token | length > 0
+
+    - name: Ensure Node Exporter is running
+      service:
+        name: prometheus-node-exporter
+        state: started
+        enabled: yes

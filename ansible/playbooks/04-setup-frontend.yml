@@ -1,0 +1,67 @@
+---
+- name: Configure Web Frontend Elastic Pool (Dockerized)
+  hosts: frontends
+  gather_facts: yes
+  tasks:
+    - name: Install dependencies and Node Exporter
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - prometheus-node-exporter
+        state: present
+        update_cache: yes
+
+    - name: Add Docker's official GPG key and Repository
+      shell: |
+        curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add -
+        add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable"
+
+    - name: Install Docker Engine
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+        update_cache: yes
+
+    - name: Create Frontend App directory
+      file:
+        path: /opt/meow-frontend/html
+        state: directory
+
+    - name: Deploy MeowCloud E-Commerce Web UI
+      copy:
+        dest: /opt/meow-frontend/html/index.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>MeowCloud E-Commerce (Docker)</title>
+              <style>
+                  body { font-family: Arial; background: #0f172a; color: white; text-align: center; padding-top: 80px; }
+                  .card { background: #1e293b; display: inline-block; padding: 30px; border: 1px solid #38bdf8; }
+              </style>
+          </head>
+          <body>
+              <div class="card">
+                  <h1>🚀 MEOWCLOUD FRONTEND</h1>
+                  <p>Phục vụ bởi Docker Container trên Host: {{ inventory_hostname }}</p>
+                  <p>IP Nội bộ: {{ ansible_host }}</p>
+              </div>
+          </body>
+          </html>
+
+    - name: Run Nginx Container for Frontend
+      shell: |
+        docker run -d --name meow-frontend-app --restart always -p 80:80 \
+        -v /opt/meow-frontend/html:/usr/share/nginx/html:ro nginx:alpine
+
+    - name: Ensure Node Exporter is running
+      service:
+        name: prometheus-node-exporter
+        state: started
+        enabled: yes

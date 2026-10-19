@@ -1,0 +1,78 @@
+---
+- name: Configure Observer (Prometheus, Alertmanager & Grafana)
+  hosts: observer
+  gather_facts: yes
+  tasks:
+    - name: Install Prometheus, Alertmanager and Node Exporter
+      apt:
+        name:
+          - prometheus
+          - prometheus-alertmanager
+          - prometheus-node-exporter
+        state: present
+        update_cache: yes
+
+    - name: Generate dynamic prometheus.yml scraping all MeowCloud tiers
+      copy:
+        dest: /etc/prometheus/prometheus.yml
+        content: |
+          global:
+            scrape_interval: 10s
+            evaluation_interval: 10s
+
+          scrape_configs:
+            - job_name: 'observer'
+              static_configs:
+                - targets: ['localhost:9100']
+
+            - job_name: 'tunnels'
+              static_configs:
+                - targets:
+          {% for host in groups['tunnels'] %}
+                    - '{{ hostvars[host]["ansible_host"] }}:9100'
+          {% endfor %}
+
+            - job_name: 'loadbalancers'
+              static_configs:
+                - targets:
+          {% for host in groups['loadbalancers'] %}
+                    - '{{ hostvars[host]["ansible_host"] }}:9100'
+          {% endfor %}
+
+            - job_name: 'backends'
+              static_configs:
+                - targets:
+          {% for host in groups['backends'] %}
+                    - '{{ hostvars[host]["ansible_host"] }}:9100'
+          {% endfor %}
+
+            - job_name: 'frontends'
+              static_configs:
+                - targets:
+          {% for host in groups['frontends'] %}
+                    - '{{ hostvars[host]["ansible_host"] }}:9100'
+          {% endfor %}
+
+            - job_name: 'databases'
+              static_configs:
+                - targets:
+          {% for host in groups['databases'] %}
+                    - '{{ hostvars[host]["ansible_host"] }}:9100'
+          {% endfor %}
+      notify: Restart Prometheus
+
+    - name: Ensure Prometheus and Alertmanager are active
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - prometheus
+        - prometheus-alertmanager
+        - prometheus-node-exporter
+
+  handlers:
+    - name: Restart Prometheus
+      service:
+        name: prometheus
+        state: restarted

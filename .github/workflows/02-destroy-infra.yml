@@ -1,0 +1,29 @@
+name: "02 - Destroy Infrastructure"
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Gõ YES để xác nhận hủy toàn bộ cụm máy ảo'
+        required: true
+
+jobs:
+  destroy_infra:
+    name: "Terraform Destroy"
+    runs-on: self-hosted
+    if: github.event.inputs.confirm == 'YES'
+
+    env:
+      TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+      TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: 💥 Terraform Destroy (Auto-Approve)
+        working-directory: ./terraform
+        run: terraform destroy -auto-approve

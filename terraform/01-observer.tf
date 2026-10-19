@@ -1,0 +1,71 @@
+# ==============================================================================
+# FILE: terraform/01-observer.tf
+# CHỨC NĂNG: Khởi tạo LXC Observer (Giám sát Prometheus/Grafana)
+# ==============================================================================
+
+resource "proxmox_virtual_environment_container" "observer" {
+  node_name    = var.pve_nodes[0]
+  vm_id        = 121
+  unprivileged = true
+  started      = true
+
+  initialization {
+    hostname = "observer"
+    ip_config {
+      ipv4 {
+        address = "192.168.150.21/24"
+        gateway = var.network_gateway 
+      }
+    }
+    user_account {
+      keys = [trimspace(file(var.ssh_public_key_path))]
+    }
+  }
+
+  operating_system {
+    template_file_id = var.lxc_os_template
+    type             = "debian"
+  }
+
+  cpu { cores = 2 }
+  memory { dedicated = 2048 }
+  disk {
+    datastore_id = var.general_pool
+    size         = 15
+  }
+
+  network_interface {
+    name     = "eth0"
+    bridge   = var.network_bridge
+    firewall = true
+  }
+
+  features {
+    nesting = true
+    keyctl  = true
+  }
+}
+
+# --- CẤU HÌNH ZERO TRUST FIREWALL ---
+
+# 1. Bật tường lửa cho CT 121: input_policy và output_policy
+resource "proxmox_virtual_environment_firewall_options" "observer_fw" {
+  node_name    = proxmox_virtual_environment_container.observer.node_name
+  container_id = proxmox_virtual_environment_container.observer.vm_id
+  enabled      = true
+  input_policy = "DROP"
+  output_policy = "ACCEPT"
+  ipfilter     = true
+}
+
+# 2. Gắn nhóm bảo mật sg_observer vào card mạng net0
+resource "proxmox_virtual_environment_firewall_rules" "observer_rules" {
+  node_name    = proxmox_virtual_environment_container.observer.node_name
+  container_id = proxmox_virtual_environment_container.observer.vm_id
+
+  rule {
+    security_group = "sg_observer"
+    iface          = "net0"
+    enabled        = true
+  }
+}
