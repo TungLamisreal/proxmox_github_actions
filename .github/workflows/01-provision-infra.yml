@@ -87,6 +87,7 @@ jobs:
 
           echo "=== Cấp phát hạ tầng với Backend=${BACKEND_CNT}, Frontend=${FRONTEND_CNT}, DB=${DB_CNT} ==="
           terraform apply -auto-approve -input=false \
+            -parallelism=2 \
             -var="backend_count=${BACKEND_CNT}" \
             -var="frontend_count=${FRONTEND_CNT}" \
             -var="db_count=${DB_CNT}"
