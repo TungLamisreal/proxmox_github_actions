@@ -1,54 +1,142 @@
-name: "01 - Provision Infrastructure & Config"
+# ==============================================================================
+# FILE: .github/workflows/01-provision-infra.yml
+# CHỨC NĂNG: Cấp phát toàn bộ hạ tầng MeowCloud (Terraform) & Cấu hình dịch vụ (Ansible)
+# ==============================================================================
+name: "01 - Provision MeowCloud Infrastructure"
+
 on:
   workflow_dispatch:
     inputs:
       backend_count:
-        description: 'Số lượng LXC Backend cần tạo'
+        description: "Số lượng LXC Backend khởi tạo (Mặc định: 3)"
         required: true
-        default: '3'
+        default: "3"
+        type: string
       frontend_count:
-        description: 'Số lượng LXC Frontend cần tạo'
+        description: "Số lượng LXC Frontend khởi tạo (Mặc định: 3)"
         required: true
-        default: '3'
+        default: "3"
+        type: string
+      db_count:
+        description: "Số lượng KVM Database khởi tạo (Mặc định: 2)"
+        required: true
+        default: "2"
+        type: string
+
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - "ansible/**"
+      - ".github/workflows/01-provision-infra.yml"
+
+# Đảm bảo tại một thời điểm chỉ có 1 tiến trình can thiệp vào Terraform State
+concurrency:
+  group: meowcloud-iac-state
+  cancel-in-progress: false
+
+env:
+  TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+  CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+  ANSIBLE_FORCE_COLOR: "1"
 
 jobs:
-  provision_and_configure:
-    name: "Terraform Apply & Ansible Playbooks"
-    runs-on: self-hosted # Chạy trên máy auto-vm nội bộ
-
-    env:
-      TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
-      TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
-      TF_VAR_backend_count: ${{ github.event.inputs.backend_count }}
-      TF_VAR_frontend_count: ${{ github.event.inputs.frontend_count }}
-      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+  provision-and-configure:
+    name: "Terraform Provision & Ansible Configuration"
+    runs-on: self-hosted
+    timeout-minutes: 45
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: "1. Checkout Repository"
         uses: actions/checkout@v4
 
-      - name: 🛠️ Terraform Init
-        working-directory: ./terraform
-        run: terraform init
-
-      - name: 🚀 Terraform Apply (Auto-Approve)
-        working-directory: ./terraform
-        run: terraform apply -auto-approve
-
-      - name: 🔑 Cấp quyền thực thi cho file SSH Key
+      - name: "2. Pre-flight Check (State Dir, SSH Key & Ansible Vault)"
         run: |
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /home/github-runner/.ssh/id_ed25519
-          chmod 600 /home/github-runner/.ssh/id_ed25519
+          echo "=== Kiểm tra môi trường trên Automation Controller (auto-vm) ==="
+          sudo mkdir -p /opt/meowcloud-iac/state
+          sudo chown -R $(whoami):$(whoami) /opt/meowcloud-iac
 
-      - name: ⏳ Chờ các dịch vụ khởi động (Sleep 30s)
-        run: sleep 30
+          # Kiểm tra khóa SSH phục vụ Terraform & Ansible
+          if [ ! -f "/home/github-runner/.ssh/id_ed25519" ]; then
+            echo "ERROR: Không tìm thấy SSH Private Key tại /home/github-runner/.ssh/id_ed25519"
+            exit 1
+          fi
 
-      - name: ⚙️ Chạy toàn bộ Ansible Playbooks (từ 01 đến 06)
+          # Đảm bảo file ~/.vault_pass tồn tại nếu được cấu hình trong GitHub Secrets
+          if [ -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" ]; then
+            echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.vault_pass
+            chmod 600 ~/.vault_pass
+          elif [ ! -f ~/.vault_pass ]; then
+            echo "ERROR: Chưa có file ~/.vault_pass trên Runner hoặc Secret ANSIBLE_VAULT_PASSWORD!"
+            exit 1
+          fi
+
+      - name: "3. Terraform Init & Validate"
+        working-directory: ./terraform
+        run: |
+          terraform init -input=false
+          terraform validate
+
+      - name: "4. Terraform Plan & Apply (Full Infrastructure + Zero Trust FW)"
+        working-directory: ./terraform
+        run: |
+          BACKEND_CNT="${{ github.event.inputs.backend_count || '3' }}"
+          FRONTEND_CNT="${{ github.event.inputs.frontend_count || '3' }}"
+          DB_CNT="${{ github.event.inputs.db_count || '2' }}"
+
+          echo "=== Cấp phát hạ tầng với Backend=${BACKEND_CNT}, Frontend=${FRONTEND_CNT}, DB=${DB_CNT} ==="
+          terraform apply -auto-approve -input=false \
+            -var="backend_count=${BACKEND_CNT}" \
+            -var="frontend_count=${FRONTEND_CNT}" \
+            -var="db_count=${DB_CNT}"
+
+      - name: "5. Verify Dynamic Ansible Inventory"
+        working-directory: ./ansible
+        run: |
+          echo "=== Nội dung file inventory.ini do Terraform xuất ra ==="
+          cat ./inventory.ini
+
+      - name: "6. Wait for All LXC/KVM Nodes SSH Readiness (Cloud-Init Wait)"
+        working-directory: ./ansible
+        run: |
+          echo "=== Đợi tất cả các máy ảo KVM và LXC khởi tất dịch vụ SSH (Tối đa 300s) ==="
+          ansible all -m wait_for_connection -a "delay=5 timeout=300"
+
+      - name: "7. [Tier 1] Configure Database KVM Cluster (05-setup-database.yml)"
+        working-directory: ./ansible
+        run: |
+          ansible-playbook playbooks/05-setup-database.yml \
+            -e "vault_postgres_password=${{ secrets.VAULT_POSTGRES_PASSWORD }}"
+
+      - name: "8. [Tier 2] Configure Backend API Elastic Pool (03-setup-backend.yml)"
+        working-directory: ./ansible
+        run: |
+          ansible-playbook playbooks/03-setup-backend.yml
+
+      - name: "9. [Tier 3] Configure Web Frontend Elastic Pool (04-setup-frontend.yml)"
+        working-directory: ./ansible
+        run: |
+          ansible-playbook playbooks/04-setup-frontend.yml
+
+      - name: "10. [Tier 4] Configure HA Load Balancers & Keepalived VIP (02-setup-lb.yml)"
+        working-directory: ./ansible
+        run: |
+          ansible-playbook playbooks/02-setup-lb.yml
+
+      - name: "11. [Tier 5] Configure Cloudflare Tunnels Ingress (01-setup-tunnels.yml)"
         working-directory: ./ansible
         run: |
           ansible-playbook playbooks/01-setup-tunnels.yml
-          ansible-playbook playbooks/02-setup-lb.yml
-          ansible-playbook playbooks/05-setup-database.yml
-          ansible-playbook playbooks/03-setup-backend.yml
-          ansible-playbook playbooks/04-setup-frontend.yml
+
+      - name: "12. [Tier 6] Configure Observer Monitoring Stack (06-setup-observer.yml)"
+        working-directory: ./ansible
+        run: |
           ansible-playbook playbooks/06-setup-observer.yml
+
+      - name: "13. Post-Deployment VIP Healthcheck"
+        run: |
+          echo "=== Kiểm tra phản hồi từ Keepalived VIP (192.168.150.100) ==="
+          curl -f -s http://192.168.150.100/lb-status
+          echo "=== Kiểm tra luồng định tuyến tới Backend API qua VIP ==="
+          curl -f -s http://192.168.150.100/api/health
