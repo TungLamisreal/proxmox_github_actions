@@ -1,56 +1,140 @@
 ---
 - name: Configure KVM Database Cluster (Dockerized Postgres)
   hosts: databases
-  gather_facts: yes
+  become: true
+  vars:
+    pg_mount_point: /opt/pgdata
+    pg_data_dir: /opt/pgdata/data
+    pg_device: /dev/sdb
+
   tasks:
-    - name: Format second disk (/dev/sdb) as ext4
-      filesystem:
-        fstype: ext4
-        dev: /dev/sdb
+    # =========================================================================
+    # Quản lý Filesystem & Mount an toàn, Idempotent
+    # =========================================================================
+    - name: Check existing filesystem on second disk
+      ansible.builtin.command: "blkid -s TYPE -o value {{ pg_device }}"
+      register: sdb_fstype
+      failed_when: false
+      changed_when: false
 
-    - name: Create mount point for database
-      file:
-        path: /opt/pgdata
+    - name: Abort if unexpected filesystem exists on second disk
+      ansible.builtin.fail:
+        msg: "CRITICAL: {{ pg_device }} has unexpected filesystem '{{ sdb_fstype.stdout }}'. Aborting to protect data!"
+      when:
+        - sdb_fstype.rc == 0
+        - sdb_fstype.stdout != ""
+        - sdb_fstype.stdout != "ext4"
+
+    - name: Format second disk as ext4 only if unformatted
+      community.general.filesystem:
+        fstype: ext4
+        dev: "{{ pg_device }}"
+        force: false
+
+    - name: Ensure mount point directory exists
+      ansible.builtin.file:
+        path: "{{ pg_mount_point }}"
         state: directory
+        mode: '0755'
 
-    - name: Mount /dev/sdb to /opt/pgdata (Ceph db_pool LZ4)
-      mount:
-        path: /opt/pgdata
-        src: /dev/sdb
+    - name: Mount second disk to /opt/pgdata
+      ansible.posix.mount:
+        path: "{{ pg_mount_point }}"
+        src: "{{ pg_device }}"
         fstype: ext4
-        opts: defaults,noatime,discard
+        opts: defaults,noatime
         state: mounted
 
+    # =========================================================================
+    # Tạo thư mục con /opt/pgdata/data (tránh đụng lost+found)
+    # =========================================================================
+    - name: Create PostgreSQL data subdirectory
+      ansible.builtin.file:
+        path: "{{ pg_data_dir }}"
+        state: directory
+        mode: '0750'
+
+    # =========================================================================
+    # Dependencies, Node Exporter & APT lock_timeout
+    # =========================================================================
     - name: Install dependencies and Node Exporter
-      apt:
+      ansible.builtin.apt:
         name:
-          - apt-transport-https
           - ca-certificates
           - curl
-          - software-properties-common
+          - gnupg
           - prometheus-node-exporter
         state: present
-        update_cache: yes
+        update_cache: true
+        cache_valid_time: 3600
+        lock_timeout: 300
 
-    - name: Install Docker Engine
-      shell: |
-        curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add -
-        add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable"
-        apt-get update
-        apt-get install -y docker-ce docker-ce-cli containerd.io
-
-    - name: Run PostgreSQL Docker Container
-      shell: |
-        docker run -d \
-          --name meow-postgres \
-          --restart always \
-          -p 5432:5432 \
-          -e POSTGRES_PASSWORD=meow_secret_password \
-          -v /opt/pgdata:/var/lib/postgresql/data \
-          postgres:15-alpine
-
-    - name: Ensure Node Exporter is running
-      service:
+    - name: Ensure Node Exporter service is running and enabled
+      ansible.builtin.service:
         name: prometheus-node-exporter
         state: started
-        enabled: yes
+        enabled: true
+
+    # =========================================================================
+    # Cài đặt Docker Engine theo trạng thái khai báo (Idempotent)
+    # =========================================================================
+    - name: Ensure /etc/apt/keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker official GPG key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Configure Docker APT repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+        update_cache: true
+
+    - name: Install Docker packages and Python Docker SDK
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+          - python3-docker
+        state: present
+        lock_timeout: 300
+
+    - name: Ensure Docker service is running and enabled
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    # =========================================================================
+    # Quản lý PostgreSQL Container Idempotent qua community.docker
+    # =========================================================================
+    - name: Verify vault_postgres_password is loaded
+      ansible.builtin.assert:
+        that:
+          - vault_postgres_password is defined
+          - vault_postgres_password | length > 0
+        fail_msg: "vault_postgres_password is not set! Pass --vault-password-file."
+      no_log: true
+
+    - name: Run PostgreSQL Docker Container
+      community.docker.docker_container:
+        name: meow-postgres
+        image: postgres:15-alpine
+        state: started
+        restart_policy: always
+        published_ports:
+          - "5432:5432"
+        env:
+          POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
+        volumes:
+          - "{{ pg_data_dir }}:/var/lib/postgresql/data"

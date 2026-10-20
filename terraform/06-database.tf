@@ -132,3 +132,18 @@ resource "proxmox_virtual_environment_firewall_rules" "db_fw_rules" {
     enabled        = true
   }
 }
+
+resource "proxmox_virtual_environment_firewall_ipset" "db_ipfilter_net0" {
+  count     = var.db_count
+  node_name = var.pve_nodes[(count.index + 1) % length(var.pve_nodes)]
+  vm_id     = 271 + count.index
+  name      = "ipfilter-net0"
+  comment   = "CR-MEOWCLOUD-DB-001: Allowed guest IPv4 for net0"
+
+  cidr {
+    name    = "192.168.150.${71 + count.index}"
+    comment = "db-0${count.index + 1} net0 IPv4"
+  }
+
+  depends_on = [proxmox_virtual_environment_vm.db]
+}

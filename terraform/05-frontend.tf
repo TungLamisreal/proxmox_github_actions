@@ -80,3 +80,18 @@ resource "proxmox_virtual_environment_firewall_rules" "frontend_rules" {
     enabled        = true
   }
 }
+
+resource "proxmox_virtual_environment_firewall_ipset" "fe_ipfilter_net0" {
+  count        = var.frontend_count
+  node_name    = proxmox_virtual_environment_container.frontend[count.index].node_name
+  container_id = proxmox_virtual_environment_container.frontend[count.index].vm_id
+  name         = "ipfilter-net0"
+  comment      = "Allowed guest IPv4 for Frontend net0"
+
+  cidr {
+    name    = "192.168.150.${171 + count.index}"
+    comment = "frontend-0${count.index + 1} net0 IPv4"
+  }
+
+  depends_on = [proxmox_virtual_environment_container.frontend]
+}

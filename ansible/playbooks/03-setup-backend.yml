@@ -1,65 +1,86 @@
 ---
 - name: Configure Backend API Elastic Pool (Dockerized)
   hosts: backends
-  gather_facts: yes
+  become: true
+  gather_facts: true
+
   tasks:
     - name: Install dependencies and Node Exporter
-      apt:
+      ansible.builtin.apt:
         name:
-          - apt-transport-https
           - ca-certificates
           - curl
-          - software-properties-common
+          - gnupg
           - prometheus-node-exporter
         state: present
-        update_cache: yes
+        update_cache: true
+        cache_valid_time: 3600
+        lock_timeout: 300
 
-    - name: Add Docker's official GPG key
-      apt_key:
+    - name: Ensure Node Exporter is running and enabled
+      ansible.builtin.service:
+        name: prometheus-node-exporter
+        state: started
+        enabled: true
+
+    - name: Ensure /etc/apt/keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker official GPG key
+      ansible.builtin.get_url:
         url: https://download.docker.com/linux/debian/gpg
-        state: present
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
 
     - name: Add Docker repository
-      apt_repository:
-        repo: deb [arch=amd64] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        filename: docker
         state: present
+        update_cache: true
 
-    - name: Install Docker Engine
-      apt:
+    - name: Install Docker Engine packages
+      ansible.builtin.apt:
         name:
           - docker-ce
           - docker-ce-cli
           - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+          - python3-docker
         state: present
-        update_cache: yes
+        lock_timeout: 300
 
-    - name: Ensure Docker and Node Exporter are running
-      service:
-        name: "{{ item }}"
+    - name: Ensure Docker service is running and enabled
+      ansible.builtin.service:
+        name: docker
         state: started
-        enabled: yes
-      loop:
-        - docker
-        - prometheus-node-exporter
+        enabled: true
 
     - name: Create Backend App directory
-      file:
+      ansible.builtin.file:
         path: /opt/meow-backend
         state: directory
+        mode: '0755'
 
     - name: Create Dockerfile for Backend API
-      copy:
+      ansible.builtin.copy:
         dest: /opt/meow-backend/Dockerfile
+        mode: '0644'
         content: |
           FROM python:3.9-slim
           WORKDIR /app
-          RUN pip install flask psycopg2-binary gunicorn
+          RUN pip install --no-cache-dir flask psycopg2-binary gunicorn
           COPY app.py .
           CMD ["gunicorn", "--workers=2", "--bind=0.0.0.0:5000", "app:app"]
 
     - name: Deploy Backend API application source
-      copy:
+      ansible.builtin.copy:
         dest: /opt/meow-backend/app.py
+        mode: '0644'
         content: |
           from flask import Flask, jsonify
           import socket
@@ -79,8 +100,20 @@
           if __name__ == '__main__':
               app.run(host='0.0.0.0', port=5000)
 
-    - name: Build and Run Backend API Container
-      shell: |
-        cd /opt/meow-backend
-        docker build -t meow-backend:latest .
-        docker run -d --name meow-backend-app --restart always -p 5000:5000 meow-backend:latest
+    - name: Build Backend Docker Image
+      community.docker.docker_image:
+        name: meow-backend
+        tag: latest
+        build:
+          path: /opt/meow-backend
+        source: build
+        state: present
+
+    - name: Run Backend API Container (Idempotent)
+      community.docker.docker_container:
+        name: meow-backend-app
+        image: meow-backend:latest
+        state: started
+        restart_policy: always
+        published_ports:
+          - "5000:5000"
