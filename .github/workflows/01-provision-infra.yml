@@ -107,8 +107,7 @@ jobs:
       - name: "7. [Tier 1] Configure Database KVM Cluster (05-setup-database.yml)"
         working-directory: ./ansible
         run: |
-          ansible-playbook playbooks/05-setup-database.yml \
-            -e "vault_postgres_password=${{ secrets.VAULT_POSTGRES_PASSWORD }}"
+          ansible-playbook playbooks/05-setup-database.yml
 
       - name: "8. [Tier 2] Configure Backend API Elastic Pool (03-setup-backend.yml)"
         working-directory: ./ansible
