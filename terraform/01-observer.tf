@@ -68,3 +68,19 @@ resource "proxmox_virtual_environment_firewall_rules" "observer_rules" {
     enabled        = true
   }
 }
+
+# --- CẤU HÌNH IPFILTER NET0 CHO OBSERVER ---
+# Khai báo IP tĩnh để Proxmox Firewall không chặn (Anti-Spoofing)
+resource "proxmox_virtual_environment_firewall_ipset" "observer_ipfilter_net0" {
+  node_name    = proxmox_virtual_environment_container.observer.node_name
+  container_id = proxmox_virtual_environment_container.observer.vm_id
+  name         = "ipfilter-net0"
+  comment      = "Allowed IP for Observer net0"
+
+  cidr {
+    name    = "192.168.150.21"
+    comment = "Observer IPv4"
+  }
+
+  depends_on = [proxmox_virtual_environment_container.observer]
+}

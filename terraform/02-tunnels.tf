@@ -75,3 +75,20 @@ resource "proxmox_virtual_environment_firewall_rules" "tunnels_rules" {
     enabled        = true
   }
 }
+
+# --- CẤU HÌNH IPFILTER NET0 CHO CLOUDFLARE TUNNELS ---
+# Khai báo IP tĩnh để Proxmox Firewall không chặn (Anti-Spoofing)
+resource "proxmox_virtual_environment_firewall_ipset" "tunnels_ipfilter_net0" {
+  count        = 3
+  node_name    = proxmox_virtual_environment_container.tunnels[count.index].node_name
+  container_id = proxmox_virtual_environment_container.tunnels[count.index].vm_id
+  name         = "ipfilter-net0"
+  comment      = "Allowed IP for Tunnel net0"
+
+  cidr {
+    name    = "192.168.150.${51 + count.index}"
+    comment = "tunnel-0${count.index + 1} net0 IPv4"
+  }
+
+  depends_on = [proxmox_virtual_environment_container.tunnels]
+}

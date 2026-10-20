@@ -1,52 +1,61 @@
 ---
 - name: Configure Nginx HA Load Balancers & Keepalived VIP (.100)
   hosts: loadbalancers
-  gather_facts: yes
+  become: true  # BẮT BUỘC để có quyền chạy apt và sửa file system
+  gather_facts: true
+
   tasks:
-    - name: Install Nginx, Keepalived and Exporters
-      apt:
+    - name: Install Nginx, Keepalived, Node Exporter and psmisc
+      ansible.builtin.apt:
         name:
           - nginx
           - keepalived
           - prometheus-node-exporter
-          - prometheus-nginx-exporter
+          - psmisc  # Cung cấp lệnh killall cho Keepalived VRRP Script
         state: present
-        update_cache: yes
+        update_cache: true
+        lock_timeout: 300  # Tránh lỗi dpkg lock khi apt đang chạy ngầm
 
     - name: Remove default Nginx site
-      file:
+      ansible.builtin.file:
         path: /etc/nginx/sites-enabled/default
         state: absent
 
     - name: Render dynamic Upstream Load Balancer configuration
-      template:
+      ansible.builtin.template:
         src: ../templates/loadbalancer.conf.j2
         dest: /etc/nginx/conf.d/loadbalancer.conf
         mode: '0644'
       notify: Reload Nginx
 
     - name: Configure Keepalived for VIP 192.168.150.100
-      copy:
+      ansible.builtin.copy:
         dest: /etc/keepalived/keepalived.conf
         content: |
           vrrp_script chk_nginx {
               script "/usr/bin/killall -0 nginx"
               interval 2
-              weight 2
+              weight -20   # QUAN TRỌNG: Trừ 20 điểm nếu Nginx sập (Master 100-20=80 < Backup 90)
+              fall 2
+              rise 2
           }
+
           vrrp_instance VI_MEOW_LB {
               state {{ keepalived_state | default('BACKUP') }}
               interface eth0
               virtual_router_id 51
               priority {{ keepalived_priority | default(90) }}
               advert_int 1
+
               authentication {
                   auth_type PASS
                   auth_pass MeowLB100
               }
+
               virtual_ipaddress {
                   192.168.150.100/24
               }
+
               track_script {
                   chk_nginx
               }
@@ -54,10 +63,10 @@
       notify: Restart Keepalived
 
     - name: Ensure services are enabled and started
-      service:
+      ansible.builtin.service:
         name: "{{ item }}"
         state: started
-        enabled: yes
+        enabled: true
       loop:
         - nginx
         - keepalived
@@ -65,11 +74,11 @@
 
   handlers:
     - name: Reload Nginx
-      service:
+      ansible.builtin.service:
         name: nginx
         state: reloaded
 
     - name: Restart Keepalived
-      service:
+      ansible.builtin.service:
         name: keepalived
         state: restarted

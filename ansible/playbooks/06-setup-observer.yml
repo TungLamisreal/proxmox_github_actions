@@ -1,20 +1,24 @@
 ---
 - name: Configure Observer (Prometheus, Alertmanager & Grafana)
   hosts: observer
-  gather_facts: yes
+  become: true  # Đã bổ sung
+  gather_facts: true
+
   tasks:
     - name: Install Prometheus, Alertmanager and Node Exporter
-      apt:
+      ansible.builtin.apt:
         name:
           - prometheus
           - prometheus-alertmanager
           - prometheus-node-exporter
         state: present
-        update_cache: yes
+        update_cache: true
+        lock_timeout: 300  # Đã bổ sung
 
     - name: Generate dynamic prometheus.yml scraping all MeowCloud tiers
-      copy:
+      ansible.builtin.copy:
         dest: /etc/prometheus/prometheus.yml
+        mode: '0644'
         content: |
           global:
             scrape_interval: 10s
@@ -62,10 +66,10 @@
       notify: Restart Prometheus
 
     - name: Ensure Prometheus and Alertmanager are active
-      service:
+      ansible.builtin.service:
         name: "{{ item }}"
         state: started
-        enabled: yes
+        enabled: true
       loop:
         - prometheus
         - prometheus-alertmanager
@@ -73,6 +77,6 @@
 
   handlers:
     - name: Restart Prometheus
-      service:
+      ansible.builtin.service:
         name: prometheus
         state: restarted

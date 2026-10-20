@@ -75,3 +75,27 @@ resource "proxmox_virtual_environment_firewall_rules" "lb_rules" {
     enabled        = true
   }
 }
+
+# --- CẤU HÌNH IPFILTER NET0 CHO LOAD BALANCER ---
+# Cho phép IP gốc của Container và IP VIP Keepalived đi qua bộ lọc Anti-Spoofing
+resource "proxmox_virtual_environment_firewall_ipset" "lb_ipfilter_net0" {
+  count        = 2
+  node_name    = proxmox_virtual_environment_container.loadbalancer[count.index].node_name
+  container_id = proxmox_virtual_environment_container.loadbalancer[count.index].vm_id
+  name         = "ipfilter-net0"
+  comment      = "Allowed IP and VIP for LB net0"
+
+  # 1. Cho phép IP tĩnh gốc (.61 hoặc .62)
+  cidr {
+    name    = "192.168.150.${61 + count.index}"
+    comment = "lb-0${count.index + 1} net0 IPv4"
+  }
+
+  # 2. Cho phép IP ảo VIP (.100) của Keepalived để không bị Drop gói tin VRRP/HTTP
+  cidr {
+    name    = "192.168.150.100"
+    comment = "Keepalived VIP"
+  }
+
+  depends_on = [proxmox_virtual_environment_container.loadbalancer]
+}

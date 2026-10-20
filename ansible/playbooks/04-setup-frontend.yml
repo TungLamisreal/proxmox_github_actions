@@ -64,15 +64,15 @@
         - /opt/meow-frontend/html
         - /opt/meow-frontend/conf
 
-    - name: Deploy Nginx Reverse Proxy Configuration
+    - name: Deploy Nginx Reverse Proxy Configuration (Dynamic Upstream)
       ansible.builtin.copy:
         dest: /opt/meow-frontend/conf/default.conf
         mode: '0644'
         content: |
           upstream backend_cluster {
-              server 192.168.150.101:5000;
-              server 192.168.150.102:5000;
-              server 192.168.150.103:5000;
+          {% for host in groups['backends'] %}
+              server {{ hostvars[host]['ansible_host'] }}:5000 max_fails=3 fail_timeout=10s;
+          {% endfor %}
           }
 
           server {
@@ -90,8 +90,10 @@
                   proxy_pass http://backend_cluster/;
                   proxy_set_header Host $host;
                   proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
               }
           }
+      register: nginx_fe_conf
 
     - name: Deploy MeowCloud E-Commerce Web UI
       ansible.builtin.copy:
@@ -116,14 +118,15 @@
           </body>
           </html>
 
-    - name: Run Nginx Container for Frontend (Idempotent)
+    - name: Run Frontend Web Container (Idempotent)
       community.docker.docker_container:
         name: meow-frontend-app
         image: nginx:alpine
         state: started
+        restart: "{{ nginx_fe_conf.changed }}"
         restart_policy: always
         published_ports:
           - "80:80"
         volumes:
-          - /opt/meow-frontend/html:/usr/share/nginx/html:ro
-          - /opt/meow-frontend/conf/default.conf:/etc/nginx/conf.d/default.conf:ro
+          - "/opt/meow-frontend/html:/usr/share/nginx/html:ro"
+          - "/opt/meow-frontend/conf/default.conf:/etc/nginx/conf.d/default.conf:ro"
