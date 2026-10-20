@@ -14,7 +14,7 @@ resource "proxmox_virtual_environment_container" "tunnels" {
 
   initialization {
     hostname = "tunnel-${count.index + 1}"
-    
+
     # Dải IP cấp phát tĩnh: 192.168.150.51 -> 192.168.150.53
     ip_config {
       ipv4 {
@@ -49,20 +49,19 @@ resource "proxmox_virtual_environment_container" "tunnels" {
 
   features {
     nesting = true
-    keyctl  = true
   }
 }
 
 # --- CẤU HÌNH TƯỜNG LỬA CHO CỤM TUNNELS ---
 
 resource "proxmox_virtual_environment_firewall_options" "tunnels_fw" {
-  count        = 3
-  node_name    = proxmox_virtual_environment_container.tunnels[count.index].node_name
-  container_id = proxmox_virtual_environment_container.tunnels[count.index].vm_id
-  enabled      = true
-  input_policy = "DROP"
+  count         = 3
+  node_name     = proxmox_virtual_environment_container.tunnels[count.index].node_name
+  container_id  = proxmox_virtual_environment_container.tunnels[count.index].vm_id
+  enabled       = true
+  input_policy  = "DROP"
   output_policy = "ACCEPT"
-  ipfilter     = true
+  ipfilter      = true
 }
 
 resource "proxmox_virtual_environment_firewall_rules" "tunnels_rules" {

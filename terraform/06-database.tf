@@ -9,8 +9,8 @@ resource "proxmox_virtual_environment_vm" "db" {
   description = "MeowCloud Database KVM (${count.index == 0 ? "Primary" : "Standby"})"
   tags        = ["meowcloud", "database", "stateful"]
 
-  # Anti-Affinity: Rải đều Primary lên node1, Standby lên node2
-  node_name = var.pve_nodes[count.index % length(var.pve_nodes)]
+  # Anti-Affinity: Rải đều Primary lên node2, Standby lên node3
+  node_name = var.pve_nodes[(count.index + 1) % length(var.pve_nodes)]
 
   # Quy hoạch VMID 271 - 272 (tránh đụng CTID 171+ của Frontend)
   vm_id = 271 + count.index
@@ -27,6 +27,7 @@ resource "proxmox_virtual_environment_vm" "db" {
   # Nhân bản từ Debian 12 Cloud-Init Template (VMID 9000)
   clone {
     vm_id = var.vm_template_id
+    node_name = "node1"
     full  = true
   }
 

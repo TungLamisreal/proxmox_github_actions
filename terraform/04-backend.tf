@@ -14,7 +14,7 @@ resource "proxmox_virtual_environment_container" "backend" {
 
   initialization {
     hostname = "be-${count.index + 1}"
-    
+
     # Dải IP cấp phát tự động: Bắt đầu từ 192.168.150.101
     ip_config {
       ipv4 {
@@ -49,7 +49,6 @@ resource "proxmox_virtual_environment_container" "backend" {
 
   features {
     nesting = true
-    keyctl  = true
   }
 
   # Tránh Terraform xóa máy nếu Proxmox HA tự động Live Migrate sang Node khác
@@ -63,15 +62,15 @@ resource "proxmox_virtual_environment_container" "backend" {
 # --- CẤU HÌNH TƯỜNG LỬA CHO CỤM BACKEND ---
 
 resource "proxmox_virtual_environment_firewall_options" "backend_fw" {
-  count        = var.backend_count
-  node_name    = proxmox_virtual_environment_container.backend[count.index].node_name
-  container_id = proxmox_virtual_environment_container.backend[count.index].vm_id
-  enabled      = true
-  input_policy = "DROP"
+  count         = var.backend_count
+  node_name     = proxmox_virtual_environment_container.backend[count.index].node_name
+  container_id  = proxmox_virtual_environment_container.backend[count.index].vm_id
+  enabled       = true
+  input_policy  = "DROP"
   output_policy = "ACCEPT"
-  
+
   # Cực kỳ quan trọng cho các dải Elastic Pool: Chống giả mạo MAC/IP
-  ipfilter     = true 
+  ipfilter = true
 }
 
 resource "proxmox_virtual_environment_firewall_rules" "backend_rules" {

@@ -49,20 +49,19 @@ resource "proxmox_virtual_environment_container" "loadbalancer" {
 
   features {
     nesting = true
-    keyctl  = true
   }
 }
 
 # --- CẤU HÌNH TƯỜNG LỬA CHO CỤM LOAD BALANCER ---
 
 resource "proxmox_virtual_environment_firewall_options" "lb_fw" {
-  count        = 2
-  node_name    = proxmox_virtual_environment_container.loadbalancer[count.index].node_name
-  container_id = proxmox_virtual_environment_container.loadbalancer[count.index].vm_id
-  enabled      = true
-  input_policy = "DROP"
+  count         = 2
+  node_name     = proxmox_virtual_environment_container.loadbalancer[count.index].node_name
+  container_id  = proxmox_virtual_environment_container.loadbalancer[count.index].vm_id
+  enabled       = true
+  input_policy  = "DROP"
   output_policy = "ACCEPT"
-  ipfilter     = true
+  ipfilter      = true
 }
 
 resource "proxmox_virtual_environment_firewall_rules" "lb_rules" {

@@ -13,7 +13,7 @@ resource "proxmox_virtual_environment_container" "frontend" {
 
   initialization {
     hostname = "fe-${count.index + 1}"
-    
+
     # Dải IP cấp phát tự động: Bắt đầu từ 192.168.150.171
     ip_config {
       ipv4 {
@@ -48,7 +48,6 @@ resource "proxmox_virtual_environment_container" "frontend" {
 
   features {
     nesting = true
-    keyctl  = true
   }
 
   lifecycle {
@@ -61,13 +60,13 @@ resource "proxmox_virtual_environment_container" "frontend" {
 # --- CẤU HÌNH TƯỜNG LỬA CHO CỤM FRONTEND ---
 
 resource "proxmox_virtual_environment_firewall_options" "frontend_fw" {
-  count        = var.frontend_count
-  node_name    = proxmox_virtual_environment_container.frontend[count.index].node_name
-  container_id = proxmox_virtual_environment_container.frontend[count.index].vm_id
-  enabled      = true
-  input_policy = "DROP"
+  count         = var.frontend_count
+  node_name     = proxmox_virtual_environment_container.frontend[count.index].node_name
+  container_id  = proxmox_virtual_environment_container.frontend[count.index].vm_id
+  enabled       = true
+  input_policy  = "DROP"
   output_policy = "ACCEPT"
-  ipfilter     = true
+  ipfilter      = true
 }
 
 resource "proxmox_virtual_environment_firewall_rules" "frontend_rules" {

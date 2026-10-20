@@ -14,7 +14,7 @@ resource "proxmox_virtual_environment_container" "observer" {
     ip_config {
       ipv4 {
         address = "192.168.150.21/24"
-        gateway = var.network_gateway 
+        gateway = var.network_gateway
       }
     }
     user_account {
@@ -42,7 +42,6 @@ resource "proxmox_virtual_environment_container" "observer" {
 
   features {
     nesting = true
-    keyctl  = true
   }
 }
 
@@ -50,12 +49,12 @@ resource "proxmox_virtual_environment_container" "observer" {
 
 # 1. Bật tường lửa cho CT 121: input_policy và output_policy
 resource "proxmox_virtual_environment_firewall_options" "observer_fw" {
-  node_name    = proxmox_virtual_environment_container.observer.node_name
-  container_id = proxmox_virtual_environment_container.observer.vm_id
-  enabled      = true
-  input_policy = "DROP"
+  node_name     = proxmox_virtual_environment_container.observer.node_name
+  container_id  = proxmox_virtual_environment_container.observer.vm_id
+  enabled       = true
+  input_policy  = "DROP"
   output_policy = "ACCEPT"
-  ipfilter     = true
+  ipfilter      = true
 }
 
 # 2. Gắn nhóm bảo mật sg_observer vào card mạng net0
