@@ -35,7 +35,7 @@ variable "ssh_private_key_path" {
   default     = "/home/github-runner/.ssh/id_ed25519"
 }
 
-# --- 3. HẠ TẦNG & LƯU TRỮ ---
+# --- 3. HẠ TẦNG, LƯU TRỮ & LXC GOLDEN TEMPLATES ---
 variable "pve_nodes" {
   type        = list(string)
   description = "Danh sách Node PVE"
@@ -66,10 +66,18 @@ variable "db_pool" {
   default     = "db_pool"
 }
 
-variable "lxc_os_template" {
+# Image B: Dùng cho Observer, Tunnels, Load Balancers
+variable "lxc_base_template" {
   type        = string
-  description = "Template Debian 12 trên shared-fs"
-  default     = "shared-fs:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+  description = "Golden Image LXC Base trên CephFS (shared-fs)"
+  default     = "shared-fs:vztmpl/meowcloud-lxc-base-debian12.tar.zst"
+}
+
+# Image C: Dùng cho Backend, Frontend (Đã tích hợp Docker CE)
+variable "lxc_docker_template" {
+  type        = string
+  description = "Golden Image LXC Docker trên CephFS (shared-fs)"
+  default     = "shared-fs:vztmpl/meowcloud-lxc-docker-debian12.tar.zst"
 }
 
 # --- 4. CO GIÃN TẢI (AUTO-SCALING) ---
@@ -91,9 +99,13 @@ variable "db_count" {
   default     = 2
 }
 
-# --- 5. BIẾN LƯU ID CÁC MÁY ẢO ---
-variable "vm_template_id" {
-  type        = number
-  description = "VMID của máy ảo Debian 12 Cloud-Init Template trên Proxmox"
-  default     = 9000 # Thay bằng VMID Template thực tế của bạn (nếu dùng Clone)
+# --- 5. GOLDEN IMAGE KVM DATABASE (PHÂN TÁN ĐA NODE CHỐNG SPOF) ---
+variable "vm_template_ids" {
+  type        = map(number)
+  description = "Ánh xạ VMID của Golden Image KVM Database theo từng Node vật lý"
+  default = {
+    "node1" = 9001
+    "node2" = 9002
+    "node3" = 9003
+  }
 }

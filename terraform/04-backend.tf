@@ -29,7 +29,7 @@ resource "proxmox_virtual_environment_container" "backend" {
   }
 
   operating_system {
-    template_file_id = var.lxc_os_template
+    template_file_id = var.lxc_docker_template
     type             = "debian"
   }
 

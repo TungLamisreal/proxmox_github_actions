@@ -24,11 +24,11 @@ resource "proxmox_virtual_environment_vm" "db" {
     timeout = "15m"
   }
 
-  # Nhân bản từ Debian 12 Cloud-Init Template (VMID 9000)
+  # Nhân bản cục bộ từ Golden Image KVM (9001/9002/9003) ngay trên Node đích (Chống SPOF)
   clone {
-    vm_id = var.vm_template_id
-    node_name = "node1"
-    full  = true
+    node_name = var.pve_nodes[(count.index + 1) % length(var.pve_nodes)]
+    vm_id     = var.vm_template_ids[var.pve_nodes[(count.index + 1) % length(var.pve_nodes)]]
+    full      = true
   }
 
   # Tận dụng tập lệnh phần cứng VT-x/AMD-V
