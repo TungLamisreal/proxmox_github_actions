@@ -1,6 +1,6 @@
 # ==============================================================================
 # FILE: .github/workflows/01-provision-infra.yml
-# CHỨC NĂNG: Cấp phát toàn bộ hạ tầng MeowCloud (Terraform) & Cấu hình dịch vụ (Ansible)
+# CHỨC NĂNG: Cấp phát hạ tầng MeowCloud từ Golden Images & Đo lường tốc độ triển khai
 # ==============================================================================
 name: "01 - Provision MeowCloud Infrastructure"
 
@@ -22,28 +22,27 @@ on:
         required: true
         default: "2"
         type: string
+      tf_parallelism:
+        description: "Số luồng Terraform chạy song song (Khuyên dùng: 1 để tránh cfs-lock)"
+        required: true
+        default: "1"
+        type: string
 
-  push:
-    branches:
-      - main
-    paths:
-      - "terraform/**"
-      - "ansible/**"
-      - ".github/workflows/01-provision-infra.yml"
-
-# Đảm bảo tại một thời điểm chỉ có 1 tiến trình can thiệp vào Terraform State
 concurrency:
   group: meowcloud-iac-state
   cancel-in-progress: false
 
 env:
+  TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
+  TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
   TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
   CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
   ANSIBLE_FORCE_COLOR: "1"
+  PVE_HOST: "192.168.150.49"
 
 jobs:
   provision-and-configure:
-    name: "Terraform Provision & Ansible Configuration"
+    name: "Deploy from Golden Images & Benchmark"
     runs-on: self-hosted
     timeout-minutes: 45
 
@@ -51,92 +50,132 @@ jobs:
       - name: "1. Checkout Repository"
         uses: actions/checkout@v4
 
-      - name: "2. Pre-flight Check (State Dir, SSH Key & Ansible Vault)"
+      - name: "2. Pre-flight Check (State Dir, SSH Key, Vault & Golden Images)"
         run: |
-          echo "=== Kiểm tra môi trường trên Automation Controller (auto-vm) ==="
+          echo "=== [1] Kiểm tra thư mục Terraform State & Khóa SSH ==="
           sudo mkdir -p /opt/meowcloud-iac/state
           sudo chown -R $(whoami):$(whoami) /opt/meowcloud-iac
 
-          # Kiểm tra khóa SSH phục vụ Terraform & Ansible
-          if [ ! -f "/home/github-runner/.ssh/id_ed25519" ]; then
-            echo "ERROR: Không tìm thấy SSH Private Key tại /home/github-runner/.ssh/id_ed25519"
+          mkdir -p ~/.ssh
+          if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+            ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub
+          elif [ ! -f "/home/github-runner/.ssh/id_ed25519" ]; then
+            echo "ERROR: Không tìm thấy SSH Private Key!"
             exit 1
           fi
 
-          # Đảm bảo file ~/.vault_pass tồn tại nếu được cấu hình trong GitHub Secrets
+          echo "=== [2] Kiểm tra mật khẩu giải mã Ansible Vault ==="
           if [ -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" ]; then
             echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.vault_pass
             chmod 600 ~/.vault_pass
           elif [ ! -f ~/.vault_pass ]; then
-            echo "ERROR: Chưa có file ~/.vault_pass trên Runner hoặc Secret ANSIBLE_VAULT_PASSWORD!"
+            echo "ERROR: Thiếu ~/.vault_pass hoặc Secret ANSIBLE_VAULT_PASSWORD!"
             exit 1
           fi
 
-      - name: "3. Terraform Init & Validate"
-        working-directory: ./terraform
-        run: |
-          terraform init -input=false
-          terraform validate
+          echo "=== [3] Kiểm tra sự tồn tại của 3 Golden Images trên Proxmox ==="
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@${PVE_HOST}"
 
-      - name: "4. Terraform Plan & Apply (Full Infrastructure + Zero Trust FW)"
+          $SSH_CMD "test -f /mnt/pve/shared-fs/template/cache/meowcloud-lxc-base-debian12.tar.zst" || {
+            echo "ERROR: Thiếu meowcloud-lxc-base-debian12.tar.zst! Hãy chạy workflow 00-build-golden-images.yml trước."
+            exit 1
+          }
+          $SSH_CMD "test -f /mnt/pve/shared-fs/template/cache/meowcloud-lxc-docker-debian12.tar.zst" || {
+            echo "ERROR: Thiếu meowcloud-lxc-docker-debian12.tar.zst! Hãy chạy workflow 00-build-golden-images.yml trước."
+            exit 1
+          }
+          for vmid in 9001 9002 9003; do
+            $SSH_CMD "qm status $vmid" >/dev/null 2>&1 || {
+              echo "ERROR: Thiếu KVM Template $vmid! Hãy chạy workflow 00-build-golden-images.yml trước."
+              exit 1
+            }
+          done
+          echo "OK: Đầy đủ cả 3 Golden Images (Base LXC, Docker LXC, Multi-node KVM DB)!"
+
+      - name: "3. Start Benchmark Timer & Terraform Apply"
         working-directory: ./terraform
         run: |
+          TOTAL_START=$(date +%s)
+          TF_START=$(date +%s)
+          echo "TOTAL_START=$TOTAL_START" >> $GITHUB_ENV
+          echo "TF_START=$TF_START" >> $GITHUB_ENV
+
           BACKEND_CNT="${{ github.event.inputs.backend_count || '3' }}"
           FRONTEND_CNT="${{ github.event.inputs.frontend_count || '3' }}"
           DB_CNT="${{ github.event.inputs.db_count || '2' }}"
+          PARALLEL="${{ github.event.inputs.tf_parallelism || '1' }}"
 
-          echo "=== Cấp phát hạ tầng với Backend=${BACKEND_CNT}, Frontend=${FRONTEND_CNT}, DB=${DB_CNT} ==="
+          terraform init -input=false
+          terraform validate
+
           terraform apply -auto-approve -input=false \
-            -parallelism=1 \
+            -parallelism=${PARALLEL} \
             -var="backend_count=${BACKEND_CNT}" \
             -var="frontend_count=${FRONTEND_CNT}" \
             -var="db_count=${DB_CNT}"
 
-      - name: "5. Verify Dynamic Ansible Inventory"
+          TF_END=$(date +%s)
+          echo "TF_DURATION=$((TF_END - TF_START))" >> $GITHUB_ENV
+
+      - name: "4. Wait for All LXC/KVM Nodes SSH Readiness"
         working-directory: ./ansible
         run: |
-          echo "=== Nội dung file inventory.ini do Terraform xuất ra ==="
+          ANS_START=$(date +%s)
+          echo "ANS_START=$ANS_START" >> $GITHUB_ENV
           cat ./inventory.ini
+          ansible all -m wait_for_connection -a "delay=3 timeout=300"
 
-      - name: "6. Wait for All LXC/KVM Nodes SSH Readiness (Cloud-Init Wait)"
-        working-directory: ./ansible
-        run: |
-          echo "=== Đợi tất cả các máy ảo KVM và LXC khởi tất dịch vụ SSH (Tối đa 300s) ==="
-          ansible all -m wait_for_connection -a "delay=5 timeout=300"
-
-      - name: "7. [Tier 1] Configure Database KVM Cluster (05-setup-database.yml)"
+      - name: "5. [Tier 1] Configure Database KVM Cluster (05-setup-database.yml)"
         working-directory: ./ansible
         run: |
           ansible-playbook playbooks/05-setup-database.yml
 
-      - name: "8. [Tier 2] Configure Backend API Elastic Pool (03-setup-backend.yml)"
+      - name: "6. [Tier 2] Configure Backend API Elastic Pool (03-setup-backend.yml)"
         working-directory: ./ansible
         run: |
           ansible-playbook playbooks/03-setup-backend.yml
 
-      - name: "9. [Tier 3] Configure Web Frontend Elastic Pool (04-setup-frontend.yml)"
+      - name: "7. [Tier 3] Configure Web Frontend Elastic Pool (04-setup-frontend.yml)"
         working-directory: ./ansible
         run: |
           ansible-playbook playbooks/04-setup-frontend.yml
 
-      - name: "10. [Tier 4] Configure HA Load Balancers & Keepalived VIP (02-setup-lb.yml)"
+      - name: "8. [Tier 4] Configure HA Load Balancers & Keepalived VIP (02-setup-lb.yml)"
         working-directory: ./ansible
         run: |
           ansible-playbook playbooks/02-setup-lb.yml
 
-      - name: "11. [Tier 5] Configure Cloudflare Tunnels Ingress (01-setup-tunnels.yml)"
+      - name: "9. [Tier 5] Configure Cloudflare Tunnels Ingress (01-setup-tunnels.yml)"
         working-directory: ./ansible
         run: |
           ansible-playbook playbooks/01-setup-tunnels.yml
 
-      - name: "12. [Tier 6] Configure Observer Monitoring Stack (06-setup-observer.yml)"
+      - name: "10. [Tier 6] Configure Observer Monitoring Stack (06-setup-observer.yml)"
         working-directory: ./ansible
         run: |
           ansible-playbook playbooks/06-setup-observer.yml
+          ANS_END=$(date +%s)
+          echo "ANS_DURATION=$((ANS_END - ANS_START))" >> $GITHUB_ENV
 
-      - name: "13. Post-Deployment VIP Healthcheck"
+      - name: "11. Post-Deployment Verification (Identity, VIP & Healthchecks)"
+        working-directory: ./ansible
         run: |
-          echo "=== Kiểm tra phản hồi từ Keepalived VIP (192.168.150.100) ==="
+          echo "=== [1] Kiểm tra định danh độc lập (machine-id & IP) trên toàn bộ các máy ==="
+          ansible all -m shell -a "echo -n 'Host: $(hostname) | IP: $(hostname -I | awk \"{print \$1}\") | Machine-ID: ' && cat /etc/machine-id"
+
+          echo "=== [2] Kiểm tra phản hồi từ Keepalived VIP (192.168.150.100) ==="
           curl -f -s http://192.168.150.100/lb-status
-          echo "=== Kiểm tra luồng định tuyến tới Backend API qua VIP ==="
           curl -f -s http://192.168.150.100/api/health
+          echo ""
+
+          TOTAL_END=$(date +%s)
+          TOTAL_DURATION=$((TOTAL_END - TOTAL_START))
+
+          echo "## 📊 Kết quả Đo lường Thời gian Triển khai (Packer Golden Images)" >> $GITHUB_STEP_SUMMARY
+          echo "| Giai đoạn | Thời gian thực thi (Giây) |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :---: |" >> $GITHUB_STEP_SUMMARY
+          echo "| **1. Terraform Provisioning (Clone Golden Images + Firewall)** | **${TF_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
+          echo "| **2. Ansible Service Configuration (6 Tiers + Wait SSH)** | **${ANS_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Tổng thời gian hoàn tất (End-to-End)** | **${TOTAL_DURATION}s** |" >> $GITHUB_STEP_SUMMARY

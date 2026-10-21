@@ -1,29 +1,71 @@
-name: "02 - Destroy Infrastructure"
+# ==============================================================================
+# FILE: .github/workflows/02-destroy-infra.yml
+# CHỨC NĂNG: Hủy diệt có kiểm soát các VM/CT thuộc phạm vi Lab (Bảo toàn Golden Images)
+# ==============================================================================
+name: "02 - Destroy MeowCloud Lab Infrastructure"
+
 on:
   workflow_dispatch:
     inputs:
-      confirm:
-        description: 'Gõ YES để xác nhận hủy toàn bộ cụm máy ảo'
+      confirm_destroy:
+        description: "Gõ chính xác 'DESTROY-MEOWCLOUD' để xác nhận xóa các VM/LXC của Lab:"
         required: true
+        default: ""
+        type: string
+      tf_parallelism:
+        description: "Số luồng xóa song song (Khuyên dùng: 1 hoặc 2 để tránh cfs-lock)"
+        required: true
+        default: "1"
+        type: string
+
+concurrency:
+  group: meowcloud-iac-state
+  cancel-in-progress: false
+
+env:
+  TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
+  TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+  TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
 
 jobs:
-  destroy_infra:
-    name: "Terraform Destroy"
+  destroy-infrastructure:
+    name: "Terraform Destroy Lab Workloads"
     runs-on: self-hosted
-    if: github.event.inputs.confirm == 'YES'
-
-    env:
-      TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
-      TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+    timeout-minutes: 30
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: "1. Checkout Repository"
         uses: actions/checkout@v4
 
-      - name: 🛠️ Terraform Init
-        working-directory: ./terraform
-        run: terraform init
+      - name: "2. Security Confirmation Gate"
+        run: |
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY-MEOWCLOUD" ]; then
+            echo "ERROR: Chuỗi xác nhận không khớp! Bạn phải nhập chính xác: DESTROY-MEOWCLOUD"
+            exit 1
+          fi
+          echo "Xác nhận hợp lệ. Bắt đầu quy trình thu hồi tài nguyên Lab..."
 
-      - name: 💥 Terraform Destroy (Auto-Approve)
+      - name: "3. Unlock Any Stuck LXC/VM Before Destroy"
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
+          echo "=== Kiểm tra và gỡ lock dự phòng trước khi xóa ==="
+          for id in 121 131 132 133 141 142 151 152 153 171 172 173; do
+            $SSH_CMD "pct unlock $id 2>/dev/null || true"
+          done
+          for vmid in 271 272; do
+            $SSH_CMD "qm unlock $vmid 2>/dev/null || true"
+          done
+
+      - name: "4. Terraform Destroy"
         working-directory: ./terraform
-        run: terraform destroy -auto-approve
+        run: |
+          PARALLEL="${{ github.event.inputs.tf_parallelism || '1' }}"
+          terraform init -input=false
+          terraform destroy -auto-approve -input=false -parallelism=${PARALLEL}
+
+      - name: "5. Verify Golden Images Remain Intact"
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
+          echo "=== Xác nhận 3 Golden Images vẫn được bảo toàn nguyên vẹn ==="
+          $SSH_CMD "ls -lh /mnt/pve/shared-fs/template/cache/meowcloud-lxc-*.tar.zst"
+          $SSH_CMD "qm list | grep -E '9001|9002|9003' || true"
