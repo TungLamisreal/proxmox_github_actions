@@ -1,0 +1,48 @@
+name: "00 - Build Golden Images (Packer)"
+
+on:
+  workflow_dispatch: # Chỉ chạy khi bấm tay
+  push:
+    paths:
+      - 'packer/**'  # Tự động chạy nếu có sửa đổi script cài đặt
+
+jobs:
+  build-images:
+    name: Build LXC & KVM Golden Images
+    runs-on: self-hosted
+    timeout-minutes: 60
+
+    env:
+      # Lấy Secret từ GitHub Secrets nạp vào môi trường cho hàm env() của Packer đọc
+      PROXMOX_API_TOKEN_SECRET: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y packer
+
+      - name: Init Packer for KVM (Download Proxmox plugin)
+        working-directory: packer
+        run: packer init db-kvm.pkr.hcl
+
+      - name: Build LXC Base Image
+        working-directory: packer
+        run: packer build lxc-base.pkr.hcl
+
+      - name: Build LXC Docker Image
+        working-directory: packer
+        run: packer build lxc-docker.pkr.hcl
+
+      - name: Build KVM Database Image
+        working-directory: packer
+        run: packer build db-kvm.pkr.hcl
+
+      - name: Distribute KVM Template across nodes
+        run: |
+          echo "Nhân bản VM 9001 sang Node 2 và 3 để loại bỏ SPOF..."
+          qm clone 9001 9002 --name meowcloud-db-debian12-node2 --target node2 --full 1 || true
+          qm clone 9001 9003 --name meowcloud-db-debian12-node3 --target node3 --full 1 || true
