@@ -5,47 +5,7 @@
   gather_facts: true
 
   tasks:
-    - name: Install dependencies and Node Exporter
-      ansible.builtin.apt:
-        name:
-          - ca-certificates
-          - curl
-          - gnupg
-          - prometheus-node-exporter
-        state: present
-        update_cache: true
-        cache_valid_time: 3600
-        lock_timeout: 300
-
-    - name: Ensure /etc/apt/keyrings directory exists
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Download Docker official GPG key
-      ansible.builtin.get_url:
-        url: https://download.docker.com/linux/debian/gpg
-        dest: /etc/apt/keyrings/docker.asc
-        mode: '0644'
-
-    - name: Configure Docker APT repository
-      ansible.builtin.apt_repository:
-        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
-        filename: docker
-        state: present
-        update_cache: true
-
-    - name: Install Docker Engine and Python SDK
-      ansible.builtin.apt:
-        name:
-          - docker-ce
-          - docker-ce-cli
-          - containerd.io
-          - python3-docker
-        state: present
-        lock_timeout: 300
-
+    # Bắt đầu ngay từ bước kiểm tra service (Đã bỏ 5 task cài APT & Docker)
     - name: Ensure services are running and enabled
       ansible.builtin.service:
         name: "{{ item }}"
@@ -130,3 +90,12 @@
         volumes:
           - "/opt/meow-frontend/html:/usr/share/nginx/html:ro"
           - "/opt/meow-frontend/conf/default.conf:/etc/nginx/conf.d/default.conf:ro"
+    # (Tùy chọn) Thêm task này vào cuối file để tự động kiểm tra Web UI không bị 404:
+    - name: Health-check Frontend Web UI (:80)
+      ansible.builtin.uri:
+        url: http://127.0.0.1:80/
+        status_code: 200
+      register: fe_health
+      retries: 5
+      delay: 2
+      until: fe_health.status == 200

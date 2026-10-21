@@ -1,19 +1,18 @@
 ---
 - name: Configure Observer (Prometheus, Alertmanager & Grafana)
   hosts: observer
-  become: true  # Đã bổ sung
+  become: true
   gather_facts: true
 
   tasks:
-    - name: Install Prometheus, Alertmanager and Node Exporter
+    - name: Install Prometheus and Alertmanager
       ansible.builtin.apt:
         name:
           - prometheus
           - prometheus-alertmanager
-          - prometheus-node-exporter
         state: present
         update_cache: true
-        lock_timeout: 300  # Đã bổ sung
+        lock_timeout: 300
 
     - name: Generate dynamic prometheus.yml scraping all MeowCloud tiers
       ansible.builtin.copy:
@@ -23,40 +22,34 @@
           global:
             scrape_interval: 10s
             evaluation_interval: 10s
-
           scrape_configs:
             - job_name: 'observer'
               static_configs:
                 - targets: ['localhost:9100']
-
             - job_name: 'tunnels'
               static_configs:
                 - targets:
           {% for host in groups['tunnels'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
-
             - job_name: 'loadbalancers'
               static_configs:
                 - targets:
           {% for host in groups['loadbalancers'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
-
             - job_name: 'backends'
               static_configs:
                 - targets:
           {% for host in groups['backends'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
-
             - job_name: 'frontends'
               static_configs:
                 - targets:
           {% for host in groups['frontends'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
-
             - job_name: 'databases'
               static_configs:
                 - targets:
@@ -65,7 +58,7 @@
           {% endfor %}
       notify: Restart Prometheus
 
-    - name: Ensure Prometheus and Alertmanager are active
+    - name: Ensure Prometheus, Alertmanager and Node Exporter are active
       ansible.builtin.service:
         name: "{{ item }}"
         state: started

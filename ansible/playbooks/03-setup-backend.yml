@@ -1,64 +1,18 @@
 ---
-- name: Configure Backend API Elastic Pool (Dockerized)
+- name: Configure Backend API Elastic Pool (Golden Image Docker LXC)
   hosts: backends
   become: true
-  gather_facts: true
+  gather_facts: false
 
   tasks:
-    - name: Install dependencies and Node Exporter
-      ansible.builtin.apt:
-        name:
-          - ca-certificates
-          - curl
-          - gnupg
-          - prometheus-node-exporter
-        state: present
-        update_cache: true
-        cache_valid_time: 3600
-        lock_timeout: 300
-
-    - name: Ensure Node Exporter is running and enabled
+    - name: Ensure Docker and Node Exporter services are active (Baked in Golden Image)
       ansible.builtin.service:
-        name: prometheus-node-exporter
+        name: "{{ item }}"
         state: started
         enabled: true
-
-    - name: Ensure /etc/apt/keyrings directory exists
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Download Docker official GPG key
-      ansible.builtin.get_url:
-        url: https://download.docker.com/linux/debian/gpg
-        dest: /etc/apt/keyrings/docker.asc
-        mode: '0644'
-
-    - name: Add Docker repository
-      ansible.builtin.apt_repository:
-        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
-        filename: docker
-        state: present
-        update_cache: true
-
-    - name: Install Docker Engine packages
-      ansible.builtin.apt:
-        name:
-          - docker-ce
-          - docker-ce-cli
-          - containerd.io
-          - docker-buildx-plugin
-          - docker-compose-plugin
-          - python3-docker
-        state: present
-        lock_timeout: 300
-
-    - name: Ensure Docker service is running and enabled
-      ansible.builtin.service:
-        name: docker
-        state: started
-        enabled: true
+      loop:
+        - docker
+        - prometheus-node-exporter
 
     - name: Create Backend App directory
       ansible.builtin.file:
@@ -84,9 +38,7 @@
         content: |
           from flask import Flask, jsonify
           import socket
-
           app = Flask(__name__)
-
           @app.route('/')
           @app.route('/health')
           def health():
@@ -96,7 +48,6 @@
                   "db_primary": "192.168.150.71",
                   "status": "UP"
               })
-
           if __name__ == '__main__':
               app.run(host='0.0.0.0', port=5000)
 
@@ -117,3 +68,13 @@
         restart_policy: always
         published_ports:
           - "5000:5000"
+
+    - name: Health-check Backend API local endpoint (:5000/health)
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5000/health
+        return_content: true
+        status_code: 200
+      register: be_health
+      retries: 5
+      delay: 2
+      until: be_health.status == 200

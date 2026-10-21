@@ -1,20 +1,18 @@
 ---
 - name: Configure Nginx HA Load Balancers & Keepalived VIP (.100)
   hosts: loadbalancers
-  become: true  # BẮT BUỘC để có quyền chạy apt và sửa file system
+  become: true
   gather_facts: true
 
   tasks:
-    - name: Install Nginx, Keepalived, Node Exporter and psmisc
+    - name: Install Nginx and Keepalived (Base packages & psmisc already in Golden Image)
       ansible.builtin.apt:
         name:
           - nginx
           - keepalived
-          - prometheus-node-exporter
-          - psmisc  # Cung cấp lệnh killall cho Keepalived VRRP Script
         state: present
         update_cache: true
-        lock_timeout: 300  # Tránh lỗi dpkg lock khi apt đang chạy ngầm
+        lock_timeout: 300
 
     - name: Remove default Nginx site
       ansible.builtin.file:
@@ -31,11 +29,12 @@
     - name: Configure Keepalived for VIP 192.168.150.100
       ansible.builtin.copy:
         dest: /etc/keepalived/keepalived.conf
+        mode: '0644'
         content: |
           vrrp_script chk_nginx {
               script "/usr/bin/killall -0 nginx"
               interval 2
-              weight -20   # QUAN TRỌNG: Trừ 20 điểm nếu Nginx sập (Master 100-20=80 < Backup 90)
+              weight -20
               fall 2
               rise 2
           }
@@ -46,23 +45,20 @@
               virtual_router_id 51
               priority {{ keepalived_priority | default(90) }}
               advert_int 1
-
               authentication {
                   auth_type PASS
                   auth_pass MeowLB100
               }
-
               virtual_ipaddress {
                   192.168.150.100/24
               }
-
               track_script {
                   chk_nginx
               }
           }
       notify: Restart Keepalived
 
-    - name: Ensure services are enabled and started
+    - name: Ensure LB and monitoring services are enabled and started
       ansible.builtin.service:
         name: "{{ item }}"
         state: started
@@ -71,6 +67,15 @@
         - nginx
         - keepalived
         - prometheus-node-exporter
+
+    - name: Flush handlers to apply Nginx/Keepalived configs immediately
+      ansible.builtin.meta: flush_handlers
+
+    - name: Health-check local Nginx Load Balancer status endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1/lb-status
+        return_content: true
+        status_code: 200
 
   handlers:
     - name: Reload Nginx

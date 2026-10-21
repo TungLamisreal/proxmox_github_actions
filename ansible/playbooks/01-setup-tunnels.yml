@@ -1,32 +1,35 @@
 ---
-- name: Configure Cloudflare Tunnels (Ingress Edge)
+- name: Configure Cloudflare Tunnels (Ingress Edge - Golden Image)
   hosts: tunnels
-  become: true  # Đã bổ sung: Bắt buộc để cài đặt gói và tạo service
-  gather_facts: true
+  become: true
+  gather_facts: false
   vars:
     cf_token: "{{ lookup('env', 'CLOUDFLARE_TUNNEL_TOKEN') }}"
 
   tasks:
-    - name: Install required packages and Node Exporter
-      ansible.builtin.apt:
-        name:
-          - curl
-          - gnupg
-          - lsb-release
-          - prometheus-node-exporter
-        state: present
-        update_cache: true
-        lock_timeout: 300  # Đã bổ sung: Chống lỗi khóa dpkg
+    - name: Ensure Node Exporter is running and enabled (Baked in Golden Image)
+      ansible.builtin.service:
+        name: prometheus-node-exporter
+        state: started
+        enabled: true
+
+    - name: Check if cloudflared binary is already installed
+      ansible.builtin.stat:
+        path: /usr/bin/cloudflared
+      register: cloudflared_bin
 
     - name: Download cloudflared Debian package
       ansible.builtin.get_url:
         url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
         dest: /tmp/cloudflared.deb
+        mode: '0644'
+      when: not cloudflared_bin.stat.exists
 
-    - name: Install cloudflared package
+    - name: Install cloudflared package from local deb
       ansible.builtin.apt:
         deb: /tmp/cloudflared.deb
-        lock_timeout: 300  # Đã bổ sung
+        lock_timeout: 300
+      when: not cloudflared_bin.stat.exists
 
     - name: Register and start Cloudflare Tunnel service
       ansible.builtin.shell: |
@@ -34,9 +37,4 @@
           cloudflared service install {{ cf_token }}
         fi
       when: cf_token | length > 0
-
-    - name: Ensure Node Exporter is running
-      ansible.builtin.service:
-        name: prometheus-node-exporter
-        state: started
-        enabled: true
+      no_log: true
