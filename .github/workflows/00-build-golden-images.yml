@@ -1,20 +1,32 @@
+
 name: "00 - Build Golden Images (Packer)"
 
 on:
-  workflow_dispatch: # Chỉ chạy khi bấm tay
+  workflow_dispatch:
   push:
     paths:
-      - 'packer/**'  # Tự động chạy nếu có sửa đổi script cài đặt
+      - 'packer/**'
+
+# Tránh hai lần rebuild template chạy đồng thời.
+concurrency:
+  group: meowcloud-golden-images
+  cancel-in-progress: false
 
 jobs:
   build-images:
     name: Build LXC & KVM Golden Images
     runs-on: self-hosted
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     env:
-      # Lấy Secret từ GitHub Secrets nạp vào môi trường cho hàm env() của Packer đọc
       PROXMOX_API_TOKEN_SECRET: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+      PVE_HOST: "192.168.150.49"
+
+      PVE_NODE1_HOST: "192.168.150.10"
+      PVE_NODE2_HOST: "192.168.150.11"
+      PVE_NODE3_HOST: "192.168.150.12"
+
+      PVE_SSH_KEY: "/home/github-runner/.ssh/id_ed25519"
 
     steps:
       - name: Checkout Code
@@ -23,9 +35,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y packer
+          sudo apt-get install -y packer jq
 
-      - name: Init Packer for KVM (Download Proxmox plugin)
+      - name: Init Packer for KVM
         working-directory: packer
         run: packer init db-kvm.pkr.hcl
 
@@ -37,14 +49,243 @@ jobs:
         working-directory: packer
         run: packer build lxc-docker.pkr.hcl
 
-      - name: Build KVM Database Image
+      - name: Rebuild KVM Database Golden Templates
         working-directory: packer
-        run: packer build db-kvm.pkr.hcl
-
-      - name: Distribute KVM Template across nodes
+        shell: bash
         run: |
-          echo "=== Bắn lệnh qua SSH sang PVE Host để nhân bản VM 9001 sang Node 2 và Node 3 ==="
-          SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
+          set -Eeuo pipefail
 
-          $SSH_CMD "qm clone 9001 9002 --name meowcloud-db-debian12-node2 --target node2 --full 1 || true"
-          $SSH_CMD "qm clone 9001 9003 --name meowcloud-db-debian12-node3 --target node3 --full 1 || true"
+          SSH_OPTS=(
+            -o BatchMode=yes
+            -o ConnectTimeout=10
+            -o StrictHostKeyChecking=no
+            -i "$PVE_SSH_KEY"
+          )
+
+          # SSH trực tiếp vào từng node, không phụ thuộc Keepalived VIP.
+          ssh_node() {
+            local host="$1"
+            shift
+
+            ssh "${SSH_OPTS[@]}" "root@${host}" "$@"
+          }
+
+          # Xác định node đang sở hữu VMID từ thông tin cluster.
+          get_vm_node() {
+            local vmid="$1"
+
+            ssh_node "$PVE_NODE1_HOST" \
+              'pvesh get /cluster/resources --type vm --output-format json' |
+              jq -r --arg id "$vmid" \
+                '.[] | select((.vmid | tostring) == $id) | .node'
+          }
+
+          host_for_node() {
+            case "$1" in
+              node1) printf '%s' "$PVE_NODE1_HOST" ;;
+              node2) printf '%s' "$PVE_NODE2_HOST" ;;
+              node3) printf '%s' "$PVE_NODE3_HOST" ;;
+              *)
+                echo "ERROR: Node không hợp lệ: $1" >&2
+                return 1
+                ;;
+            esac
+          }
+
+          expected_node_for() {
+            case "$1" in
+              9001) printf '%s' "node1" ;;
+              9002) printf '%s' "node2" ;;
+              9003) printf '%s' "node3" ;;
+              *)
+                echo "ERROR: VMID không được phép xử lý: $1" >&2
+                return 1
+                ;;
+            esac
+          }
+
+          # Kiểm tra trước toàn bộ template để tránh xóa một phần
+          # rồi mới phát hiện VM đang chạy hoặc nằm sai node.
+          preflight_vm() {
+            local vmid="$1"
+            local expected_node="$2"
+            local expected_name="${3:-}"
+            local current_node host status config actual_name
+
+            current_node="$(get_vm_node "$vmid")"
+
+            if [[ -z "$current_node" ]]; then
+              echo "VM $vmid chưa tồn tại, sẽ tạo mới."
+              return 0
+            fi
+
+            if [[ "$current_node" != "$expected_node" ]]; then
+              echo "ERROR: VM $vmid nằm trên $current_node, mong đợi $expected_node."
+              exit 1
+            fi
+
+            host="$(host_for_node "$current_node")"
+            status="$(ssh_node "$host" "qm status $vmid")"
+
+            if [[ "$status" != *"status: stopped"* ]]; then
+              echo "ERROR: VM $vmid chưa dừng. Không tự động xóa."
+              exit 1
+            fi
+
+            config="$(ssh_node "$host" "qm config $vmid")"
+
+            if [[ -n "$expected_name" ]]; then
+              actual_name="$(
+                awk -F': ' '$1 == "name" {print $2; exit}' <<< "$config"
+              )"
+
+              if [[ "$actual_name" != "$expected_name" ]]; then
+                echo "ERROR: VM $vmid có tên '$actual_name', không đúng tên dự kiến '$expected_name'."
+                exit 1
+              fi
+            fi
+
+            # 9001 phải thực sự là template do Packer tạo.
+            if [[ "$vmid" == "9001" ]] &&
+               ! grep -Eq '^template:[[:space:]]*1$' <<< "$config"; then
+              echo "ERROR: VM 9001 không được đánh dấu là template."
+              exit 1
+            fi
+
+            echo "Preflight OK: VM $vmid trên $current_node đã dừng."
+          }
+
+          echo "=== [1/5] Kiểm tra các template cũ ==="
+
+          preflight_vm 9001 node1
+          preflight_vm 9002 node2 meowcloud-db-debian12-node2
+          preflight_vm 9003 node3 meowcloud-db-debian12-node3
+
+          # Xóa các bản clone đích trước template nguồn.
+          # Không dùng || true để che giấu lỗi.
+          destroy_if_exists() {
+            local vmid="$1"
+            local expected_node="$2"
+            local current_node host
+
+            current_node="$(get_vm_node "$vmid")"
+
+            if [[ -z "$current_node" ]]; then
+              echo "VM $vmid không tồn tại, bỏ qua xóa."
+              return 0
+            fi
+
+            if [[ "$current_node" != "$expected_node" ]]; then
+              echo "ERROR: VM $vmid nằm sai node: $current_node."
+              return 1
+            fi
+
+            host="$(host_for_node "$current_node")"
+
+            echo "Đang xóa VM $vmid trên $current_node..."
+
+            ssh_node "$host" \
+              "qm destroy $vmid --purge 1 --destroy-unreferenced-disks 1"
+
+            if [[ -n "$(get_vm_node "$vmid")" ]]; then
+              echo "ERROR: VM $vmid vẫn tồn tại sau khi xóa."
+              return 1
+            fi
+
+            echo "Đã xóa VM $vmid."
+          }
+
+          echo "=== [2/5] Xóa template cũ ==="
+
+          destroy_if_exists 9002 node2
+          destroy_if_exists 9003 node3
+          destroy_if_exists 9001 node1
+
+          # Xác minh cả ba VMID đã được giải phóng trước khi build.
+          for vmid in 9001 9002 9003; do
+            if [[ -n "$(get_vm_node "$vmid")" ]]; then
+              echo "ERROR: VMID $vmid chưa được giải phóng."
+              exit 1
+            fi
+          done
+
+          echo "=== [3/5] Build lại KVM Database Image ==="
+
+          packer build db-kvm.pkr.hcl
+
+          # Kiểm tra VMID, node và trạng thái template sau khi build.
+          verify_template() {
+            local vmid="$1"
+            local expected_node="$2"
+            local current_node host config
+
+            current_node="$(get_vm_node "$vmid")"
+
+            if [[ "$current_node" != "$expected_node" ]]; then
+              echo "ERROR: VM $vmid nằm trên '${current_node:-không tìm thấy}', mong đợi $expected_node."
+              return 1
+            fi
+
+            host="$(host_for_node "$current_node")"
+            config="$(ssh_node "$host" "qm config $vmid")"
+
+            if ! grep -Eq '^template:[[:space:]]*1$' <<< "$config"; then
+              echo "ERROR: VM $vmid chưa được đánh dấu là template."
+              return 1
+            fi
+
+            echo "OK: VM $vmid là template trên $expected_node."
+          }
+
+          verify_template 9001 node1
+
+          # Clone template nguồn sang node đích.
+          clone_to() {
+            local vmid="$1"
+            local target="$2"
+            local name="$3"
+            local target_host current_node status config
+
+            target_host="$(host_for_node "$target")"
+
+            echo "Đang clone 9001 thành VM $vmid trên $target..."
+
+            ssh_node "$PVE_NODE1_HOST" \
+              "qm clone 9001 $vmid --name $name --target $target --full 1"
+
+            current_node="$(get_vm_node "$vmid")"
+
+            if [[ "$current_node" != "$target" ]]; then
+              echo "ERROR: VM $vmid không nằm trên node đích $target."
+              return 1
+            fi
+
+            status="$(ssh_node "$target_host" "qm status $vmid")"
+
+            if [[ "$status" != *"status: stopped"* ]]; then
+              echo "ERROR: VM clone $vmid không ở trạng thái stopped."
+              return 1
+            fi
+
+            config="$(ssh_node "$target_host" "qm config $vmid")"
+
+            # Đảm bảo bản clone cũng là Golden Template.
+            if ! grep -Eq '^template:[[:space:]]*1$' <<< "$config"; then
+              ssh_node "$target_host" "qm template $vmid"
+            fi
+
+            verify_template "$vmid" "$target"
+          }
+
+          echo "=== [4/5] Clone và xác minh template ==="
+
+          clone_to 9002 node2 meowcloud-db-debian12-node2
+          clone_to 9003 node3 meowcloud-db-debian12-node3
+
+          echo "=== [5/5] Kiểm tra hoàn tất ==="
+
+          verify_template 9001 node1
+          verify_template 9002 node2
+          verify_template 9003 node3
+
+          echo "SUCCESS: Đã build và phân phối lại cả ba KVM Golden Template."
