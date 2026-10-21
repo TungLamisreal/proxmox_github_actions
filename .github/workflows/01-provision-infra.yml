@@ -75,26 +75,28 @@ jobs:
             exit 1
           fi
 
-          echo "=== [3] Kiểm tra sự tồn tại của 3 Golden Images trên Proxmox ==="
+          echo "=== [3] Kiểm tra sự tồn tại của 3 Golden Images trên toàn cụm Proxmox ==="
           SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@${PVE_HOST}"
 
           $SSH_CMD "test -f /mnt/pve/shared-fs/template/cache/meowcloud-lxc-base-debian12.tar.zst" || {
-            echo "ERROR: Thiếu meowcloud-lxc-base-debian12.tar.zst! Hãy chạy workflow 00-build-golden-images.yml trước."
+            echo "ERROR: Thiếu meowcloud-lxc-base-debian12.tar.zst!"
             exit 1
           }
           $SSH_CMD "test -f /mnt/pve/shared-fs/template/cache/meowcloud-lxc-docker-debian12.tar.zst" || {
-            echo "ERROR: Thiếu meowcloud-lxc-docker-debian12.tar.zst! Hãy chạy workflow 00-build-golden-images.yml trước."
+            echo "ERROR: Thiếu meowcloud-lxc-docker-debian12.tar.zst!"
             exit 1
           }
+
+          # Sửa lỗi qm status: Kiểm tra file cấu hình được đồng bộ trên toàn cụm Cluster
           for vmid in 9001 9002 9003; do
-            $SSH_CMD "qm status $vmid" >/dev/null 2>&1 || {
+            $SSH_CMD "ls /etc/pve/nodes/*/qemu-server/${vmid}.conf" >/dev/null 2>&1 || {
               echo "ERROR: Thiếu KVM Template $vmid! Hãy chạy workflow 00-build-golden-images.yml trước."
               exit 1
             }
           done
           echo "OK: Đầy đủ cả 3 Golden Images (Base LXC, Docker LXC, Multi-node KVM DB)!"
 
-      - name: "3. Start Benchmark Timer & Terraform Apply"
+      - name: "3. Start Benchmark Timer, Detect AI Scale & Terraform Apply"
         working-directory: ./terraform
         run: |
           TOTAL_START=$(date +%s)
@@ -106,6 +108,16 @@ jobs:
           FRONTEND_CNT="${{ github.event.inputs.frontend_count || '3' }}"
           DB_CNT="${{ github.event.inputs.db_count || '2' }}"
           PARALLEL="${{ github.event.inputs.tf_parallelism || '1' }}"
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@${PVE_HOST}"
+
+          echo "=== Kiểm tra chống phân mảnh do AI Auto-scale ==="
+          # Đếm số lượng cấu hình LXC Backend (VMID 151+) hiện có trên toàn cụm
+          ACTUAL_BE_COUNT=$($SSH_CMD "ls -1 /etc/pve/nodes/*/lxc/ | grep -E '^15[1-9]\.conf$' | wc -l" || echo "$BACKEND_CNT")
+
+          if [ "$ACTUAL_BE_COUNT" -gt "$BACKEND_CNT" ]; then
+            echo "⚠️ Phát hiện AI đã Scale-out cụm Backend lên $ACTUAL_BE_COUNT nodes. Ghi đè cấu hình Terraform để không xóa máy của AI!"
+            BACKEND_CNT=$ACTUAL_BE_COUNT
+          fi
 
           terraform init -input=false
           terraform validate
