@@ -10,5 +10,6 @@ apt-get install -y -qq \
 
 # Bật QEMU Guest Agent để Proxmox giao tiếp và freeze I/O khi backup
 systemctl enable qemu-guest-agent
+systemctl is-active qemu-guest-agent
 
 echo "=== Hoàn tất cài đặt KVM Specifics ==="
