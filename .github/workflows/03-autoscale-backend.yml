@@ -47,8 +47,7 @@ env:
   ANSIBLE_FORCE_COLOR: "1"
   # Phải khớp với đường dẫn mà scripts/select_best_node.py đang sử dụng.
   AUTOSCALE_STATE_FILE: /opt/meowcloud-iac/state/autoscale.tfvars.json
-  # Giả định Terraform tạo inventory tại ansible/inventory.ini.
-  # Nếu local_file.ansible_inventory đang ghi ra file khác, đổi giá trị này cho khớp.
+  # Terraform tạo inventory tại ansible/inventory.ini qua 07-ansible-generator.tf.
   ANSIBLE_INVENTORY_FILE: inventory.ini
 
 jobs:
@@ -78,14 +77,22 @@ jobs:
 
           echo "=== Thiết lập thư mục state ==="
           sudo install -d -m 0750 /opt/meowcloud-iac/state
+          sudo chown "$(id -un):$(id -gn)" /opt/meowcloud-iac/state
 
           if [ ! -s "$AUTOSCALE_STATE_FILE" ]; then
-            echo "::error::Không tìm thấy $AUTOSCALE_STATE_FILE hoặc file rỗng. Khởi tạo capacity state có chủ đích trước khi chạy autoscale."
-            exit 1
+            echo "Khởi tạo file capacity state mặc định (3 Backend, 3 Frontend) tại $AUTOSCALE_STATE_FILE..."
+            cat << 'JSON' > "$AUTOSCALE_STATE_FILE"
+          {
+            "backend_count": 3,
+            "frontend_count": 3,
+            "backend_node_map": {},
+            "frontend_node_map": {}
+          }
+          JSON
           fi
 
-          sudo chown "$(id -un):$(id -gn)" /opt/meowcloud-iac/state
           sudo chown "$(id -un):$(id -gn)" "$AUTOSCALE_STATE_FILE"
+          chmod 600 "$AUTOSCALE_STATE_FILE"
 
           # Lưu bản trước khi selector thay đổi desired capacity.
           AUTOSCALE_BACKUP_FILE="$RUNNER_TEMP/autoscale.tfvars.json.before"
@@ -102,8 +109,9 @@ jobs:
           if [ -n "$SSH_PRIVATE_KEY" ]; then
             printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
             chmod 600 "$HOME/.ssh/id_ed25519"
-          else
-            echo "::error::Thiếu GitHub Secret SSH_PRIVATE_KEY."
+            ssh-keygen -y -f "$HOME/.ssh/id_ed25519" > "$HOME/.ssh/id_ed25519.pub"
+          elif [ ! -f "/home/github-runner/.ssh/id_ed25519" ]; then
+            echo "::error::Thiếu GitHub Secret SSH_PRIVATE_KEY và không có key tại /home/github-runner/.ssh/id_ed25519."
             exit 1
           fi
 
@@ -151,10 +159,15 @@ jobs:
               ;;
           esac
 
-          # Chặn input quá lớn trên một lần chạy; giới hạn capacity thật vẫn do selector kiểm tra.
-          MAX_ADD_PER_COMPONENT=10
+          # An toàn cho cụm PVE nhỏ: tối đa 2 máy tổng cộng trong một lần chạy.
+          MAX_ADD_PER_COMPONENT=2
+          MAX_ADD_TOTAL=2
           if (( ADD_BE > MAX_ADD_PER_COMPONENT || ADD_FE > MAX_ADD_PER_COMPONENT )); then
-            echo "::error::Mỗi lần chạy chỉ được yêu cầu tối đa $MAX_ADD_PER_COMPONENT máy cho mỗi thành phần."
+            echo "::error::Mỗi lần chạy tối đa $MAX_ADD_PER_COMPONENT máy cho mỗi thành phần."
+            exit 1
+          fi
+          if (( ADD_BE + ADD_FE > MAX_ADD_TOTAL )); then
+            echo "::error::Mỗi lần chạy chỉ được thêm tối đa $MAX_ADD_TOTAL máy tổng cộng. Hãy chia thành nhiều lần chạy."
             exit 1
           fi
 
@@ -197,11 +210,11 @@ jobs:
             exit 1
           fi
 
-          # Tên host theo quy ước backend-01, backend-02... / frontend-01, frontend-02...
+          # Tên host khớp 100% với 07-ansible-generator.tf: backend-0${i + 1} / frontend-0${i + 1}
           make_host_list() {
             local prefix="$1" start="$2" end="$3" result="" host i
             for ((i=start; i<=end; i++)); do
-              printf -v host '%s-%02d' "$prefix" "$i"
+              printf -v host '%s-0%d' "$prefix" "$i"
               if [ -n "$result" ]; then result+=","; fi
               result+="$host"
             done
@@ -214,6 +227,10 @@ jobs:
           echo "NEW_FRONTENDS=$NEW_FRONTENDS" >> "$GITHUB_ENV"
           echo "ACTUAL_ADD_BE=$ADD_BE" >> "$GITHUB_ENV"
           echo "ACTUAL_ADD_FE=$ADD_FE" >> "$GITHUB_ENV"
+          echo "OLD_BE_COUNT=$OLD_BE" >> "$GITHUB_ENV"
+          echo "OLD_FE_COUNT=$OLD_FE" >> "$GITHUB_ENV"
+          echo "NEW_BE_COUNT=$NEW_BE" >> "$GITHUB_ENV"
+          echo "NEW_FE_COUNT=$NEW_FE" >> "$GITHUB_ENV"
 
           echo "Capacity dự kiến sau selector: Backend=$NEW_BE, Frontend=$NEW_FE"
           echo "Backend mới: ${NEW_BACKENDS:-không có}"
@@ -245,13 +262,17 @@ jobs:
           test -s "$AUTOSCALE_STATE_FILE" || {
             echo "::error::Thiếu autoscale.tfvars.json"
             exit 1
-          }
+          fi
+
+          # Đồng bộ file auto.tfvars.json trong thư mục terraform
+          cp -p "$AUTOSCALE_STATE_FILE" ./autoscale.auto.tfvars.json
 
           echo "=== Desired capacity dùng cho Terraform ==="
           jq '{backend_count, frontend_count, backend_node_map, frontend_node_map}' "$AUTOSCALE_STATE_FILE"
 
           terraform plan \
             -input=false \
+            -parallelism=1 \
             -var-file="$AUTOSCALE_STATE_FILE" \
             -out="$TFPLAN_FILE"
           chmod 600 "$TFPLAN_FILE"
@@ -260,8 +281,64 @@ jobs:
           terraform show -json "$TFPLAN_FILE" > "$TFPLAN_JSON"
           chmod 600 "$TFPLAN_JSON"
 
-          # Script này phải fail closed với destroy/replacement của tài nguyên đang có
-          # và phải từ chối các thay đổi ngoài phạm vi autoscale được cho phép.
+          # CỔNG 1: chỉ cho phép create đúng số lượng đã yêu cầu, không tự bù các index bị khuyết.
+          python3 -c '
+          import json, re, sys
+          from pathlib import Path
+
+          plan_path = Path(sys.argv[1])
+          old_be, old_fe, new_be, new_fe = map(int, sys.argv[2:6])
+          with plan_path.open(encoding="utf-8") as f:
+              plan = json.load(f)
+
+          expected = {
+              "backend": {f"proxmox_virtual_environment_container.backend[{i}]" for i in range(old_be, new_be)},
+              "frontend": {f"proxmox_virtual_environment_container.frontend[{i}]" for i in range(old_fe, new_fe)},
+          }
+          actual = {"backend": set(), "frontend": set()}
+          unexpected = []
+          compute_types = {"proxmox_virtual_environment_container", "proxmox_virtual_environment_vm"}
+
+          for rc in plan.get("resource_changes", []):
+              addr = rc.get("address", "")
+              rtype = rc.get("type", "")
+              actions = rc.get("change", {}).get("actions", [])
+              if rtype not in compute_types or not actions or actions == ["no-op"]:
+                  continue
+              if "delete" in actions:
+                  unexpected.append(f"compute delete/replace không được phép: {addr} actions={actions}")
+                  continue
+              if "create" not in actions:
+                  continue
+              mb = re.search(r"(?:^|\.)backend\[(\d+)\]$", addr)
+              mf = re.search(r"(?:^|\.)frontend\[(\d+)\]$", addr)
+              if rtype == "proxmox_virtual_environment_container" and mb:
+                  actual["backend"].add(addr)
+              elif rtype == "proxmox_virtual_environment_container" and mf:
+                  actual["frontend"].add(addr)
+              else:
+                  unexpected.append(f"compute create ngoài phạm vi autoscale: {addr}")
+
+          for kind in ("backend", "frontend"):
+              if actual[kind] != expected[kind]:
+                  unexpected.append(
+                      f"{kind}: mong đợi create={sorted(expected[kind])}; "
+                      f"plan thực tế={sorted(actual[kind])}"
+                  )
+
+          total_expected = len(expected["backend"]) + len(expected["frontend"])
+          total_actual = len(actual["backend"]) + len(actual["frontend"])
+          print(f"Scale delta mong đợi: BE +{new_be-old_be}, FE +{new_fe-old_fe}; "
+                f"compute creates trong plan: {total_actual} (mong đợi {total_expected})")
+          if unexpected:
+              print("\n[BLOCK] Plan tạo/xóa sai phạm vi; KHÔNG ĐƯỢC APPLY:")
+              for item in unexpected:
+                  print(" - " + item)
+              sys.exit(1)
+          print("[OK] Số compute create và index khớp chính xác với yêu cầu autoscale.")
+          ' "$TFPLAN_JSON" "$OLD_BE_COUNT" "$OLD_FE_COUNT" "$NEW_BE_COUNT" "$NEW_FE_COUNT"
+
+          # CỔNG 2: kiểm duyệt destroy/replacement theo quy tắc bảo vệ hạ tầng hiện có.
           python3 ../scripts/verify_tfplan.py "$TFPLAN_JSON"
           echo "Terraform plan đã qua verify_tfplan.py. Chưa apply cho đến bước kế tiếp."
 
@@ -273,7 +350,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "attempted=true" >> "$GITHUB_OUTPUT"
-          terraform apply -auto-approve -input=false "$TFPLAN_FILE"
+          # PVE/Ceph nhỏ: tạo tuần tự để giảm va chạm lock storage/container.
+          terraform apply -parallelism=1 -auto-approve -input=false "$TFPLAN_FILE"
           echo "applied=true" >> "$GITHUB_OUTPUT"
           rm -f "$TFPLAN_FILE" "$TFPLAN_JSON"
 
@@ -339,16 +417,19 @@ jobs:
           INVENTORY="$ANSIBLE_INVENTORY_FILE"
 
           if [ -n "${NEW_BACKENDS:-}" ]; then
-            echo "Chỉ cài đặt Backend mới: $NEW_BACKENDS"
+            echo "=== Cài đặt ứng dụng trên Backend mới: $NEW_BACKENDS ==="
             ansible-playbook -i "$INVENTORY" playbooks/03-setup-backend.yml --limit "$NEW_BACKENDS"
           fi
 
-          if [ -n "${NEW_FRONTENDS:-}" ]; then
-            echo "Chỉ cài đặt Frontend mới: $NEW_FRONTENDS"
+          if [ -n "${NEW_BACKENDS:-}" ]; then
+            echo "=== Cập nhật upstream backend_cluster cho tầng Frontend (và cài đặt Frontend mới nếu có) ==="
+            ansible-playbook -i "$INVENTORY" playbooks/04-setup-frontend.yml
+          elif [ -n "${NEW_FRONTENDS:-}" ]; then
+            echo "=== Chỉ cài đặt Frontend mới: $NEW_FRONTENDS ==="
             ansible-playbook -i "$INVENTORY" playbooks/04-setup-frontend.yml --limit "$NEW_FRONTENDS"
           fi
 
-          # Làm mới cấu hình toàn cụm LB sau khi các upstream mới đã được provision.
+          echo "=== Cập nhật cấu hình Upstream cho cụm Load Balancer và Prometheus ==="
           ansible-playbook -i "$INVENTORY" playbooks/02-setup-lb.yml
           ansible-playbook -i "$INVENTORY" playbooks/06-setup-observer.yml
 
@@ -358,46 +439,94 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "=== Layer 1: API qua Load Balancer ==="
+          echo "=== Layer 1A: Kiểm tra trực tiếp từng Guest vừa được tạo mới ==="
+          if (( ACTUAL_ADD_BE > 0 )); then
+            for ((i=OLD_BE_COUNT+1; i<=NEW_BE_COUNT; i++)); do
+              BE_IP="192.168.150.$((100 + i))"
+              echo "Kiểm tra trực tiếp Backend mới be-$i ($BE_IP:5000/health)..."
+              curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
+                "http://${BE_IP}:5000/health"
+              echo ""
+            done
+          fi
+
+          if (( ACTUAL_ADD_FE > 0 )); then
+            for ((i=OLD_FE_COUNT+1; i<=NEW_FE_COUNT; i++)); do
+              FE_IP="192.168.150.$((170 + i))"
+              echo "Kiểm tra trực tiếp Frontend mới fe-$i ($FE_IP:80)..."
+              curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
+                "http://${FE_IP}/" >/dev/null
+              echo "Frontend fe-$i ($FE_IP) phản hồi HTTP 200 OK."
+            done
+          fi
+
+          echo "=== Layer 1B & Layer 2: Kiểm tra phân phối lưu lượng qua VIP Load Balancer (192.168.150.100) ==="
           curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
-            http://192.168.150.100/api/health
-          echo -e "\nAPI Healthcheck OK."
+            http://192.168.150.100/ >/dev/null
+          echo "Frontend Web UI qua VIP .100 OK."
 
-          echo "=== Layer 2: Frontend Web UI qua Load Balancer ==="
-          curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
-            http://192.168.150.100/
-          echo -e "\nFrontend Load Balancer OK."
+          if (( ACTUAL_ADD_BE > 0 )); then
+            EXPECTED_BE_HOSTNAME="be-${NEW_BE_COUNT}"
+            ROUTED_OK=false
+            for attempt in $(seq 1 15); do
+              RESP=$(curl --fail --silent --show-error --connect-timeout 5 http://192.168.150.100/api/health)
+              if printf '%s' "$RESP" | grep -q "\"node\"[[:space:]]*:[[:space:]]*\"${EXPECTED_BE_HOSTNAME}\""; then
+                echo "Xác nhận VIP .100 đã phân phối request tới máy mới ${EXPECTED_BE_HOSTNAME}: $RESP"
+                ROUTED_OK=true
+                break
+              fi
+              sleep 1
+            done
+            if [ "$ROUTED_OK" != "true" ]; then
+              echo "::error::VIP 192.168.150.100 chưa phân phối request tới Backend mới ${EXPECTED_BE_HOSTNAME} sau 15 lần thử."
+              exit 1
+            fi
+          else
+            curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
+              http://192.168.150.100/api/health
+            echo ""
+          fi
 
-          echo "=== Layer 3: Prometheus Targets ==="
-          TARGETS_JSON=$(curl --fail --silent --show-error --connect-timeout 5 \
-            http://192.168.150.21:9090/api/v1/targets)
+          echo "=== Layer 3: Kiểm tra Prometheus Targets (Chờ chu kỳ scrape sau khi restart) ==="
+          PROM_OK=false
+          for attempt in $(seq 1 12); do
+            TARGETS_JSON=$(curl --fail --silent --show-error --connect-timeout 5 \
+              http://192.168.150.21:9090/api/v1/targets || true)
 
-          if ! printf '%s' "$TARGETS_JSON" | jq -e '
-            .status == "success" and
-            (.data.activeTargets | type == "array") and
-            (.data.activeTargets | length > 0) and
-            ([.data.activeTargets[] | select(.health != "up")] | length == 0)
-          ' >/dev/null; then
-            printf '%s' "$TARGETS_JSON" | jq -r '
+            if [ -n "$TARGETS_JSON" ] && printf '%s' "$TARGETS_JSON" | jq -e '
+              .status == "success" and
+              (.data.activeTargets | type == "array") and
+              (.data.activeTargets | length > 0) and
+              ([.data.activeTargets[] | select(.health != "up")] | length == 0)
+            ' >/dev/null 2>&1; then
+              PROM_OK=true
+              echo "Tất cả Prometheus targets đều UP (ở lần kiểm tra thứ $attempt)."
+              break
+            fi
+            echo "Đợi Prometheus hoàn tất scrape... (lần $attempt/12)"
+            sleep 5
+          done
+
+          if [ "$PROM_OK" != "true" ]; then
+            printf '%s' "${TARGETS_JSON:-{}}" | jq -r '
               if .status != "success" then
                 "Prometheus API status: \(.status // "unknown")"
               else
                 .data.activeTargets[]? | select(.health != "up") |
-                "LỖI TARGET DOWN: \(.labels.instance // "unknown") (health=\(.health // "unknown"))"
+                "LỖI TARGET CHƯA UP: \(.labels.instance // "unknown") (health=\(.health // "unknown"))"
               end
-            '
-            echo "::error::Prometheus API thất bại hoặc có ít nhất một target không UP."
+            ' || true
+            echo "::error::Prometheus API thất bại hoặc vẫn có target chưa UP sau 60 giây."
             exit 1
           fi
-          echo "Prometheus targets đều UP."
 
           {
             echo "## ✅ Hoàn tất Scale-out"
-            echo "- Backend tăng thêm: ${ACTUAL_ADD_BE:-0}"
-            echo "- Frontend tăng thêm: ${ACTUAL_ADD_FE:-0}"
+            echo "- Backend tăng thêm: ${ACTUAL_ADD_BE:-0} (Tổng: ${NEW_BE_COUNT})"
+            echo "- Frontend tăng thêm: ${ACTUAL_ADD_FE:-0} (Tổng: ${NEW_FE_COUNT})"
             echo "- Backend mới: ${NEW_BACKENDS:-không có}"
             echo "- Frontend mới: ${NEW_FRONTENDS:-không có}"
-            echo "- Terraform plan đã qua gate; SSH readiness, Ansible provisioning và healthcheck hoàn tất."
+            echo "- Terraform plan đã qua 2 cổng kiểm duyệt; SSH readiness, Ansible provisioning và 3-Layer Healthcheck hoàn tất."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: "9. Restore proposed capacity if Terraform apply was not attempted"
@@ -407,6 +536,7 @@ jobs:
           set -euo pipefail
           if [ -s "${AUTOSCALE_BACKUP_FILE:-}" ]; then
             cp -p "$AUTOSCALE_BACKUP_FILE" "$AUTOSCALE_STATE_FILE"
+            cp -p "$AUTOSCALE_BACKUP_FILE" "./terraform/autoscale.auto.tfvars.json" 2>/dev/null || true
             echo "Đã khôi phục autoscale.tfvars.json vì Terraform apply chưa được bắt đầu."
           else
             echo "::error::Không tìm thấy bản sao capacity trước autoscale; cần kiểm tra state thủ công."
@@ -421,4 +551,3 @@ jobs:
           echo "::error::Terraform apply đã bắt đầu nhưng không hoàn tất. Không tự khôi phục autoscale.tfvars.json vì Terraform có thể đã tạo một phần tài nguyên. Kiểm tra terraform state/plan và inventory trước lần chạy tiếp theo."
           echo "## ⚠️ Terraform apply chưa hoàn tất" >> "$GITHUB_STEP_SUMMARY"
           echo "Apply đã bắt đầu nhưng báo lỗi; capacity state được giữ lại để tránh vô tình giảm desired capacity khi hạ tầng có thể đã thay đổi một phần. Cần kiểm tra Terraform state và các VM thực tế trước khi chạy lại." >> "$GITHUB_STEP_SUMMARY"
-
