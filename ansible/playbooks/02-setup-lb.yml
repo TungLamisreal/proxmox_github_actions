@@ -24,6 +24,7 @@
         src: ../templates/loadbalancer.conf.j2
         dest: /etc/nginx/conf.d/loadbalancer.conf
         mode: '0644'
+        validate: '/usr/sbin/nginx -t -c %s
       notify: Reload Nginx
 
     - name: Configure Keepalived for VIP 192.168.150.100

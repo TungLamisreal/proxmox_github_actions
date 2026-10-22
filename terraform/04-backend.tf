@@ -2,12 +2,17 @@
 # FILE: terraform/04-backend.tf
 # CHỨC NĂNG: Khởi tạo cụm LXC Backend App (Co giãn đàn hồi qua biến backend_count)
 # ==============================================================================
-
 resource "proxmox_virtual_environment_container" "backend" {
   count = var.backend_count
 
-  # Phân bổ rải rác qua các Node theo thuật toán chia dư (Anti-Affinity)
-  node_name    = var.pve_nodes[count.index % length(var.pve_nodes)]
+  # Ưu tiên lấy Node do Python chỉ định trong backend_node_map;
+  # Các máy gốc (151-153) chưa có trong map sẽ rải đều qua phép chia dư
+  node_name = lookup(
+    var.backend_node_map,
+    tostring(151 + count.index),
+    var.pve_nodes[count.index % length(var.pve_nodes)]
+  )
+
   vm_id        = 151 + count.index
   unprivileged = true
   started      = true
@@ -36,6 +41,7 @@ resource "proxmox_virtual_environment_container" "backend" {
   # Cấu hình tài nguyên theo Bảng 3.3: 2 vCPU / 1024MB RAM / 8GB Disk
   cpu { cores = 2 }
   memory { dedicated = 1024 }
+
   disk {
     datastore_id = var.general_pool
     size         = 8
@@ -60,7 +66,6 @@ resource "proxmox_virtual_environment_container" "backend" {
 }
 
 # --- CẤU HÌNH TƯỜNG LỬA CHO CỤM BACKEND ---
-
 resource "proxmox_virtual_environment_firewall_options" "backend_fw" {
   count         = var.backend_count
   node_name     = proxmox_virtual_environment_container.backend[count.index].node_name
@@ -68,9 +73,8 @@ resource "proxmox_virtual_environment_firewall_options" "backend_fw" {
   enabled       = true
   input_policy  = "DROP"
   output_policy = "ACCEPT"
-
   # Cực kỳ quan trọng cho các dải Elastic Pool: Chống giả mạo MAC/IP
-  ipfilter = true
+  ipfilter      = true
 }
 
 resource "proxmox_virtual_environment_firewall_rules" "backend_rules" {

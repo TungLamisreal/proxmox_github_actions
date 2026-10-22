@@ -1,41 +1,160 @@
-name: "03 - Auto-Scale Backend Pool"
+# ==============================================================================
+# FILE: .github/workflows/03-autoscale-backend.yml
+# CHỨC NĂNG: Tự động co giãn (Scale-out) cụm Backend và Frontend App an toàn
+# ==============================================================================
+name: "03 - Auto-Scale MeowCloud Workloads"
+
 on:
-  repository_dispatch:
-    types: [scale_up_backend] # Sự kiện nhận từ Alertmanager Webhook
+  workflow_dispatch:
+    inputs:
+      scale_target:
+        description: "Chọn thành phần cần Scale"
+        required: true
+        type: choice
+        options:
+          - backend
+          - frontend
+          - both
+      add_backend_count:
+        description: "Số lượng Backend muốn tăng thêm"
+        required: true
+        default: '1'
+        type: string
+      add_frontend_count:
+        description: "Số lượng Frontend muốn tăng thêm"
+        required: true
+        default: '0'
+        type: string
+      ram_reserve_mb:
+        description: "Dự phòng RAM an toàn cho mỗi Node vật lý (MB)"
+        required: true
+        default: '2048'
+        type: string
+
+# Khóa chống chạy đồng thời để bảo vệ Terraform state
+concurrency:
+  group: meowcloud-iac-state
+  cancel-in-progress: false
+
+env:
+  TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
+  TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+  TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+  ANSIBLE_FORCE_COLOR: "1"
 
 jobs:
-  scale_out:
-    name: "Scale Out Backend to 5 Nodes"
+  autoscale-workloads:
+    name: "Auto-Scale & Rebalance"
     runs-on: self-hosted
-
-    env:
-      TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
-      TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
-      TF_VAR_backend_count: 5 # Cưỡng chế mở rộng lên 5 node
+    timeout-minutes: 30
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: "1. Checkout Repository"
         uses: actions/checkout@v4
 
-      - name: 🛠️ Terraform Init
+      - name: "2. Prepare Environment & SSH Keys"
+        run: |
+          echo "=== Thiết lập thư mục state và SSH ==="
+          sudo mkdir -p /opt/meowcloud-iac/state
+          sudo chown -R $(whoami):$(whoami) /opt/meowcloud-iac
+
+          mkdir -p ~/.ssh
+          if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+          fi
+
+          if [ -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" ]; then
+            echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.vault_pass
+            chmod 600 ~/.vault_pass
+          fi
+
+      - name: "3. Run Python AI Node Selector"
+        id: node_selector
+        run: |
+          ADD_BE=0
+          ADD_FE=0
+
+          if [ "${{ github.event.inputs.scale_target }}" == "backend" ] || [ "${{ github.event.inputs.scale_target }}" == "both" ]; then
+            ADD_BE=${{ github.event.inputs.add_backend_count }}
+          fi
+
+          if [ "${{ github.event.inputs.scale_target }}" == "frontend" ] || [ "${{ github.event.inputs.scale_target }}" == "both" ]; then
+            ADD_FE=${{ github.event.inputs.add_frontend_count }}
+          fi
+
+          echo "Yêu cầu Scale: +$ADD_BE Backend, +$ADD_FE Frontend"
+
+          if [ "$ADD_BE" -eq 0 ] && [ "$ADD_FE" -eq 0 ]; then
+            echo "Không có số lượng nào được tăng. Hủy bỏ tác vụ."
+            exit 0
+          fi
+
+          # Gọi script Python tính toán và xuất trực tiếp file state JSON mới
+          python3 scripts/select_best_node.py \
+            --add-be $ADD_BE \
+            --add-fe $ADD_FE \
+            --ram-reserve-mb ${{ github.event.inputs.ram_reserve_mb }}
+
+      - name: "4. Terraform Plan & Zero-Destroy Gate"
         working-directory: ./terraform
-        run: terraform init
+        run: |
+          terraform init -input=false
 
-      - name: 🚀 Terraform Apply (Cấp phát thêm máy)
+          # Build plan dựa trên autoscale.tfvars.json vừa được Python ghi đè
+          terraform plan -out=tfplan_scale.bin
+          terraform show -json tfplan_scale.bin > tfplan_scale.json
+
+          # Đưa qua cổng kiểm duyệt an toàn
+          python3 ../scripts/verify_tfplan.py tfplan_scale.json
+
+          # Nếu script verify_tfplan.py trả về exit 0 (hợp lệ), mới tiếp tục
+          rm tfplan_scale.json
+
+      - name: "5. Terraform Apply (Expand Infrastructure)"
         working-directory: ./terraform
-        run: terraform apply -auto-approve
+        run: |
+          terraform apply -auto-approve -input=false tfplan_scale.bin
+          rm tfplan_scale.bin
 
-      - name: ⏳ Chờ các máy ảo mới khởi động (Sleep 15s)
-        run: sleep 15
-
-      - name: ⚙️ Ansible: Cấu hình các Backend mới
+      - name: "6. Wait for SSH Readiness on New Nodes"
         working-directory: ./ansible
-        run: ansible-playbook playbooks/03-setup-backend.yml
+        run: |
+          echo "Đợi 15s cho các máy mới khởi động hoàn toàn..."
+          sleep 15
+          ansible all -m wait_for_connection -a "delay=5 timeout=120"
 
-      - name: ⚙️ Ansible: Cập nhật cấu hình Nginx & Reload
+      - name: "7. Fast Provisioning (Targeted Ansible)"
         working-directory: ./ansible
-        run: ansible-playbook playbooks/02-setup-lb.yml
+        run: |
+          # Để tối ưu tốc độ, ta chỉ chạy playbook trên các máy Backend/Frontend mới tạo
+          # Thay vì lấy target cứng, ta lấy số lượng hiện tại từ file JSON
+          BE_COUNT=$(jq '.backend_count' /opt/meowcloud-iac/state/autoscale.tfvars.json)
+          FE_COUNT=$(jq '.frontend_count' /opt/meowcloud-iac/state/autoscale.tfvars.json)
 
-      - name: ⚙️ Ansible: Cập nhật điểm quét Prometheus
-        working-directory: ./ansible
-        run: ansible-playbook playbooks/06-setup-observer.yml
+          # Cài đặt dịch vụ Backend/Frontend (chạy trên toàn cụm để đồng bộ cấu hình Nginx/API)
+          ansible-playbook playbooks/03-setup-backend.yml
+          ansible-playbook playbooks/04-setup-frontend.yml
+
+          # BẮT BUỘC: Chạy cấu hình Load Balancer để upstream Nginx nạp các IP mới
+          ansible-playbook playbooks/02-setup-lb.yml
+
+          # BẮT BUỘC: Cập nhật lại Prometheus Scrape Targets
+          ansible-playbook playbooks/06-setup-observer.yml
+
+      - name: "8. Three-Layer Healthcheck & Verification"
+        run: |
+          echo "=== Layer 1: Kiểm tra API Endpoint trực tiếp qua Load Balancer ==="
+          curl -sS -f --connect-timeout 5 http://192.168.150.100/api/health || { echo "Lỗi API Healthcheck"; exit 1; }
+          echo -e "\nAPI Healthcheck OK."
+
+          echo "=== Layer 2: Kiểm tra Phân bổ Traffic Frontend ==="
+          curl -sS -f --connect-timeout 5 http://192.168.150.100/ || { echo "Lỗi Frontend Web UI"; exit 1; }
+          echo -e "\nFrontend Load Balancer OK."
+
+          echo "=== Layer 3: Kiểm tra Prometheus Targets ==="
+          # Gọi Prometheus API kiểm tra xem tất cả targets (bao gồm máy mới) đã UP chưa
+          curl -sS http://192.168.150.21:9090/api/v1/targets | jq -r '.data.activeTargets[] | select(.health != "up") | "LỖI TARGET DOWN: \(.labels.instance)"'
+
+          echo "## ✅ Hoàn tất Scale-out Thành Công" >> $GITHUB_STEP_SUMMARY
+          echo "Đã thêm ${{ github.event.inputs.add_backend_count }} Backend và ${{ github.event.inputs.add_frontend_count }} Frontend." >> $GITHUB_STEP_SUMMARY

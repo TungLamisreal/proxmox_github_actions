@@ -2,11 +2,17 @@
 # FILE: terraform/05-frontend.tf
 # CHỨC NĂNG: Khởi tạo cụm LXC Web Frontend (Co giãn đàn hồi qua biến frontend_count)
 # ==============================================================================
-
 resource "proxmox_virtual_environment_container" "frontend" {
   count = var.frontend_count
 
-  node_name    = var.pve_nodes[count.index % length(var.pve_nodes)]
+  # Ưu tiên lấy Node do Python chỉ định trong frontend_node_map;
+  # Các máy gốc (171-173) chưa có trong map sẽ rải đều qua phép chia dư
+  node_name = lookup(
+    var.frontend_node_map,
+    tostring(171 + count.index),
+    var.pve_nodes[count.index % length(var.pve_nodes)]
+  )
+
   vm_id        = 171 + count.index
   unprivileged = true
   started      = true
@@ -35,6 +41,7 @@ resource "proxmox_virtual_environment_container" "frontend" {
   # Cấu hình tài nguyên theo Bảng 3.3: 1 vCPU / 1024MB RAM / 8GB Disk
   cpu { cores = 1 }
   memory { dedicated = 1024 }
+
   disk {
     datastore_id = var.general_pool
     size         = 8
@@ -58,7 +65,6 @@ resource "proxmox_virtual_environment_container" "frontend" {
 }
 
 # --- CẤU HÌNH TƯỜNG LỬA CHO CỤM FRONTEND ---
-
 resource "proxmox_virtual_environment_firewall_options" "frontend_fw" {
   count         = var.frontend_count
   node_name     = proxmox_virtual_environment_container.frontend[count.index].node_name

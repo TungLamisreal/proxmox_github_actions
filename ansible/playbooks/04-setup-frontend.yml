@@ -28,6 +28,7 @@
       ansible.builtin.copy:
         dest: /opt/meow-frontend/conf/default.conf
         mode: '0644'
+        validate: '/usr/sbin/nginx -t -c %s'
         content: |
           upstream backend_cluster {
           {% for host in groups['backends'] %}

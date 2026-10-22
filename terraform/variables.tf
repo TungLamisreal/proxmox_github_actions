@@ -109,3 +109,16 @@ variable "vm_template_ids" {
     "node3" = 9003
   }
 }
+
+# --- 6. BẢN ĐỒ ÁNH XẠ NODE CHO LUỒNG 03 AUTO-SCALE ---
+variable "backend_node_map" {
+  type        = map(string)
+  description = "Ánh xạ cứng VMID -> Node cho các LXC Backend được tạo bởi Auto-scale"
+  default     = {}
+}
+
+variable "frontend_node_map" {
+  type        = map(string)
+  description = "Ánh xạ cứng VMID -> Node cho các LXC Frontend được tạo bởi Auto-scale"
+  default     = {}
+}
