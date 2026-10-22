@@ -259,7 +259,7 @@ jobs:
             exit 1
           fi
 
-          test -s "$AUTOSCALE_STATE_FILE" || {
+          if [ ! -s "$AUTOSCALE_STATE_FILE" ]; then
             echo "::error::Thiếu autoscale.tfvars.json"
             exit 1
           fi
