@@ -127,19 +127,33 @@ jobs:
       - name: "7. Fast Provisioning (Targeted Ansible)"
         working-directory: ./ansible
         run: |
-          # Để tối ưu tốc độ, ta chỉ chạy playbook trên các máy Backend/Frontend mới tạo
-          # Thay vì lấy target cứng, ta lấy số lượng hiện tại từ file JSON
+          # Đọc số lượng hiện hành từ state để tính toán danh sách máy mới
           BE_COUNT=$(jq '.backend_count' /opt/meowcloud-iac/state/autoscale.tfvars.json)
           FE_COUNT=$(jq '.frontend_count' /opt/meowcloud-iac/state/autoscale.tfvars.json)
+          ADD_BE=${{ github.event.inputs.add_backend_count }}
+          ADD_FE=${{ github.event.inputs.add_frontend_count }}
 
-          # Cài đặt dịch vụ Backend/Frontend (chạy trên toàn cụm để đồng bộ cấu hình Nginx/API)
-          ansible-playbook playbooks/03-setup-backend.yml
-          ansible-playbook playbooks/04-setup-frontend.yml
+          # Xây dựng chuỗi --limit
+          LIMIT_BE=""
+          if [ "$ADD_BE" -gt 0 ]; then
+            for i in $(seq $((BE_COUNT - ADD_BE + 1)) $BE_COUNT); do
+              LIMIT_BE+="backend-0${i},"
+            done
+            echo "Chỉ cài đặt các Backend mới: ${LIMIT_BE%,}"
+            ansible-playbook playbooks/03-setup-backend.yml --limit "${LIMIT_BE%,}"
+          fi
 
-          # BẮT BUỘC: Chạy cấu hình Load Balancer để upstream Nginx nạp các IP mới
+          LIMIT_FE=""
+          if [ "$ADD_FE" -gt 0 ]; then
+            for i in $(seq $((FE_COUNT - ADD_FE + 1)) $FE_COUNT); do
+              LIMIT_FE+="frontend-0${i},"
+            done
+            echo "Chỉ cài đặt các Frontend mới: ${LIMIT_FE%,}"
+            ansible-playbook playbooks/04-setup-frontend.yml --limit "${LIMIT_FE%,}"
+          fi
+
+          # Cập nhật Upstream cho toàn cụm
           ansible-playbook playbooks/02-setup-lb.yml
-
-          # BẮT BUỘC: Cập nhật lại Prometheus Scrape Targets
           ansible-playbook playbooks/06-setup-observer.yml
 
       - name: "8. Three-Layer Healthcheck & Verification"

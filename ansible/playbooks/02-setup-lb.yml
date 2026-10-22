@@ -27,6 +27,11 @@
         validate: '/usr/sbin/nginx -t -c %s'
       notify: Reload Nginx
 
+    # THÊM TASK NÀY ĐỂ ĐÁP ỨNG QUY TẮC KIỂM TRA TRƯỚC KHI RELOAD
+    - name: Validate Nginx configuration safely
+      ansible.builtin.command: /usr/sbin/nginx -t
+      changed_when: false
+
     - name: Configure Keepalived for VIP 192.168.150.100
       ansible.builtin.copy:
         dest: /etc/keepalived/keepalived.conf
