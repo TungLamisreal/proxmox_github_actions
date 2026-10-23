@@ -466,19 +466,43 @@ jobs:
           echo "Frontend Web UI qua VIP .100 OK."
 
           if (( ACTUAL_ADD_BE > 0 )); then
-            EXPECTED_BE_HOSTNAME="be-${NEW_BE_COUNT}"
+            EXPECTED_BE_IP="192.168.150.$((100 + NEW_BE_COUNT))"
+            EXPECTED_BE_NAME="Backend-${NEW_BE_COUNT}"
+
+            # Lay node ID thuc te tu backend moi, khong gia dinh node == hostname.
+            DIRECT_RESP=$(curl --fail --silent --show-error --connect-timeout 5 \
+              --retry 3 --retry-delay 1 \
+              "http://${EXPECTED_BE_IP}:5000/health") || {
+              echo "::error::Khong lay duoc health truc tiep tu ${EXPECTED_BE_NAME} (${EXPECTED_BE_IP})."
+              exit 1
+            }
+
+            EXPECTED_NODE=$(printf '%s' "$DIRECT_RESP" |
+              jq -er '.node | strings | select(length > 0)') || {
+              echo "::error::Response health cua ${EXPECTED_BE_NAME} khong co truong .node hop le: $DIRECT_RESP"
+              exit 1
+            }
+
+            echo "Node ID mong doi cua ${EXPECTED_BE_NAME}: ${EXPECTED_NODE}"
             ROUTED_OK=false
             for attempt in $(seq 1 15); do
-              RESP=$(curl --fail --silent --show-error --connect-timeout 5 http://192.168.150.100/api/health)
-              if printf '%s' "$RESP" | grep -q "\"node\"[[:space:]]*:[[:space:]]*\"${EXPECTED_BE_HOSTNAME}\""; then
-                echo "Xác nhận VIP .100 đã phân phối request tới máy mới ${EXPECTED_BE_HOSTNAME}: $RESP"
+              RESP=$(curl --fail --silent --show-error --connect-timeout 5 \
+                http://192.168.150.100/api/health 2>/dev/null || true)
+              ACTUAL_NODE=$(printf '%s' "$RESP" |
+                jq -r '.node // empty' 2>/dev/null || true)
+
+              if [[ -n "$ACTUAL_NODE" && "$ACTUAL_NODE" == "$EXPECTED_NODE" ]]; then
+                echo "Xac nhan VIP .100 da phan phoi request toi ${EXPECTED_BE_NAME} (node=${ACTUAL_NODE}): $RESP"
                 ROUTED_OK=true
                 break
               fi
+
+              echo "Lan ${attempt}/15: VIP tra node='${ACTUAL_NODE:-khong co response}', dang cho..."
               sleep 1
             done
+
             if [ "$ROUTED_OK" != "true" ]; then
-              echo "::error::VIP 192.168.150.100 chưa phân phối request tới Backend mới ${EXPECTED_BE_HOSTNAME} sau 15 lần thử."
+              echo "::error::VIP 192.168.150.100 chua tra ve node ID ${EXPECTED_NODE} cua ${EXPECTED_BE_NAME} sau 15 lan thu."
               exit 1
             fi
           else
