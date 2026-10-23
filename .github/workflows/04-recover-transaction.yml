@@ -72,7 +72,20 @@ jobs:
             --journal-root "$JOURNAL_ROOT" \
             --transaction-id "$MEOW_TRANSACTION_ID"
 
-      - name: "2. Run compensating transaction"
+      - name: "2. Preflight Terraform refresh"
+        shell: bash
+        working-directory: /opt/meowcloud-iac/terraform
+        run: |
+          set -euo pipefail
+
+          timeout 18m terraform plan \
+            -refresh-only \
+            -var-file="$AUTOSCALE_STATE_FILE" \
+            -input=false \
+            -lock-timeout=60s \
+            -parallelism=1
+
+      - name: "3. Run compensating transaction"
         shell: bash
         working-directory: /opt/meowcloud-iac/terraform
         run: |
