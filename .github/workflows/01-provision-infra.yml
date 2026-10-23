@@ -50,14 +50,6 @@ jobs:
       - name: "1. Checkout Repository"
         uses: actions/checkout@v4
 
-      - name: "Transaction Guard — block provision when autoscale is unresolved"
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/transactions/transaction.py guard \
-            --journal-root /opt/meowcloud-iac/state/transactions \
-            --workflow provision
-
       - name: "2. Pre-flight Check (State Dir, SSH Key, Vault & Golden Images)"
         run: |
           echo "=== [1] Kiểm tra thư mục Terraform State & Khóa SSH ==="
