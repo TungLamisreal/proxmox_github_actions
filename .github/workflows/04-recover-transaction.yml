@@ -1,0 +1,100 @@
+name: "04 - Recover Failed Autoscale Transaction"
+
+on:
+  workflow_dispatch:
+    inputs:
+      transaction_id:
+        description: "Transaction cần khôi phục"
+        required: true
+        type: string
+        default: "txn-20261023T154258Z-7b332243"
+      execute:
+        description: "Thực thi rollback thật (chỉ bật sau khi kiểm tra dry-run)"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    name: "Validate and compensate transaction"
+    runs-on: self-hosted
+    timeout-minutes: 25
+
+    env:
+      TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL || 'https://192.168.150.49:8006/api2/json' }}
+      TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+      TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+
+      MEOW_TRANSACTION_ID: ${{ inputs.transaction_id }}
+      EXECUTE_ROLLBACK: ${{ inputs.execute }}
+
+      REPO_ROOT: /opt/meowcloud-iac
+      AUTOSCALE_STATE_FILE: /opt/meowcloud-iac/state/autoscale.tfvars.json
+      JOURNAL_ROOT: /opt/meowcloud-iac/state/transactions
+
+    steps:
+      - name: "1. Validate recovery prerequisites"
+        shell: bash
+        working-directory: /opt/meowcloud-iac
+        run: |
+          set -euo pipefail
+
+          [[ -n "$TF_VAR_proxmox_api_url" ]] || {
+            echo "::error::Missing Proxmox API URL"
+            exit 1
+          }
+
+          [[ -n "$TF_VAR_proxmox_api_token_id" ]] || {
+            echo "::error::Missing Proxmox API token ID"
+            exit 1
+          }
+
+          [[ -n "$TF_VAR_proxmox_api_token_secret" ]] || {
+            echo "::error::Missing Proxmox API token secret"
+            exit 1
+          }
+
+          [[ "$MEOW_TRANSACTION_ID" == "txn-20261023T154258Z-7b332243" ]] || {
+            echo "::error::Unexpected transaction ID; refusing recovery"
+            exit 1
+          }
+
+          test -s "$AUTOSCALE_STATE_FILE"
+          test -s "$REPO_ROOT/state/terraform.tfstate"
+          test -d "$JOURNAL_ROOT"
+          test -f scripts/transactions/transaction.py
+          test -f scripts/verify_tfplan.py
+
+          python3 scripts/transactions/transaction.py status \
+            --journal-root "$JOURNAL_ROOT" \
+            --transaction-id "$MEOW_TRANSACTION_ID"
+
+      - name: "2. Run compensating transaction"
+        shell: bash
+        working-directory: /opt/meowcloud-iac/terraform
+        run: |
+          set -euo pipefail
+
+          args=(
+            compensate
+            --transaction-id "$MEOW_TRANSACTION_ID"
+            --state-file "$AUTOSCALE_STATE_FILE"
+            --journal-root "$JOURNAL_ROOT"
+            --terraform-dir "$PWD"
+            --ansible-dir "$REPO_ROOT/ansible"
+            --inventory-file "$REPO_ROOT/ansible/inventory.ini"
+            --verify-script "$REPO_ROOT/scripts/verify_tfplan.py"
+            --api-url "$TF_VAR_proxmox_api_url"
+          )
+
+          if [[ "$EXECUTE_ROLLBACK" == "true" ]]; then
+            args+=(--execute)
+            echo "::warning::Executing compensating transaction"
+          else
+            echo "DRY-RUN: --execute is disabled; no rollback apply requested."
+          fi
+
+          python3 ../scripts/transactions/transaction.py "${args[@]}"
