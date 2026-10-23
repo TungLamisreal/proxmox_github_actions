@@ -85,16 +85,16 @@ resource "proxmox_virtual_environment_firewall_ipset" "lb_ipfilter_net0" {
   name         = "ipfilter-net0"
   comment      = "Allowed IP and VIP for LB net0"
 
-  # 1. Cho phép IP tĩnh gốc (.61 hoặc .62)
-  cidr {
-    name    = "192.168.150.${61 + count.index}"
-    comment = "lb-0${count.index + 1} net0 IPv4"
-  }
-
-  # 2. Cho phép IP ảo VIP (.100) của Keepalived để không bị Drop gói tin VRRP/HTTP
+  # 1. Cho phép IP ảo VIP (.100) của Keepalived
   cidr {
     name    = "192.168.150.100"
     comment = "Keepalived VIP"
+  }
+
+  # 2. Cho phép IP tĩnh gốc (.61 hoặc .62)
+  cidr {
+    name    = "192.168.150.${61 + count.index}"
+    comment = "lb-0${count.index + 1} net0 IPv4"
   }
 
   depends_on = [proxmox_virtual_environment_container.loadbalancer]
