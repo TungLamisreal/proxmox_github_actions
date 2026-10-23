@@ -125,6 +125,20 @@ jobs:
             exit 1
           fi
 
+      - name: "2a. Begin durable transaction journal"
+        id: transaction_begin
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/transactions/transaction.py begin \
+            --state-file "$AUTOSCALE_STATE_FILE" \
+            --backup-file "$AUTOSCALE_BACKUP_FILE" \
+            --journal-root /opt/meowcloud-iac/state/transactions \
+            --scale-target "$SCALE_TARGET" \
+            --add-be "$ADD_BACKEND_COUNT_INPUT" \
+            --add-fe "$ADD_FRONTEND_COUNT_INPUT" \
+            --repo-root "$GITHUB_WORKSPACE"
+
       - name: "3. Run Python Node Selector"
         id: node_selector
         shell: bash
@@ -196,6 +210,11 @@ jobs:
             --add-be "$ADD_BE" \
             --add-fe "$ADD_FE" \
             --ram-reserve-mb "$RAM_RESERVE_MB_INPUT"
+
+          # Persist the selector candidate in the journal before subsequent validation.
+          python3 scripts/transactions/transaction.py record-target \
+            --transaction-id "$MEOW_TRANSACTION_ID" \
+            --state-file "$AUTOSCALE_STATE_FILE"
 
           if [ ! -s "$AUTOSCALE_STATE_FILE" ]; then
             echo "::error::Selector không tạo được autoscale state JSON hợp lệ."
@@ -342,6 +361,18 @@ jobs:
           python3 ../scripts/verify_tfplan.py "$TFPLAN_JSON"
           echo "Terraform plan đã qua verify_tfplan.py. Chưa apply cho đến bước kế tiếp."
 
+          # Durable transaction preflight: record exact creates and prove VMIDs are absent live.
+          python3 ../scripts/transactions/transaction.py record-plan \
+            --transaction-id "$MEOW_TRANSACTION_ID" \
+            --state-file "$AUTOSCALE_STATE_FILE" \
+            --plan-json "$TFPLAN_JSON" \
+            --terraform-dir "$PWD" \
+            --api-url "$TF_VAR_proxmox_api_url" \
+            --old-be "$OLD_BE_COUNT" \
+            --old-fe "$OLD_FE_COUNT" \
+            --new-be "$NEW_BE_COUNT" \
+            --new-fe "$NEW_FE_COUNT"
+
       - name: "5. Terraform Apply (Expand Infrastructure)"
         id: apply
         if: ${{ steps.node_selector.outputs.noop != 'true' }}
@@ -351,7 +382,9 @@ jobs:
           set -euo pipefail
           echo "attempted=true" >> "$GITHUB_OUTPUT"
           # PVE/Ceph nhỏ: tạo tuần tự để giảm va chạm lock storage/container.
+          python3 ../scripts/transactions/transaction.py stage --transaction-id "$MEOW_TRANSACTION_ID" --stage PROVISIONING
           terraform apply -parallelism=1 -auto-approve -input=false "$TFPLAN_FILE"
+          python3 ../scripts/transactions/transaction.py stage --transaction-id "$MEOW_TRANSACTION_ID" --stage PROVISIONED
           echo "applied=true" >> "$GITHUB_OUTPUT"
           rm -f "$TFPLAN_FILE" "$TFPLAN_JSON"
 
@@ -414,6 +447,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 ../scripts/transactions/transaction.py stage --transaction-id "$MEOW_TRANSACTION_ID" --stage CONFIGURING
           INVENTORY="$ANSIBLE_INVENTORY_FILE"
 
           if [ -n "${NEW_BACKENDS:-}" ]; then
@@ -438,6 +472,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 scripts/transactions/transaction.py stage --transaction-id "$MEOW_TRANSACTION_ID" --stage VALIDATING
 
           echo "=== Layer 1A: Kiểm tra trực tiếp từng Guest vừa được tạo mới ==="
           if (( ACTUAL_ADD_BE > 0 )); then
@@ -553,25 +588,41 @@ jobs:
             echo "- Terraform plan đã qua 2 cổng kiểm duyệt; SSH readiness, Ansible provisioning và 3-Layer Healthcheck hoàn tất."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: "9. Restore proposed capacity if Terraform apply was not attempted"
-        if: ${{ failure() && steps.node_selector.outcome != 'skipped' && steps.node_selector.outputs.noop != 'true' && steps.apply.outputs.attempted != 'true' }}
+      - name: "9. Commit transaction after all provisioning and health checks"
+        if: ${{ success() && steps.transaction_begin.outputs.transaction_id != '' }}
+        id: transaction_commit
+        working-directory: ./terraform
         shell: bash
         run: |
           set -euo pipefail
-          if [ -s "${AUTOSCALE_BACKUP_FILE:-}" ]; then
-            cp -p "$AUTOSCALE_BACKUP_FILE" "$AUTOSCALE_STATE_FILE"
-            cp -p "$AUTOSCALE_BACKUP_FILE" "./terraform/autoscale.auto.tfvars.json" 2>/dev/null || true
-            echo "Đã khôi phục autoscale.tfvars.json vì Terraform apply chưa được bắt đầu."
-          else
-            echo "::error::Không tìm thấy bản sao capacity trước autoscale; cần kiểm tra state thủ công."
-            exit 1
-          fi
-          rm -f "${TFPLAN_FILE:-}" "${TFPLAN_JSON:-}"
+          python3 ../scripts/transactions/transaction.py commit \
+            --transaction-id "$MEOW_TRANSACTION_ID" \
+            --state-file "$AUTOSCALE_STATE_FILE" \
+            --terraform-dir "$PWD" \
+            --api-url "$TF_VAR_proxmox_api_url"
 
-      - name: "10. Report partial apply failure"
-        if: ${{ failure() && steps.apply.outputs.attempted == 'true' && steps.apply.outputs.applied != 'true' }}
+      - name: "10. Compensate failed transaction (strict Terraform rollback plan)"
+        if: ${{ failure() && steps.transaction_begin.outputs.transaction_id != '' }}
+        working-directory: ./terraform
         shell: bash
         run: |
-          echo "::error::Terraform apply đã bắt đầu nhưng không hoàn tất. Không tự khôi phục autoscale.tfvars.json vì Terraform có thể đã tạo một phần tài nguyên. Kiểm tra terraform state/plan và inventory trước lần chạy tiếp theo."
-          echo "## ⚠️ Terraform apply chưa hoàn tất" >> "$GITHUB_STEP_SUMMARY"
-          echo "Apply đã bắt đầu nhưng báo lỗi; capacity state được giữ lại để tránh vô tình giảm desired capacity khi hạ tầng có thể đã thay đổi một phần. Cần kiểm tra Terraform state và các VM thực tế trước khi chạy lại." >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          python3 ../scripts/transactions/transaction.py compensate \
+            --execute \
+            --transaction-id "$MEOW_TRANSACTION_ID" \
+            --state-file "$AUTOSCALE_STATE_FILE" \
+            --journal-root /opt/meowcloud-iac/state/transactions \
+            --terraform-dir "$PWD" \
+            --ansible-dir "$GITHUB_WORKSPACE/ansible" \
+            --inventory-file "$GITHUB_WORKSPACE/ansible/$ANSIBLE_INVENTORY_FILE" \
+            --verify-script "$GITHUB_WORKSPACE/scripts/verify_tfplan.py" \
+            --api-url "$TF_VAR_proxmox_api_url"
+
+      - name: "11. Report durable transaction status"
+        if: ${{ always() && steps.transaction_begin.outputs.transaction_id != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/transactions/transaction.py status \
+            --journal-root /opt/meowcloud-iac/state/transactions \
+            --transaction-id "$MEOW_TRANSACTION_ID"
