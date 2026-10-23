@@ -1,6 +1,6 @@
 ---
-- name: Configure Observer (Prometheus, Alertmanager & Grafana)
-  hosts: observer
+- name: Configure Observer (Prometheus, Alertmanager & Auto-Scale Alerting)
+  hosts: monitoring
   become: true
   gather_facts: true
 
@@ -14,42 +14,99 @@
         update_cache: true
         lock_timeout: 300
 
-    - name: Generate dynamic prometheus.yml scraping all MeowCloud tiers
+    - name: Generate Prometheus Alert Rules for Backend and Frontend Auto-Scaling
+      ansible.builtin.copy:
+        dest: /etc/prometheus/alert.rules.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+        content: |
+          {% raw %}
+          groups:
+            - name: meowcloud_autoscale_rules
+              interval: 10s
+              rules:
+                - alert: BackendPoolHighCPU
+                  expr: 100 - (avg(rate(node_cpu_seconds_total{job="backends",mode="idle"}[1m])) * 100) > 80
+                  for: 30s
+                  labels:
+                    severity: critical
+                    autoscale: "true"
+                    scale_target: "backend"
+                  annotations:
+                    summary: "Cụm Backend quá tải CPU (> 80%)"
+                    description: "CPU trung bình của cụm Backend đạt {{ $value | printf \"%.2f\" }}% trong hơn 30 giây."
+
+                - alert: FrontendPoolHighCPU
+                  expr: 100 - (avg(rate(node_cpu_seconds_total{job="frontends",mode="idle"}[1m])) * 100) > 80
+                  for: 30s
+                  labels:
+                    severity: critical
+                    autoscale: "true"
+                    scale_target: "frontend"
+                  annotations:
+                    summary: "Cụm Frontend quá tải CPU (> 80%)"
+                    description: "CPU trung bình của cụm Frontend đạt {{ $value | printf \"%.2f\" }}% trong hơn 30 giây."
+          {% endraw %}
+      notify: Restart Prometheus
+
+    - name: Validate Prometheus Alert Rules syntax with promtool
+      ansible.builtin.command: promtool check rules /etc/prometheus/alert.rules.yml
+      changed_when: false
+
+    - name: Generate dynamic prometheus.yml scraping all MeowCloud tiers and linking Alertmanager
       ansible.builtin.copy:
         dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
         mode: '0644'
         content: |
           global:
             scrape_interval: 10s
             evaluation_interval: 10s
+
+          rule_files:
+            - /etc/prometheus/alert.rules.yml
+
+          alerting:
+            alertmanagers:
+              - static_configs:
+                  - targets:
+                      - 'localhost:9093'
+
           scrape_configs:
             - job_name: 'observer'
               static_configs:
                 - targets: ['localhost:9100']
+
             - job_name: 'tunnels'
               static_configs:
                 - targets:
           {% for host in groups['tunnels'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
+
             - job_name: 'loadbalancers'
               static_configs:
                 - targets:
           {% for host in groups['loadbalancers'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
+
             - job_name: 'backends'
               static_configs:
                 - targets:
           {% for host in groups['backends'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
+
             - job_name: 'frontends'
               static_configs:
                 - targets:
           {% for host in groups['frontends'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
+
             - job_name: 'databases'
               static_configs:
                 - targets:
@@ -57,6 +114,39 @@
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
       notify: Restart Prometheus
+
+    - name: Validate complete prometheus.yml configuration with promtool
+      ansible.builtin.command: promtool check config /etc/prometheus/prometheus.yml
+      changed_when: false
+
+    - name: Configure Alertmanager to route Auto-Scale Webhooks to Auto-VM (192.168.150.20:5000)
+      ansible.builtin.copy:
+        dest: /etc/prometheus/alertmanager.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+        content: |
+          global:
+            resolve_timeout: 5m
+
+          route:
+            group_by: ['alertname', 'scale_target']
+            group_wait: 10s
+            group_interval: 1m
+            repeat_interval: 5m
+            receiver: 'default-noop'
+            routes:
+              - match:
+                  autoscale: "true"
+                receiver: 'meowcloud-autoscale-webhook'
+
+          receivers:
+            - name: 'default-noop'
+            - name: 'meowcloud-autoscale-webhook'
+              webhook_configs:
+                - url: 'http://192.168.150.20:5000/webhook'
+                  send_resolved: false
+      notify: Restart Alertmanager
 
     - name: Ensure Prometheus, Alertmanager and Node Exporter are active
       ansible.builtin.service:
@@ -68,8 +158,29 @@
         - prometheus-alertmanager
         - prometheus-node-exporter
 
+    - name: Flush handlers to apply Prometheus and Alertmanager changes immediately
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify Prometheus Rules and Alertmanager API readiness
+      ansible.builtin.uri:
+        url: "{{ item }}"
+        return_content: true
+        status_code: 200
+      register: api_check
+      retries: 5           # Thử lại tối đa 5 lần
+      delay: 3             # Mỗi lần cách nhau 3 giây
+      until: api_check.status == 200
+      loop:
+        - "http://127.0.0.1:9090/api/v1/rules"
+        - "http://127.0.0.1:9093/-/ready"
+
   handlers:
     - name: Restart Prometheus
       ansible.builtin.service:
         name: prometheus
+        state: restarted
+
+    - name: Restart Alertmanager
+      ansible.builtin.service:
+        name: prometheus-alertmanager
         state: restarted
