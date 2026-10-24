@@ -13,3 +13,19 @@ state/
 *.pem
 id_ed25519
 id_rsa
+# Terraform State & Plans
+*.tfstate
+*.tfstate.*
+*.tfplan
+*tfplan*
+.terraform/
+.terraform.lock.hcl
+
+# Dynamic Inventory & State vars
+ansible/inventory.ini
+state/autoscale.tfvars.json
+state/autoscale.tfvars.json.bak
+
+# Temp & Cache
+__pycache__/
+*.pyc

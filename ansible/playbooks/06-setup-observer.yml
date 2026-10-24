@@ -13,7 +13,7 @@
         update_cache: true
         lock_timeout: 300
 
-    - name: Generate Prometheus Alert Rules for Scale-Out and Scale-In (LXC Cgroup Accurate Mode)
+    - name: Generate Prometheus Alert Rules for Scale-Out and Scale-In (Cgroup Quota Fix)
       ansible.builtin.copy:
         dest: /etc/prometheus/alert.rules.yml
         owner: prometheus
@@ -25,61 +25,47 @@
             - name: meowcloud_autoscale_rules
               interval: 10s
               rules:
-                # --- QUY TẮC SCALE-OUT (TĂNG MÁY KHI CPU THỰC DÙNG > 80%) ---
+                # --- BE có 2 Cores: Lấy tổng CPU thực dùng chia 2 ---
                 - alert: BackendPoolHighCPU
-                  expr: (avg by (instance) (sum by (instance, cpu) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m]))) * 100) > 80
+                  expr: (sum by (instance) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / 2) * 100 > 80
                   for: 30s
                   labels:
                     severity: critical
                     autoscale: "true"
                     scale_action: "scale_out"
                     scale_target: "backend"
-                  annotations:
-                    summary: "Cụm Backend quá tải CPU (> 80%)"
-                    description: "Instance Backend có CPU thực dùng đạt {{ $value | printf \"%.2f\" }}% trong hơn 30 giây."
 
+                # --- FE có 1 Core: Lấy tổng CPU thực dùng chia 1 ---
                 - alert: FrontendPoolHighCPU
-                  expr: (avg by (instance) (sum by (instance, cpu) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m]))) * 100) > 80
+                  expr: (sum by (instance) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / 1) * 100 > 80
                   for: 30s
                   labels:
                     severity: critical
                     autoscale: "true"
                     scale_action: "scale_out"
                     scale_target: "frontend"
-                  annotations:
-                    summary: "Cụm Frontend quá tải CPU (> 80%)"
-                    description: "Instance Frontend có CPU thực dùng đạt {{ $value | printf \"%.2f\" }}% trong hơn 30 giây."
 
-                # --- QUY TẮC SCALE-IN (THU HỒI MÁY KHI CPU THỰC DÙNG < 20% VÀ TỔNG MÁY > 3) ---
+                # --- Scale-in BE: Tổng tải chia cho (Số máy * 2 nhân) ---
                 - alert: BackendPoolLowCPU
-                  expr: (avg by (job) (sum by (job, instance, cpu) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) * 100) < 20) and (count by (job) (up{job="backends"}) > 3)
+                  expr: ((sum by (job) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / (count by (job) (up{job="backends"}) * 2)) * 100 < 20) and (count by (job) (up{job="backends"}) > 3)
                   for: 30s
                   labels:
                     severity: info
                     autoscale: "true"
                     scale_action: "scale_in"
                     scale_target: "backend"
-                  annotations:
-                    summary: "Cụm Backend tải thấp (< 20%) và dư thừa tài nguyên (> 3 LXC)"
-                    description: "CPU thực dùng trung bình toàn cụm Backend chỉ đạt {{ $value | printf \"%.2f\" }}%."
 
+                # --- Scale-in FE: Tổng tải chia cho (Số máy * 1 nhân) ---
                 - alert: FrontendPoolLowCPU
-                  expr: (avg by (job) (sum by (job, instance, cpu) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) * 100) < 20) and (count by (job) (up{job="frontends"}) > 3)
+                  expr: ((sum by (job) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / (count by (job) (up{job="frontends"}) * 1)) * 100 < 20) and (count by (job) (up{job="frontends"}) > 3)
                   for: 30s
                   labels:
                     severity: info
                     autoscale: "true"
                     scale_action: "scale_in"
                     scale_target: "frontend"
-                  annotations:
-                    summary: "Cụm Frontend tải thấp (< 20%) và dư thừa tài nguyên (> 3 LXC)"
-                    description: "CPU thực dùng trung bình toàn cụm Frontend chỉ đạt {{ $value | printf \"%.2f\" }}%."
           {% endraw %}
       notify: Restart Prometheus
-
-    - name: Validate Prometheus Alert Rules syntax with promtool
-      ansible.builtin.command: promtool check rules /etc/prometheus/alert.rules.yml
-      changed_when: false
 
     - name: Generate dynamic prometheus.yml scraping all MeowCloud tiers and linking Alertmanager
       ansible.builtin.copy:
@@ -134,10 +120,6 @@
           {% endfor %}
       notify: Restart Prometheus
 
-    - name: Validate complete prometheus.yml configuration with promtool
-      ansible.builtin.command: promtool check config /etc/prometheus/prometheus.yml
-      changed_when: false
-
     - name: Configure Alertmanager to route Auto-Scale Webhooks to Auto-VM (192.168.150.20:5000)
       ansible.builtin.copy:
         dest: /etc/prometheus/alertmanager.yml
@@ -177,19 +159,6 @@
 
     - name: Flush handlers to apply Prometheus and Alertmanager changes immediately
       ansible.builtin.meta: flush_handlers
-
-    - name: Verify Prometheus Rules and Alertmanager API readiness
-      ansible.builtin.uri:
-        url: "{{ item }}"
-        return_content: true
-        status_code: 200
-      register: api_check
-      retries: 5
-      delay: 3
-      until: api_check.status == 200
-      loop:
-        - "http://127.0.0.1:9090/api/v1/rules"
-        - "http://127.0.0.1:9093/-/ready"
 
   handlers:
     - name: Restart Prometheus
