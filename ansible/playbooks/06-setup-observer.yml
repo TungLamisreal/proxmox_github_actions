@@ -3,7 +3,6 @@
   hosts: monitoring
   become: true
   gather_facts: true
-
   tasks:
     - name: Install Prometheus and Alertmanager
       ansible.builtin.apt:
@@ -14,7 +13,7 @@
         update_cache: true
         lock_timeout: 300
 
-    - name: Generate Prometheus Alert Rules for Backend and Frontend Auto-Scaling
+    - name: Generate Prometheus Alert Rules for Scale-Out and Scale-In
       ansible.builtin.copy:
         dest: /etc/prometheus/alert.rules.yml
         owner: prometheus
@@ -26,27 +25,61 @@
             - name: meowcloud_autoscale_rules
               interval: 10s
               rules:
+                # --- QUY TẮC SCALE-OUT (TĂNG MÁY KHI QUÁ TẢI > 80%) ---
                 - alert: BackendPoolHighCPU
-                  expr: 100 - (avg(rate(node_cpu_seconds_total{job="backends",mode="idle"}[1m])) * 100) > 80
+                  expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{job="backends",mode="idle"}[1m])) * 100) > 80
                   for: 30s
                   labels:
                     severity: critical
                     autoscale: "true"
+                    scale_action: "scale_out"
                     scale_target: "backend"
                   annotations:
                     summary: "Cụm Backend quá tải CPU (> 80%)"
-                    description: "CPU trung bình của cụm Backend đạt {{ $value | printf \"%.2f\" }}% trong hơn 30 giây."
+                    description: "Instance Backend có CPU đạt {{ $value | printf \"%.2f\" }}% trong hơn 30 giây."
 
                 - alert: FrontendPoolHighCPU
-                  expr: 100 - (avg(rate(node_cpu_seconds_total{job="frontends",mode="idle"}[1m])) * 100) > 80
+                  expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{job="frontends",mode="idle"}[1m])) * 100) > 80
                   for: 30s
                   labels:
                     severity: critical
                     autoscale: "true"
+                    scale_action: "scale_out"
                     scale_target: "frontend"
                   annotations:
                     summary: "Cụm Frontend quá tải CPU (> 80%)"
-                    description: "CPU trung bình của cụm Frontend đạt {{ $value | printf \"%.2f\" }}% trong hơn 30 giây."
+                    description: "Instance Frontend có CPU đạt {{ $value | printf \"%.2f\" }}% trong hơn 30 giây."
+
+                # --- QUY TẮC SCALE-IN (THU HỒI MÁY KHI TẢI THẤP < 20% VÀ SỐ MÁY > 3) ---
+                - alert: BackendPoolLowCPU
+                  expr: >
+                    (avg(100 - (avg by (instance) (rate(node_cpu_seconds_total{job="backends",mode="idle"}[1m])) * 100)) < 20)
+                    and
+                    (count(up{job="backends"} == 1) > 3)
+                  for: 1m
+                  labels:
+                    severity: info
+                    autoscale: "true"
+                    scale_action: "scale_in"
+                    scale_target: "backend"
+                  annotations:
+                    summary: "Cụm Backend tải thấp (< 20%) và dư thừa tài nguyên (> 3 LXC)"
+                    description: "CPU trung bình toàn cụm Backend chỉ đạt {{ $value | printf \"%.2f\" }}% trong hơn 1 phút."
+
+                - alert: FrontendPoolLowCPU
+                  expr: >
+                    (avg(100 - (avg by (instance) (rate(node_cpu_seconds_total{job="frontends",mode="idle"}[1m])) * 100)) < 20)
+                    and
+                    (count(up{job="frontends"} == 1) > 3)
+                  for: 1m
+                  labels:
+                    severity: info
+                    autoscale: "true"
+                    scale_action: "scale_in"
+                    scale_target: "frontend"
+                  annotations:
+                    summary: "Cụm Frontend tải thấp (< 20%) và dư thừa tài nguyên (> 3 LXC)"
+                    description: "CPU trung bình toàn cụm Frontend chỉ đạt {{ $value | printf \"%.2f\" }}% trong hơn 1 phút."
           {% endraw %}
       notify: Restart Prometheus
 
@@ -64,49 +97,41 @@
           global:
             scrape_interval: 10s
             evaluation_interval: 10s
-
           rule_files:
             - /etc/prometheus/alert.rules.yml
-
           alerting:
             alertmanagers:
               - static_configs:
                   - targets:
                       - 'localhost:9093'
-
           scrape_configs:
             - job_name: 'observer'
               static_configs:
                 - targets: ['localhost:9100']
-
             - job_name: 'tunnels'
               static_configs:
                 - targets:
           {% for host in groups['tunnels'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
-
             - job_name: 'loadbalancers'
               static_configs:
                 - targets:
           {% for host in groups['loadbalancers'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
-
             - job_name: 'backends'
               static_configs:
                 - targets:
           {% for host in groups['backends'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
-
             - job_name: 'frontends'
               static_configs:
                 - targets:
           {% for host in groups['frontends'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
-
             - job_name: 'databases'
               static_configs:
                 - targets:
@@ -128,9 +153,8 @@
         content: |
           global:
             resolve_timeout: 5m
-
           route:
-            group_by: ['alertname', 'scale_target']
+            group_by: ['alertname', 'scale_target', 'scale_action']
             group_wait: 10s
             group_interval: 1m
             repeat_interval: 5m
@@ -139,7 +163,6 @@
               - match:
                   autoscale: "true"
                 receiver: 'meowcloud-autoscale-webhook'
-
           receivers:
             - name: 'default-noop'
             - name: 'meowcloud-autoscale-webhook'
@@ -167,8 +190,8 @@
         return_content: true
         status_code: 200
       register: api_check
-      retries: 5           # Thử lại tối đa 5 lần
-      delay: 3             # Mỗi lần cách nhau 3 giây
+      retries: 5
+      delay: 3
       until: api_check.status == 200
       loop:
         - "http://127.0.0.1:9090/api/v1/rules"
@@ -179,7 +202,6 @@
       ansible.builtin.service:
         name: prometheus
         state: restarted
-
     - name: Restart Alertmanager
       ansible.builtin.service:
         name: prometheus-alertmanager

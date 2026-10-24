@@ -1,0 +1,137 @@
+name: "04 - Closed-Loop Auto-Scale In (Graceful Drain & Destroy)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      scale_target:
+        description: "Phân hệ cần thu hồi (backend | frontend)"
+        required: true
+        default: "backend"
+        type: choice
+        options:
+          - backend
+          - frontend
+
+# Dùng chung khóa Concurrency với Luồng 01, 02, 03 để bảo vệ tuyệt đối Terraform State
+concurrency:
+  group: meowcloud-iac-state
+  cancel-in-progress: false
+
+env:
+  TF_VAR_proxmox_api_url: "https://192.168.150.49:8006/api2/json"
+  TF_VAR_proxmox_api_token_id: "root@pam!iac-token"
+  TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+  ANSIBLE_CONFIG: "/opt/meowcloud-iac/ansible/ansible.cfg"
+
+jobs:
+  scale_in:
+    name: "Scale-In ${{ inputs.scale_target }} (LIFO + Graceful Drain)"
+    runs-on: self-hosted
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Backup Elastic Pool State & Select LIFO Instance
+        id: select_lifo
+        run: |
+          mkdir -p /opt/meowcloud-iac/state
+          if [ -f /opt/meowcloud-iac/state/autoscale.tfvars.json ]; then
+            cp /opt/meowcloud-iac/state/autoscale.tfvars.json /opt/meowcloud-iac/state/autoscale.tfvars.json.bak
+          fi
+
+          # Chạy script chọn máy LIFO và rút IP khỏi ansible/inventory.ini
+          set +e
+          META_JSON=$(python3 scripts/scale_in_node.py --target "${{ inputs.scale_target }}")
+          EXIT_CODE=$?
+          set -e
+
+          if [ $EXIT_CODE -eq 3 ]; then
+            echo "skip_scale_in=true" >> $GITHUB_OUTPUT
+            exit 0
+          elif [ $EXIT_CODE -ne 0 ]; then
+            exit $EXIT_CODE
+          fi
+
+          echo "skip_scale_in=false" >> $GITHUB_OUTPUT
+          echo "retiring_vmid=$(echo "$META_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["retiring_vmid"])')" >> $GITHUB_OUTPUT
+          echo "retiring_ip=$(echo "$META_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["retiring_ip"])')" >> $GITHUB_OUTPUT
+          echo "retiring_host=$(echo "$META_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["retiring_host"])')" >> $GITHUB_OUTPUT
+          echo "retiring_port=$(echo "$META_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["retiring_port"])')" >> $GITHUB_OUTPUT
+
+      - name: Step 1 - Graceful Connection Draining on Nginx & Prometheus Target Removal
+        if: steps.select_lifo.outputs.skip_scale_in == 'false'
+        working-directory: /opt/meowcloud-iac/ansible
+        run: |
+          echo "=== [1/3] RÚT UPSTREAM KHỎI NGINX LOAD BALANCER ==="
+          ansible-playbook -i inventory.ini playbooks/02-setup-lb.yml
+
+          if [ "${{ inputs.scale_target }}" == "backend" ]; then
+            echo "=== [2/3] RÚT UPSTREAM BACKEND KHỎI NGINX TRÊN CÁC FRONTEND ==="
+            ansible-playbook -i inventory.ini playbooks/04-setup-frontend.yml
+          fi
+
+          echo "=== [3/3] CẬP NHẬT PROMETHEUS SCRAPE TARGETS TRƯỚC KHI XÓA MÁY ==="
+          ansible-playbook -i inventory.ini playbooks/06-setup-observer.yml
+
+      - name: Step 2 - Wait for In-Flight Requests to Drain to Zero
+        if: steps.select_lifo.outputs.skip_scale_in == 'false'
+        run: |
+          RET_IP="${{ steps.select_lifo.outputs.retiring_ip }}"
+          RET_PORT="${{ steps.select_lifo.outputs.retiring_port }}"
+          echo "[*] Kiểm tra kết nối đang xử lý (ESTABLISHED) trên ${RET_IP}:${RET_PORT}..."
+
+          for i in {1..15}; do
+            ACTIVE_CONN=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 root@${RET_IP} \
+              "ss -tn state established '( sport = :${RET_PORT} )' | tail -n +2 | wc -l" 2>/dev/null || echo "0")
+            echo "    - Giây thứ ${i}/15: Số kết nối active = ${ACTIVE_CONN}"
+            if [ "${ACTIVE_CONN}" -eq 0 ]; then
+              echo "[OK] Toàn bộ kết nối trên ${RET_IP} đã rút cạn (0 active requests)!"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Step 3 - Terraform Plan & Controlled Scale-In Gate
+        if: steps.select_lifo.outputs.skip_scale_in == 'false'
+        working-directory: /opt/meowcloud-iac/terraform
+        run: |
+          terraform init -input=false
+          terraform plan \
+            -state=/opt/meowcloud-iac/state/terraform.tfstate \
+            -var-file=/opt/meowcloud-iac/state/autoscale.tfvars.json \
+            -out=tfplan_scale_in
+
+          terraform show -json tfplan_scale_in > tfplan_scale_in.json
+          python3 ../scripts/verify_tfplan.py tfplan_scale_in.json --allow-scale-in
+
+      - name: Step 4 - Terraform Apply (Terminate Drained LXC)
+        if: steps.select_lifo.outputs.skip_scale_in == 'false'
+        working-directory: /opt/meowcloud-iac/terraform
+        run: |
+          terraform apply \
+            -state=/opt/meowcloud-iac/state/terraform.tfstate \
+            -auto-approve \
+            tfplan_scale_in
+
+      - name: Step 5 - Post-Scale-In VIP Healthcheck
+        if: steps.select_lifo.outputs.skip_scale_in == 'false'
+        run: |
+          curl -fsS http://192.168.150.100/lb-status
+          curl -fsS http://192.168.150.100/api/health
+          echo "[OK] Thu hồi LXC ${{ steps.select_lifo.outputs.retiring_host }} (VMID ${{ steps.select_lifo.outputs.retiring_vmid }}) hoàn tất, dịch vụ ổn định 100%!"
+
+      - name: Rollback State on Failure
+        if: failure()
+        run: |
+          echo "[!] Phát hiện lỗi trong quá trình Scale-in! Khôi phục autoscale.tfvars.json.bak..."
+          if [ -f /opt/meowcloud-iac/state/autoscale.tfvars.json.bak ]; then
+            cp /opt/meowcloud-iac/state/autoscale.tfvars.json.bak /opt/meowcloud-iac/state/autoscale.tfvars.json
+          fi
+          cd /opt/meowcloud-iac/terraform
+          terraform apply \
+            -state=/opt/meowcloud-iac/state/terraform.tfstate \
+            -var-file=/opt/meowcloud-iac/state/autoscale.tfvars.json \
+            -auto-approve
+          cd /opt/meowcloud-iac/ansible
+          ansible-playbook -i inventory.ini playbooks/02-setup-lb.yml
+          ansible-playbook -i inventory.ini playbooks/06-setup-observer.yml

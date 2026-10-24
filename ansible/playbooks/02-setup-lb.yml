@@ -3,7 +3,6 @@
   hosts: loadbalancers
   become: true
   gather_facts: true
-
   tasks:
     - name: Install Nginx and Keepalived (Base packages & psmisc already in Golden Image)
       ansible.builtin.apt:
@@ -19,6 +18,15 @@
         path: /etc/nginx/sites-enabled/default
         state: absent
 
+    - name: Configure Nginx worker_shutdown_timeout for Graceful Connection Draining
+      ansible.builtin.lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: '^worker_shutdown_timeout'
+        insertbefore: '^http\s*\{'
+        line: 'worker_shutdown_timeout 15s;'
+        state: present
+      notify: Reload Nginx
+
     - name: Render dynamic Upstream Load Balancer configuration
       ansible.builtin.template:
         src: ../templates/loadbalancer.conf.j2
@@ -26,7 +34,6 @@
         mode: '0644'
       notify: Reload Nginx
 
-    # THÊM TASK NÀY ĐỂ ĐÁP ỨNG QUY TẮC KIỂM TRA TRƯỚC KHI RELOAD
     - name: Validate Nginx configuration safely
       ansible.builtin.command: /usr/sbin/nginx -t
       changed_when: false
@@ -43,7 +50,6 @@
               fall 2
               rise 2
           }
-
           vrrp_instance VI_MEOW_LB {
               state {{ keepalived_state | default('BACKUP') }}
               interface eth0
@@ -87,7 +93,6 @@
       ansible.builtin.service:
         name: nginx
         state: reloaded
-
     - name: Restart Keepalived
       ansible.builtin.service:
         name: keepalived
