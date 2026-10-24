@@ -12,7 +12,6 @@ on:
           - backend
           - frontend
 
-# Dùng chung khóa Concurrency với Luồng 01, 02, 03 để bảo vệ tuyệt đối Terraform State
 concurrency:
   group: meowcloud-iac-state
   cancel-in-progress: false
@@ -33,15 +32,15 @@ jobs:
 
       - name: Backup Elastic Pool State & Select LIFO Instance
         id: select_lifo
+        working-directory: /opt/meowcloud-iac
         run: |
           mkdir -p /opt/meowcloud-iac/state
           if [ -f /opt/meowcloud-iac/state/autoscale.tfvars.json ]; then
             cp /opt/meowcloud-iac/state/autoscale.tfvars.json /opt/meowcloud-iac/state/autoscale.tfvars.json.bak
           fi
 
-          # Chạy script chọn máy LIFO và rút IP khỏi ansible/inventory.ini
           set +e
-          META_JSON=$(python3 scripts/scale_in_node.py --target "${{ inputs.scale_target }}")
+          META_JSON=$(python3 /opt/meowcloud-iac/scripts/scale_in_node.py --target "${{ inputs.scale_target }}")
           EXIT_CODE=$?
           set -e
 
@@ -58,7 +57,7 @@ jobs:
           echo "retiring_host=$(echo "$META_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["retiring_host"])')" >> $GITHUB_OUTPUT
           echo "retiring_port=$(echo "$META_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["retiring_port"])')" >> $GITHUB_OUTPUT
 
-      - name: Step 1 - Graceful Connection Draining on Nginx & Prometheus Target Removal
+      - name: Step 1 - Graceful Connection Draining on Nginx & Prometheus Target Sync
         if: steps.select_lifo.outputs.skip_scale_in == 'false'
         working-directory: /opt/meowcloud-iac/ansible
         run: |
@@ -70,7 +69,7 @@ jobs:
             ansible-playbook -i inventory.ini playbooks/04-setup-frontend.yml
           fi
 
-          echo "=== [3/3] CẬP NHẬT PROMETHEUS SCRAPE TARGETS TRƯỚC KHI XÓA MÁY ==="
+          echo "=== [3/3] CẬP NHẬT PROMETHEUS SCRAPE TARGETS ==="
           ansible-playbook -i inventory.ini playbooks/06-setup-observer.yml
 
       - name: Step 2 - Wait for In-Flight Requests to Drain to Zero
@@ -102,7 +101,7 @@ jobs:
             -out=tfplan_scale_in
 
           terraform show -json tfplan_scale_in > tfplan_scale_in.json
-          python3 ../scripts/verify_tfplan.py tfplan_scale_in.json --allow-scale-in
+          python3 /opt/meowcloud-iac/scripts/verify_tfplan.py tfplan_scale_in.json --allow-scale-in
 
       - name: Step 4 - Terraform Apply (Terminate Drained LXC)
         if: steps.select_lifo.outputs.skip_scale_in == 'false'
