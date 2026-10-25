@@ -1,0 +1,12 @@
+---
+# ==============================================================================
+# MASTER PLAYBOOK - MEOWCLOUD DAY-0 PROVISIONING
+# Chạy tự động ở cuối Luồng 01 để cấu hình toàn bộ cụm ngay sau khi Terraform tạo xong
+# ==============================================================================
+
+- import_playbook: 01-setup-tunnels.yml
+- import_playbook: 02-setup-lb.yml
+- import_playbook: 05-setup-database.yml
+- import_playbook: 03-setup-backend.yml
+- import_playbook: 04-setup-frontend.yml
+- import_playbook: 06-setup-observer.yml
