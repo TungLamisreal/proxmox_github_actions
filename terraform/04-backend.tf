@@ -1,6 +1,6 @@
 # ==============================================================================
 # FILE: terraform/04-backend.tf
-# CHỨC NĂNG: Khởi tạo cụm LXC Backend App (Co giãn đàn hồi qua biến backend_count)
+# CHỨC NĂNG: Khởi tạo cụm LXC Backend App (Linked Clone siêu tốc từ Template 9100)
 # ==============================================================================
 resource "proxmox_virtual_environment_container" "backend" {
   count = var.backend_count
@@ -17,6 +17,16 @@ resource "proxmox_virtual_environment_container" "backend" {
   unprivileged = true
   started      = true
 
+  # --- LINKED CLONE TỪ GOLDEN TEMPLATE 9100 TRÊN CEPH RBD ---
+  # Vì ổ đĩa 9100 nằm trên general_pool (Ceph RBD dùng chung), Proxmox cho phép
+  # clone xuyên Node (từ node1 sang node2/node3) bằng RBD Snapshot Copy-on-Write (~2s)
+  clone {
+    node_name    = "node1"
+    vm_id        = 9100
+    datastore_id = var.general_pool
+    full         = false
+  }
+
   initialization {
     hostname = "be-${count.index + 1}"
 
@@ -27,24 +37,16 @@ resource "proxmox_virtual_environment_container" "backend" {
         gateway = var.network_gateway
       }
     }
-
-    user_account {
-      keys = [trimspace(file(var.ssh_public_key_path))]
-    }
   }
 
-  operating_system {
-    template_file_id = var.lxc_docker_template
-    type             = "debian"
+  # Cấu hình tài nguyên theo Bảng 3.3: 2 vCPU / 1024MB RAM
+  # (Ổ đĩa 8GB và SSH Key đã được kế thừa trực tiếp từ Template 9100)
+  cpu {
+    cores = 2
   }
 
-  # Cấu hình tài nguyên theo Bảng 3.3: 2 vCPU / 1024MB RAM / 8GB Disk
-  cpu { cores = 2 }
-  memory { dedicated = 1024 }
-
-  disk {
-    datastore_id = var.general_pool
-    size         = 8
+  memory {
+    dedicated = 1024
   }
 
   network_interface {
@@ -73,7 +75,6 @@ resource "proxmox_virtual_environment_firewall_options" "backend_fw" {
   enabled       = true
   input_policy  = "DROP"
   output_policy = "ACCEPT"
-  # Cực kỳ quan trọng cho các dải Elastic Pool: Chống giả mạo MAC/IP
   ipfilter      = true
 }
 

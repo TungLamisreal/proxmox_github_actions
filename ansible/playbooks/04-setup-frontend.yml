@@ -1,20 +1,9 @@
 ---
-- name: Configure Web Frontend Elastic Pool (Dockerized)
+- name: Configure Web Frontend Elastic Pool (Pre-baked Golden Template)
   hosts: frontends
   become: true
-  gather_facts: true
-
+  gather_facts: false
   tasks:
-    # Bắt đầu ngay từ bước kiểm tra service (Đã bỏ 5 task cài APT & Docker)
-    - name: Ensure services are running and enabled
-      ansible.builtin.service:
-        name: "{{ item }}"
-        state: started
-        enabled: true
-      loop:
-        - docker
-        - prometheus-node-exporter
-
     - name: Create Frontend App and Config directories
       ansible.builtin.file:
         path: "{{ item }}"
@@ -24,12 +13,13 @@
         - /opt/meow-frontend/html
         - /opt/meow-frontend/conf
 
-    - name: Deploy Nginx Reverse Proxy Configuration (Dynamic Upstream)
+    - name: Deploy Nginx Reverse Proxy Configuration (Dynamic Upstream + Gzip CPU Load)
       ansible.builtin.copy:
         dest: /opt/meow-frontend/conf/default.conf
         mode: '0644'
         content: |
           upstream backend_cluster {
+              least_conn;
           {% for host in groups['backends'] %}
               server {{ hostvars[host]['ansible_host'] }}:5000 max_fails=3 fail_timeout=10s;
           {% endfor %}
@@ -38,6 +28,13 @@
           server {
               listen 80;
               server_name _;
+
+              # Bật nén Gzip mức 9 để vừa tối ưu băng thông vừa dễ test tải CPU Frontend
+              gzip on;
+              gzip_comp_level 9;
+              gzip_min_length 128;
+              gzip_proxied any;
+              gzip_types text/plain text/css application/json application/javascript text/html;
 
               root /usr/share/nginx/html;
               index index.html;
@@ -61,41 +58,60 @@
         mode: '0644'
         content: |
           <!DOCTYPE html>
-          <html>
+          <html lang="vi">
           <head>
-              <title>MeowCloud E-Commerce (Docker)</title>
+              <meta charset="UTF-8">
+              <title>MeowCloud E-Commerce Platform</title>
               <style>
-                  body { font-family: Arial; background: #0f172a; color: white; text-align: center; padding-top: 80px; }
-                  .card { background: #1e293b; display: inline-block; padding: 30px; border: 1px solid #38bdf8; }
+                  body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; text-align: center; padding: 40px; }
+                  .card { background: #1e293b; border-radius: 12px; padding: 24px; max-width: 650px; margin: 0 auto; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+                  h1 { color: #38bdf8; }
+                  pre { background: #020617; padding: 16px; border-radius: 8px; color: #4ade80; text-align: left; overflow-x: auto; }
               </style>
           </head>
           <body>
               <div class="card">
-                  <h1>🚀 MEOWCLOUD FRONTEND</h1>
-                  <p>Phục vụ bởi Docker Container trên Host: {{ inventory_hostname }}</p>
-                  <p>IP Nội bộ: {{ ansible_host }}</p>
+                  <h1>🐾 MeowCloud Elastic Infrastructure</h1>
+                  <p>Served by Frontend LXC: <strong>{{ inventory_hostname }} ({{ ansible_host }})</strong></p>
+                  <button onclick="checkApi()" style="padding:10px 20px;background:#38bdf8;border:none;border-radius:6px;cursor:pointer;font-weight:bold;">Kiểm tra kết nối Backend API</button>
+                  <pre id="out">Đang chờ gọi /api/health...</pre>
               </div>
+              <script>
+                  async function checkApi() {
+                      const res = await fetch('/api/health');
+                      const data = await res.json();
+                      document.getElementById('out').textContent = JSON.stringify(data, null, 2);
+                  }
+                  checkApi();
+              </script>
           </body>
           </html>
 
-    - name: Run Frontend Web Container (Idempotent)
+    - name: Run Frontend Nginx Container (Instant Start from Pre-baked Image)
       community.docker.docker_container:
         name: meow-frontend-app
         image: nginx:alpine
+        pull: never
         state: started
-        restart: "{{ nginx_fe_conf.changed }}"
         restart_policy: always
         published_ports:
           - "80:80"
         volumes:
-          - "/opt/meow-frontend/html:/usr/share/nginx/html:ro"
-          - "/opt/meow-frontend/conf/default.conf:/etc/nginx/conf.d/default.conf:ro"
-    # (Tùy chọn) Thêm task này vào cuối file để tự động kiểm tra Web UI không bị 404:
-    - name: Health-check Frontend Web UI (:80)
+          - /opt/meow-frontend/html:/usr/share/nginx/html:ro
+          - /opt/meow-frontend/conf/default.conf:/etc/nginx/conf.d/default.conf:ro
+      register: fe_container
+
+    - name: Zero-Downtime Reload Nginx inside container when upstream changes
+      ansible.builtin.command: docker exec meow-frontend-app nginx -s reload
+      when:
+        - nginx_fe_conf.changed
+        - not fe_container.changed
+
+    - name: Health-check Frontend local endpoint (:80)
       ansible.builtin.uri:
         url: http://127.0.0.1:80/
         status_code: 200
       register: fe_health
       retries: 5
-      delay: 2
+      delay: 1
       until: fe_health.status == 200

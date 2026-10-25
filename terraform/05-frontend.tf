@@ -1,6 +1,6 @@
 # ==============================================================================
 # FILE: terraform/05-frontend.tf
-# CHỨC NĂNG: Khởi tạo cụm LXC Web Frontend (Co giãn đàn hồi qua biến frontend_count)
+# CHỨC NĂNG: Khởi tạo cụm LXC Web Frontend (Linked Clone siêu tốc từ Template 9100)
 # ==============================================================================
 resource "proxmox_virtual_environment_container" "frontend" {
   count = var.frontend_count
@@ -17,6 +17,14 @@ resource "proxmox_virtual_environment_container" "frontend" {
   unprivileged = true
   started      = true
 
+  # --- LINKED CLONE TỪ GOLDEN TEMPLATE 9100 TRÊN CEPH RBD ---
+  clone {
+    node_name    = "node1"
+    vm_id        = 9100
+    datastore_id = var.general_pool
+    full         = false
+  }
+
   initialization {
     hostname = "fe-${count.index + 1}"
 
@@ -27,24 +35,16 @@ resource "proxmox_virtual_environment_container" "frontend" {
         gateway = var.network_gateway
       }
     }
-
-    user_account {
-      keys = [trimspace(file(var.ssh_public_key_path))]
-    }
   }
 
-  operating_system {
-    template_file_id = var.lxc_docker_template
-    type             = "debian"
+  # Cấu hình tài nguyên theo Bảng 3.3: 1 vCPU / 1024MB RAM
+  # (Ổ đĩa 8GB và SSH Key đã được kế thừa trực tiếp từ Template 9100)
+  cpu {
+    cores = 1
   }
 
-  # Cấu hình tài nguyên theo Bảng 3.3: 1 vCPU / 1024MB RAM / 8GB Disk
-  cpu { cores = 1 }
-  memory { dedicated = 1024 }
-
-  disk {
-    datastore_id = var.general_pool
-    size         = 8
+  memory {
+    dedicated = 1024
   }
 
   network_interface {

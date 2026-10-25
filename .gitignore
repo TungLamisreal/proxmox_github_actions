@@ -29,3 +29,6 @@ state/autoscale.tfvars.json.bak
 # Temp & Cache
 __pycache__/
 *.pyc
+
+terraform/tfplan_scale_in
+terraform/tfplan_scale_in.json

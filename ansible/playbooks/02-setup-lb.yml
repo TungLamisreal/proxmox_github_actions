@@ -2,7 +2,7 @@
 - name: Configure Nginx HA Load Balancers & Keepalived VIP (.100)
   hosts: loadbalancers
   become: true
-  gather_facts: true
+  gather_facts: false
   tasks:
     - name: Install Nginx and Keepalived (Base packages & psmisc already in Golden Image)
       ansible.builtin.apt:
@@ -10,7 +10,7 @@
           - nginx
           - keepalived
         state: present
-        update_cache: true
+        update_cache: false
         lock_timeout: 300
 
     - name: Remove default Nginx site

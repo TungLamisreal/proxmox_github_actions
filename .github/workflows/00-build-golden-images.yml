@@ -289,3 +289,32 @@ jobs:
           verify_template 9003 node3
 
           echo "SUCCESS: Đã build và phân phối lại cả ba KVM Golden Template."
+      - name: Rebuild LXC Docker Golden Template (9100 on Ceph RBD)
+        working-directory: packer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -i "$PVE_SSH_KEY")
+          ssh_node() { local host="$1"; shift; ssh "${SSH_OPTS[@]}" "root@${host}" "$@"; }
+
+          # Lấy SSH Public Key từ Runner để nhúng vào máy con
+          PUB_KEY="$(ssh-keygen -y -f "$PVE_SSH_KEY")"
+
+          echo "=== [1/3] Xóa Template 9100 cũ trên Ceph RBD (nếu có) ==="
+          ssh_node "$PVE_NODE1_HOST" "pct destroy 9100 --purge 1 --destroy-unreferenced-disks 1 2>/dev/null || true"
+
+          echo "=== [2/3] Khởi tạo LXC 9100 trên Ceph RBD (Đã pre-bake Docker từ Luồng 00) ==="
+          # Tạo LXC trên general_pool (RBD) thay vì local-lvm
+          ssh_node "$PVE_NODE1_HOST" "pct create 9100 shared-fs:vztmpl/meowcloud-lxc-docker-debian12.tar.zst \
+            --hostname meowcloud-lxc-docker-tpl \
+            --rootfs general_pool:8 \
+            --memory 1024 --cores 2 \
+            --net0 name=eth0,bridge=vmbr0,ip=dhcp,firewall=1 \
+            --unprivileged 1 --features nesting=1"
+
+          echo "=== [3/3] Nhúng SSH Key, xóa Machine-ID và chuyển thành Golden Template ==="
+          ssh_node "$PVE_NODE1_HOST" "pct start 9100 && sleep 8 && \
+            pct exec 9100 -- bash -c 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo \"${PUB_KEY}\" > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && truncate -s 0 /etc/machine-id' && \
+            pct stop 9100 && pct template 9100"
+
+          echo "SUCCESS: Đã tạo hoàn tất LXC Docker Golden Template (9100) trên Ceph RBD! Sẵn sàng cho Linked Clone siêu tốc."

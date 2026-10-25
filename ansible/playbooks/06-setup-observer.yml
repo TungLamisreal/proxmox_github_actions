@@ -2,7 +2,7 @@
 - name: Configure Observer (Prometheus, Alertmanager & Auto-Scale Alerting)
   hosts: monitoring
   become: true
-  gather_facts: true
+  gather_facts: false
   tasks:
     - name: Install Prometheus and Alertmanager
       ansible.builtin.apt:
@@ -10,7 +10,7 @@
           - prometheus
           - prometheus-alertmanager
         state: present
-        update_cache: true
+        update_cache: false
         lock_timeout: 300
 
     - name: Generate Prometheus Alert Rules for Scale-Out and Scale-In (Cgroup Quota Fix)

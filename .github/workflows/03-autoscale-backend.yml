@@ -272,7 +272,7 @@ jobs:
 
           terraform plan \
             -input=false \
-            -parallelism=1 \
+            -parallelism=4 \
             -var-file="$AUTOSCALE_STATE_FILE" \
             -out="$TFPLAN_FILE"
           chmod 600 "$TFPLAN_FILE"
@@ -351,7 +351,7 @@ jobs:
           set -euo pipefail
           echo "attempted=true" >> "$GITHUB_OUTPUT"
           # PVE/Ceph nhỏ: tạo tuần tự để giảm va chạm lock storage/container.
-          terraform apply -parallelism=1 -auto-approve -input=false "$TFPLAN_FILE"
+          terraform apply -parallelism=4 -auto-approve -input=false "$TFPLAN_FILE"
           echo "applied=true" >> "$GITHUB_OUTPUT"
           rm -f "$TFPLAN_FILE" "$TFPLAN_JSON"
 
@@ -406,7 +406,7 @@ jobs:
           echo "=== Đợi SSH cho máy mới: $NEW_HOSTS ==="
           ansible all -i "$INVENTORY" --limit "$NEW_HOSTS" \
             -m ansible.builtin.wait_for_connection \
-            -a "delay=5 timeout=180 connect_timeout=10 sleep=5"
+            -a "delay=1 timeout=60 connect_timeout=5 sleep=2"
 
       - name: "7. Fast Provisioning & Refresh LB/Monitoring"
         if: ${{ steps.node_selector.outputs.noop != 'true' }}
@@ -513,7 +513,7 @@ jobs:
 
           echo "=== Layer 3: Kiểm tra Prometheus Targets (Chờ chu kỳ scrape sau khi restart) ==="
           PROM_OK=false
-          for attempt in $(seq 1 12); do
+          for attempt in $(seq 1 20); do
             TARGETS_JSON=$(curl --fail --silent --show-error --connect-timeout 5 \
               http://192.168.150.21:9090/api/v1/targets || true)
 
@@ -528,7 +528,7 @@ jobs:
               break
             fi
             echo "Đợi Prometheus hoàn tất scrape... (lần $attempt/12)"
-            sleep 5
+            sleep 2
           done
 
           if [ "$PROM_OK" != "true" ]; then
