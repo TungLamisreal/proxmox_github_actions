@@ -27,11 +27,11 @@ build {
     ]
   }
 
+  # Copy Scripts & Public Key lên Proxmox
   provisioner "file" {
     source      = "scripts"
     destination = "/tmp/packer_scripts_docker"
   }
-
   provisioner "file" {
     source      = "${var.ssh_public_key_path}"
     destination = "/tmp/runner_id_ed25519.pub"
@@ -39,32 +39,39 @@ build {
 
   provisioner "shell" {
     inline = [
-      "echo '=== [2/3] Thực thi cài đặt Docker & Sanitize ==='",
+      "echo '=== [2/3] Thực thi cài đặt Docker & Kiểm chứng cấu hình SSH ==='",
       "pct exec ${var.target_vmid} -- mkdir -p /tmp/scripts",
       "pct push ${var.target_vmid} /tmp/packer_scripts_docker/02-docker-install.sh /tmp/scripts/02-docker-install.sh",
       "pct push ${var.target_vmid} /tmp/packer_scripts_docker/99-cleanup-sanitize.sh /tmp/scripts/99-cleanup-sanitize.sh",
+      "pct push ${var.target_vmid} /tmp/runner_id_ed25519.pub /tmp/runner_id_ed25519.pub",
       "pct exec ${var.target_vmid} -- bash -c 'chmod +x /tmp/scripts/*.sh'",
-      "pct exec ${var.target_vmid} -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/02-docker-install.sh'",
-      "pct exec ${var.target_vmid} -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/99-cleanup-sanitize.sh'",
       
-      "echo '=== [ĐẶC BIỆT] Fix cứng SSH Server cho LXC Linked Clone ==='",
-      "pct exec ${var.target_vmid} -- bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server'",
-      "pct exec ${var.target_vmid} -- ssh-keygen -A",
-      "pct exec ${var.target_vmid} -- systemctl enable ssh"
+      "pct exec ${var.target_vmid} -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/02-docker-install.sh'",
+      
+      "echo '=> Nhúng Public SSH Key từ Runner...'",
+      "pct exec ${var.target_vmid} -- mkdir -p /root/.ssh",
+      "pct exec ${var.target_vmid} -- mv /tmp/runner_id_ed25519.pub /root/.ssh/authorized_keys",
+      "pct exec ${var.target_vmid} -- chmod 700 /root/.ssh",
+      "pct exec ${var.target_vmid} -- chmod 600 /root/.ssh/authorized_keys",
+      "pct exec ${var.target_vmid} -- chown -R root:root /root/.ssh",
+
+      "echo '=> TEST: Đảm bảo SSH service hoạt động trơn tru TRƯỚC KHI đóng gói...'",
+      "pct exec ${var.target_vmid} -- systemctl daemon-reload",
+      "pct exec ${var.target_vmid} -- systemctl restart ssh",
+      "pct exec ${var.target_vmid} -- systemctl is-active ssh",
+      "pct exec ${var.target_vmid} -- ss -lntp | grep :22",
+
+      "echo '=> Sanitize: Dọn dẹp vân tay SSH để Linked Clone tự sinh khóa độc lập...'",
+      "pct exec ${var.target_vmid} -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/99-cleanup-sanitize.sh'"
     ]
   }
 
   provisioner "shell" {
     inline = [
-      "echo '=== [3/3] Nhúng Public SSH Key và Convert thành Template ==='",
-      "pct exec ${var.target_vmid} -- mkdir -p /root/.ssh",
-      "pct push ${var.target_vmid} /tmp/runner_id_ed25519.pub /root/.ssh/authorized_keys",
-      "pct exec ${var.target_vmid} -- chmod 700 /root/.ssh",
-      "pct exec ${var.target_vmid} -- chmod 600 /root/.ssh/authorized_keys",
-      "pct exec ${var.target_vmid} -- chown -R root:root /root/.ssh",
+      "echo '=== [3/3] Tắt máy và Convert thành Template 9100 ==='",
       "pct stop ${var.target_vmid}",
       "pct template ${var.target_vmid}",
-      "rm -rf /tmp/packer_scripts_docker /tmp/runner_id_ed25519.pub"
+      "rm -rf /tmp/packer_scripts_docker"
     ]
   }
 }

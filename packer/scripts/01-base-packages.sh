@@ -1,12 +1,10 @@
 #!/bin/bash
-# Đảm bảo tiến trình cài đặt không bị dừng lại hỏi (prompt)
 export DEBIAN_FRONTEND=noninteractive
 
 echo "=== [1/4] Cập nhật OS và cài đặt các công cụ nền tảng ==="
 apt-get update -qq
 apt-get upgrade -y -qq
 
-# Cài đặt các package cơ bản và Prometheus Node Exporter
 apt-get install -y -qq \
     ca-certificates \
     curl \
@@ -15,13 +13,27 @@ apt-get install -y -qq \
     psmisc \
     zstd \
     locales \
+    openssh-server \
     prometheus-node-exporter
 
-# Thiết lập locale mặc định cho toàn hệ thống bên trong Golden Image
 echo "LC_ALL=C.UTF-8" >> /etc/environment
 echo "LANG=C.UTF-8" >> /etc/environment
 
-# Đảm bảo Node Exporter tự khởi động cùng hệ thống
+echo "=== CẤU HÌNH AUTO-REPAIR SSH CHO TẤT CẢ LXC CLONE ==="
+# Cấu hình này ép mọi Linked Clone tự tạo /run/sshd và sinh Host Keys riêng biệt ở lần boot đầu tiên
+mkdir -p /etc/systemd/system/ssh.service.d
+cat << 'EOF' > /etc/systemd/system/ssh.service.d/meowcloud-selfheal.conf
+[Service]
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+ExecStartPre=/usr/bin/ssh-keygen -A
+EOF
+
+# Đảm bảo tmpfiles cũng khai báo chuẩn
+echo "d /run/sshd 0755 root root -" > /etc/tmpfiles.d/sshd.conf
+systemctl daemon-reload
+systemctl enable ssh
+
 systemctl enable prometheus-node-exporter
 systemctl start prometheus-node-exporter
 
