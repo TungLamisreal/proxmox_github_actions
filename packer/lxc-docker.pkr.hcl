@@ -55,14 +55,19 @@ build {
       "pct exec ${var.target_vmid} -- chmod 600 /root/.ssh/authorized_keys",
       "pct exec ${var.target_vmid} -- chown -R root:root /root/.ssh",
 
-      "echo '=> TEST: Đảm bảo SSH service hoạt động trơn tru TRƯỚC KHI đóng gói...'",
+      "echo '=> [1] Sanitize truoc khi kiem chung SSH...'",
+      "pct exec ${var.target_vmid} -- bash -lc 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/99-cleanup-sanitize.sh'",
+
+      "echo '=> [2] Kiem tra SSH tu sinh host keys sau sanitize...'",
       "pct exec ${var.target_vmid} -- systemctl daemon-reload",
+      "pct exec ${var.target_vmid} -- bash -lc 'systemctl reset-failed ssh || true'",
       "pct exec ${var.target_vmid} -- systemctl restart ssh",
       "pct exec ${var.target_vmid} -- systemctl is-active ssh",
-      "pct exec ${var.target_vmid} -- ss -lntp | grep :22",
+      "pct exec ${var.target_vmid} -- bash -lc 'ss -lntp | grep -q \":22\"'",
 
-      "echo '=> Sanitize: Dọn dẹp vân tay SSH để Linked Clone tự sinh khóa độc lập...'",
-      "pct exec ${var.target_vmid} -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/99-cleanup-sanitize.sh'"
+      "echo '=> [3] Xoa host keys lan cuoi de clone tu sinh khoa rieng...'",
+      "pct exec ${var.target_vmid} -- systemctl stop ssh",
+      "pct exec ${var.target_vmid} -- bash -lc 'rm -f /etc/ssh/ssh_host_*'"
     ]
   }
 

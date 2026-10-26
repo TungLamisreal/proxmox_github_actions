@@ -26,7 +26,13 @@ cat << 'EOF' > /etc/systemd/system/ssh.service.d/meowcloud-selfheal.conf
 [Service]
 RuntimeDirectory=sshd
 RuntimeDirectoryMode=0755
+
+# Xóa danh sách ExecStartPre kế thừa từ service gốc
+ExecStartPre=
+
+# Sinh các host keys còn thiếu trước khi kiểm tra sshd
 ExecStartPre=/usr/bin/ssh-keygen -A
+ExecStartPre=/usr/sbin/sshd -t
 EOF
 
 # Đảm bảo tmpfiles cũng khai báo chuẩn
