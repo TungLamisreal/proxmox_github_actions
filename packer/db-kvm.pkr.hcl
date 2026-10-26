@@ -18,7 +18,6 @@ variable "proxmox_token_secret" {
 variable "ssh_username" { default = "root" }
 variable "ssh_private_key_path" { default = "/home/github-runner/.ssh/id_ed25519" }
 
-# --- CẤU HÌNH MACRO DÙNG CHUNG ĐỂ TRÁNH LẶP CODE ---
 source "proxmox-clone" "db_node1" {
   proxmox_url              = var.proxmox_url
   username                 = var.proxmox_token_id
@@ -32,8 +31,16 @@ source "proxmox-clone" "db_node1" {
   template_description     = "Golden Image KVM Database Node 1"
 
   cloud_init_disable_upgrade_packages = true
-  network_adapters { model = "virtio", bridge = "vmbr0" }
-  ipconfig { ip = "dhcp" }
+  
+  network_adapters { 
+    model  = "virtio"
+    bridge = "vmbr0" 
+  }
+  
+  ipconfig { 
+    ip = "dhcp" 
+  }
+  
   os                       = "l26"
   scsi_controller          = "virtio-scsi-single"
   full_clone               = true
@@ -57,8 +64,16 @@ source "proxmox-clone" "db_node2" {
   template_description     = "Golden Image KVM Database Node 2"
 
   cloud_init_disable_upgrade_packages = true
-  network_adapters { model = "virtio", bridge = "vmbr0" }
-  ipconfig { ip = "dhcp" }
+  
+  network_adapters { 
+    model  = "virtio"
+    bridge = "vmbr0" 
+  }
+  
+  ipconfig { 
+    ip = "dhcp" 
+  }
+  
   os                       = "l26"
   scsi_controller          = "virtio-scsi-single"
   full_clone               = true
@@ -82,8 +97,16 @@ source "proxmox-clone" "db_node3" {
   template_description     = "Golden Image KVM Database Node 3"
 
   cloud_init_disable_upgrade_packages = true
-  network_adapters { model = "virtio", bridge = "vmbr0" }
-  ipconfig { ip = "dhcp" }
+  
+  network_adapters { 
+    model  = "virtio"
+    bridge = "vmbr0" 
+  }
+  
+  ipconfig { 
+    ip = "dhcp" 
+  }
+  
   os                       = "l26"
   scsi_controller          = "virtio-scsi-single"
   full_clone               = true
