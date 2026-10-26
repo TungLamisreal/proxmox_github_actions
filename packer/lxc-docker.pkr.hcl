@@ -18,7 +18,7 @@ build {
 
   provisioner "shell" {
     inline = [
-      "echo '=== [1/3] Khởi tạo LXC 9100 trực tiếp trên Ceph RBD (general_pool) ==='",
+      "echo '=== [1/3] Khởi tạo LXC 9100 trực tiếp trên Ceph RBD ==='",
       "pct stop ${var.target_vmid} >/dev/null 2>&1 || true",
       "pct destroy ${var.target_vmid} --purge >/dev/null 2>&1 || true",
       "pct create ${var.target_vmid} ${var.base_tarball} -rootfs ${var.storage_pool}:8 -memory 1024 -cores 2 -net0 name=eth0,bridge=vmbr0,ip=dhcp,firewall=1 -unprivileged 1 -features nesting=1 -hostname meowcloud-lxc-docker-tpl",
@@ -27,13 +27,11 @@ build {
     ]
   }
 
-  # Copy thư mục scripts từ GitHub Runner lên Proxmox Host
   provisioner "file" {
     source      = "scripts"
     destination = "/tmp/packer_scripts_docker"
   }
 
-  # Copy SSH Public Key từ GitHub Runner lên Proxmox Host
   provisioner "file" {
     source      = "${var.ssh_public_key_path}"
     destination = "/tmp/runner_id_ed25519.pub"
@@ -47,7 +45,12 @@ build {
       "pct push ${var.target_vmid} /tmp/packer_scripts_docker/99-cleanup-sanitize.sh /tmp/scripts/99-cleanup-sanitize.sh",
       "pct exec ${var.target_vmid} -- bash -c 'chmod +x /tmp/scripts/*.sh'",
       "pct exec ${var.target_vmid} -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/02-docker-install.sh'",
-      "pct exec ${var.target_vmid} -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/99-cleanup-sanitize.sh'"
+      "pct exec ${var.target_vmid} -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/99-cleanup-sanitize.sh'",
+      
+      "echo '=== [ĐẶC BIỆT] Fix cứng SSH Server cho LXC Linked Clone ==='",
+      "pct exec ${var.target_vmid} -- bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server'",
+      "pct exec ${var.target_vmid} -- ssh-keygen -A",
+      "pct exec ${var.target_vmid} -- systemctl enable ssh"
     ]
   }
 
