@@ -10,7 +10,9 @@
           - prometheus
           - prometheus-alertmanager
         state: present
-        update_cache: false
+        update_cache: true
+        update_cache_retries: 5
+        update_cache_retry_max_delay: 12
         lock_timeout: 300
 
     - name: Generate Prometheus Alert Rules for Scale-Out and Scale-In (Cgroup Quota Fix)
