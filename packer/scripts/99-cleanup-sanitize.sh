@@ -9,11 +9,11 @@ apt-get clean
 rm -rf /var/lib/apt/lists/*
 rm -rf /var/cache/apt/archives/*
 
-# 2. Xóa các khóa định danh SSH (Máy nhân bản sẽ tự sinh khóa mới vào lần boot đầu)
+# 2. Xóa khóa định danh SSH cũ và TẠO LẠI KHÓA MỚI (Fix lỗi Connection Refused cho LXC)
 rm -f /etc/ssh/ssh_host_*
+ssh-keygen -A
 
 # 3. Làm sạch Machine ID (Tuyệt đối không xóa file, chỉ làm rỗng nội dung)
-# Nếu file này bị trùng, các máy ảo có thể nhận chung 1 IP từ DHCP.
 truncate -s 0 /etc/machine-id
 rm -f /var/lib/dbus/machine-id
 ln -s /etc/machine-id /var/lib/dbus/machine-id
