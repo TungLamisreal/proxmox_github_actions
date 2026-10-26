@@ -20,9 +20,9 @@ resource "proxmox_virtual_environment_container" "frontend" {
   # --- LINKED CLONE TỪ GOLDEN TEMPLATE 9100 TRÊN CEPH RBD ---
   # Đã xóa datastore_id để fix lỗi HTTP 500
   clone {
-    node_name    = "node1"
-    vm_id        = 9100
-    full         = false
+    node_name = data.external.lxc_template.result.node_name
+    vm_id     = tonumber(data.external.lxc_template.result.vm_id)
+    full      = false
   }
 
   initialization {
@@ -57,7 +57,8 @@ resource "proxmox_virtual_environment_container" "frontend" {
 
   lifecycle {
     ignore_changes = [
-      node_name
+      node_name,
+      clone
     ]
   }
 }

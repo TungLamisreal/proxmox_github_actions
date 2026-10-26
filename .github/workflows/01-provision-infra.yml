@@ -84,17 +84,20 @@ jobs:
             exit 1
           }
 
-          # Kiểm tra Live Template LXC Docker (9100)
-          $SSH_CMD "ls /etc/pve/nodes/*/lxc/9100.conf" >/dev/null 2>&1 || {
-            echo "ERROR: Thiếu Live Template LXC 9100! Hãy chạy luồng 00 trước."
+          # Chọn template theo ưu tiên 9100 -> 9101 -> 9102.
+          # Bộ chọn kiểm tra node online, template flag, SSH-bootstrap marker
+          # và rootfs trên general_pool trước khi Terraform được phép chạy.
+          echo "=== Chọn LXC Docker Template hợp lệ (9100 -> 9101 -> 9102) ==="
+          TEMPLATE_SELECTION="$RUNNER_TEMP/lxc-template-selection.json"
+
+          python3 scripts/select_lxc_template.py > "$TEMPLATE_SELECTION" || {
+            echo "ERROR: Không có template LXC Docker hợp lệ trên node online."
+            echo "Chưa chạy Terraform; kiểm tra workflow 00 và Proxmox cluster."
             exit 1
           }
 
-          # Refuse to provision from a template that has not passed the new SSH bootstrap test.
-          $SSH_CMD "pct config 9100 | grep -Eq '^description: meowcloud-ssh-bootstrap-v1(%0A)?$' >/dev/null" || {
-            echo "ERROR: Template 9100 chưa được build/kiểm chứng SSH bootstrap mới. Chạy workflow 00 trước; chưa tạo hạ tầng."
-            exit 1
-          }
+          jq -r '"OK: Chọn template VMID \(.vm_id) trên node \(.node_name)"' \
+            "$TEMPLATE_SELECTION"
 
           # Kiểm tra file cấu hình KVM được đồng bộ trên toàn cụm Cluster
           for vmid in 9001 9002 9003; do

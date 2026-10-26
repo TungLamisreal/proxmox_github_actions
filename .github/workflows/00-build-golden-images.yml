@@ -29,13 +29,227 @@ jobs:
           packer init lxc-base.pkr.hcl
           packer build lxc-base.pkr.hcl
 
-      - name: "2. Build LXC Docker Image (-> Ceph RBD Live Template 9100)"
+      - name: "2. Build LXC Docker Image & Replicate HA Templates (9100/9101/9102)"
         working-directory: packer
         run: |
-          # Đảm bảo file .pub luôn tồn tại trên GitHub Runner
-          ssh-keygen -y -f /home/github-runner/.ssh/id_ed25519 > /home/github-runner/.ssh/id_ed25519.pub
-          packer init lxc-docker.pkr.hcl
-          packer build lxc-docker.pkr.hcl
+          set -euo pipefail
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
+
+          is_valid_template() {
+            local node="$1"
+            local vmid="$2"
+            local cfg
+
+            cfg="$($SSH_CMD "pvesh get /nodes/${node}/lxc/${vmid}/config --output-format json" 2>/dev/null)" || return 1
+
+            printf '%s\n' "$cfg" | jq -e '
+              (.template == 1) and
+              (((.description // "") | sub("[\\r\\n]+$"; "")) == "meowcloud-ssh-bootstrap-v1") and
+              (((.rootfs // "") | startswith("general_pool:")))
+            ' >/dev/null
+          }
+
+          node_is_online() {
+            local status
+            status="$(printf '%s\n' "$nodes_json" |
+              jq -r --arg n "$1" '[.[] | select(.node == $n)] | if length == 1 then (.[0].status // "unknown") else "missing" end')"
+            [ "$status" = "online" ]
+          }
+
+          find_node_for_vmid() {
+            printf '%s\n' "$1" | jq -r --arg id "$2" '
+              [.[] | select(.type == "lxc" and ((.vmid | tostring) == $id))] |
+              if length == 0 then ""
+              elif length == 1 then (.[0].node // "")
+              else "DUPLICATE"
+              end
+            '
+          }
+
+          node_is_used() {
+            local item
+            for item in "${USED_NODES[@]}"; do
+              [ "$item" = "$1" ] && return 0
+            done
+            return 1
+          }
+
+          echo "=== [1/4] Kiểm tra template 9100 hiện có ==="
+          resources_json="$($SSH_CMD "pvesh get /cluster/resources --type vm --output-format json")"
+          source_node="$(find_node_for_vmid "$resources_json" 9100)"
+
+          if [ "$source_node" = "DUPLICATE" ]; then
+            echo "ERROR: Phát hiện nhiều bản ghi LXC 9100; dừng để kiểm tra cluster."
+            exit 1
+          fi
+
+          if [ -n "$source_node" ]; then
+            if ! is_valid_template "$source_node" 9100; then
+              echo "ERROR: Template 9100 đã tồn tại nhưng không vượt qua kiểm chứng."
+              echo "Không tự xóa/rebuild vì có thể đang là nguồn của linked clone hiện hữu."
+              exit 1
+            fi
+            echo "OK: Tái sử dụng template 9100 hợp lệ trên $source_node; không phá template đang dùng."
+          else
+            echo "=== [2/4] Chưa có 9100: build mới bằng Packer ==="
+            ssh-keygen -y -f /home/github-runner/.ssh/id_ed25519 \
+              > /home/github-runner/.ssh/id_ed25519.pub
+
+            packer init lxc-docker.pkr.hcl
+            packer build lxc-docker.pkr.hcl
+          fi
+
+          resources_json="$($SSH_CMD "pvesh get /cluster/resources --type vm --output-format json")"
+          source_node="$(find_node_for_vmid "$resources_json" 9100)"
+
+          if [ -z "$source_node" ] || [ "$source_node" = "DUPLICATE" ]; then
+            echo "ERROR: Không xác định được duy nhất node nguồn của template 9100."
+            exit 1
+          fi
+
+          nodes_json="$($SSH_CMD "pvesh get /nodes --output-format json")"
+
+          if ! node_is_online "$source_node"; then
+            echo "ERROR: Node chứa template 9100 ($source_node) không online."
+            exit 1
+          fi
+
+          if ! is_valid_template "$source_node" 9100; then
+            echo "ERROR: Template 9100 không hợp lệ sau bước build/kiểm tra."
+            exit 1
+          fi
+
+          echo "Template nguồn: VMID 9100 trên $source_node"
+          USED_NODES=("$source_node")
+
+          echo "=== [3/4] Đảm bảo 9101 và 9102 nằm trên các node khác ==="
+
+          for vmid in 9101 9102; do
+            resources_json="$($SSH_CMD "pvesh get /cluster/resources --type vm --output-format json")"
+
+            match_count="$(printf '%s\n' "$resources_json" |
+              jq -r --arg id "$vmid" '[.[] | select(.type == "lxc" and ((.vmid | tostring) == $id))] | length')"
+
+            if [ "$match_count" -gt 1 ]; then
+              echo "ERROR: Có nhiều bản ghi cho VMID $vmid."
+              exit 1
+            fi
+
+            existing_node="$(find_node_for_vmid "$resources_json" "$vmid")"
+
+            if [ -n "$existing_node" ]; then
+              if node_is_used "$existing_node"; then
+                echo "ERROR: Template $vmid nằm trên $existing_node, trùng node với template khác."
+                echo "Không tự di chuyển/xóa template vì chưa xác minh các linked clone phụ thuộc."
+                exit 1
+              fi
+
+              if ! node_is_online "$existing_node" || ! is_valid_template "$existing_node" "$vmid"; then
+                echo "ERROR: Template $vmid đã tồn tại nhưng node/template không hợp lệ."
+                echo "Giữ nguyên tài nguyên hiện tại; kiểm tra thủ công trước khi sửa."
+                exit 1
+              fi
+
+              echo "OK: Giữ nguyên template $vmid hợp lệ trên $existing_node."
+              USED_NODES+=("$existing_node")
+              continue
+            fi
+
+            target_node=""
+            for candidate_node in node1 node2 node3; do
+              if node_is_used "$candidate_node"; then
+                continue
+              fi
+              if node_is_online "$candidate_node"; then
+                target_node="$candidate_node"
+                break
+              fi
+            done
+
+            if [ -z "$target_node" ]; then
+              echo "ERROR: Không còn node online chưa có template để đặt VMID $vmid."
+              echo "Workflow sẽ dừng an toàn; chạy lại sau khi cluster đủ node."
+              exit 1
+            fi
+
+            echo "Tạo full clone: 9100 ($source_node) -> $vmid ($target_node)"
+            echo "Full clone tạo bản disk độc lập, không tạo linked clone phụ thuộc 9100."
+
+            clone_result="$($SSH_CMD "pvesh create /nodes/${source_node}/lxc/9100/clone --newid ${vmid} --target ${target_node} --full 1 --hostname meowcloud-lxc-docker-tpl-${vmid} --description meowcloud-ssh-bootstrap-v1")"
+
+            upid="$(printf '%s\n' "$clone_result" |
+              sed -n 's/.*\(UPID:[^[:space:]"]*\).*/\1/p' |
+              head -n 1)"
+
+            if [ -z "$upid" ]; then
+              echo "ERROR: Không nhận được UPID cho tác vụ clone VMID $vmid."
+              printf '%s\n' "$clone_result"
+              exit 1
+            fi
+
+            task_state=""
+            for attempt in $(seq 1 180); do
+              task_json="$($SSH_CMD "pvesh get /nodes/${source_node}/tasks/${upid}/status --output-format json" 2>/dev/null || true)"
+              task_state="$(printf '%s\n' "$task_json" | jq -r '.status // empty' 2>/dev/null || true)"
+
+              if [ "$task_state" = "stopped" ]; then
+                task_exit="$(printf '%s\n' "$task_json" | jq -r '.exitstatus // empty')"
+                if [ "$task_exit" != "OK" ]; then
+                  echo "ERROR: Clone VMID $vmid thất bại: $task_exit"
+                  $SSH_CMD "pvesh get /nodes/${source_node}/tasks/${upid}/log --output-format json" || true
+                  exit 1
+                fi
+                break
+              fi
+
+              sleep 2
+            done
+
+            if [ "$task_state" != "stopped" ]; then
+              echo "ERROR: Hết thời gian chờ clone VMID $vmid."
+              echo "Kiểm tra task $upid trên Proxmox trước khi chạy lại."
+              exit 1
+            fi
+
+            echo "Chuyển LXC $vmid thành template..."
+            $SSH_CMD "pvesh create /nodes/${target_node}/lxc/${vmid}/template"
+
+            if ! is_valid_template "$target_node" "$vmid"; then
+              echo "ERROR: Template $vmid trên $target_node chưa vượt qua kiểm chứng."
+              exit 1
+            fi
+
+            USED_NODES+=("$target_node")
+            echo "OK: Template $vmid sẵn sàng trên $target_node."
+          done
+
+          echo "=== [4/4] Kiểm chứng cuối: 3 template, 3 node riêng biệt ==="
+          USED_NODES=()
+
+          for vmid in 9100 9101 9102; do
+            resources_json="$($SSH_CMD "pvesh get /cluster/resources --type vm --output-format json")"
+            node="$(find_node_for_vmid "$resources_json" "$vmid")"
+
+            if [ -z "$node" ] || [ "$node" = "DUPLICATE" ]; then
+              echo "ERROR: Không tìm thấy duy nhất template $vmid."
+              exit 1
+            fi
+
+            if node_is_used "$node"; then
+              echo "ERROR: Template $vmid trùng node $node với template trước."
+              exit 1
+            fi
+
+            if ! node_is_online "$node" || ! is_valid_template "$node" "$vmid"; then
+              echo "ERROR: Template $vmid trên $node không hợp lệ."
+              exit 1
+            fi
+
+            USED_NODES+=("$node")
+            echo "OK: VMID $vmid -> $node"
+          done
+
+          echo "OK: Đã kiểm chứng đủ 9100, 9101, 9102 trên 3 node riêng biệt."
 
       - name: "3. Build KVM Database Templates (-> Ceph RBD Templates 9001, 9002, 9003)"
         working-directory: packer
