@@ -91,7 +91,7 @@ jobs:
           }
 
           # Refuse to provision from a template that has not passed the new SSH bootstrap test.
-          $SSH_CMD "pct config 9100 | grep -Fx 'description: meowcloud-ssh-bootstrap-v1' >/dev/null" || {
+          $SSH_CMD "pct config 9100 | grep -Eq '^description: meowcloud-ssh-bootstrap-v1(%0A)?$' >/dev/null" || {
             echo "ERROR: Template 9100 chưa được build/kiểm chứng SSH bootstrap mới. Chạy workflow 00 trước; chưa tạo hạ tầng."
             exit 1
           }
