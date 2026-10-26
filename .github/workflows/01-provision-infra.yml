@@ -90,6 +90,12 @@ jobs:
             exit 1
           }
 
+          # Refuse to provision from a template that has not passed the new SSH bootstrap test.
+          $SSH_CMD "pct config 9100 | grep -Fx 'description: meowcloud-ssh-bootstrap-v1' >/dev/null" || {
+            echo "ERROR: Template 9100 chưa được build/kiểm chứng SSH bootstrap mới. Chạy workflow 00 trước; chưa tạo hạ tầng."
+            exit 1
+          }
+
           # Kiểm tra file cấu hình KVM được đồng bộ trên toàn cụm Cluster
           for vmid in 9001 9002 9003; do
             $SSH_CMD "ls /etc/pve/nodes/*/qemu-server/${vmid}.conf" >/dev/null 2>&1 || {

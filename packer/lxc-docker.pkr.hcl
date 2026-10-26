@@ -58,14 +58,13 @@ build {
       "echo '=> [1] Sanitize truoc khi kiem chung SSH...'",
       "pct exec ${var.target_vmid} -- bash -lc 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/99-cleanup-sanitize.sh'",
 
-      "echo '=> [2] Kiem tra SSH tu sinh host keys sau sanitize...'",
-      "pct exec ${var.target_vmid} -- systemctl daemon-reload",
-      "pct exec ${var.target_vmid} -- bash -lc 'systemctl reset-failed ssh || true'",
-      "pct exec ${var.target_vmid} -- systemctl restart ssh",
-      "pct exec ${var.target_vmid} -- systemctl is-active ssh",
-      "pct exec ${var.target_vmid} -- bash -lc 'ss -lntp | grep -q \":22\"'",
+      "echo '=> [2] Cai bootstrap SSH va kiem tra tu trang thai khong co host keys...'",
+      "pct push ${var.target_vmid} /tmp/packer_scripts_docker/98-ssh-firstboot.sh /tmp/meowcloud-ssh-firstboot.sh",
+      "pct exec ${var.target_vmid} -- bash /tmp/meowcloud-ssh-firstboot.sh",
+      "pct exec ${var.target_vmid} -- rm -f /tmp/meowcloud-ssh-firstboot.sh",
 
       "echo '=> [3] Xoa host keys lan cuoi de clone tu sinh khoa rieng...'",
+      "pct exec ${var.target_vmid} -- systemctl stop ssh.socket",
       "pct exec ${var.target_vmid} -- systemctl stop ssh",
       "pct exec ${var.target_vmid} -- bash -lc 'rm -f /etc/ssh/ssh_host_*'"
     ]
@@ -75,6 +74,7 @@ build {
     inline = [
       "echo '=== [3/3] Tắt máy và Convert thành Template 9100 ==='",
       "pct stop ${var.target_vmid}",
+      "pct set ${var.target_vmid} --description meowcloud-ssh-bootstrap-v1",
       "pct template ${var.target_vmid}",
       "rm -rf /tmp/packer_scripts_docker"
     ]
