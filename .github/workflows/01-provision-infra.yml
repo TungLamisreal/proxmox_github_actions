@@ -75,26 +75,29 @@ jobs:
             exit 1
           fi
 
-          echo "=== [3] Kiểm tra sự tồn tại của 3 Golden Images trên toàn cụm Proxmox ==="
+          echo "=== [3] Kiểm tra sự tồn tại của các Golden Images ==="
           SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@${PVE_HOST}"
 
+          # Kiểm tra Base LXC (Tarball trên CephFS)
           $SSH_CMD "test -f /mnt/pve/shared-fs/template/cache/meowcloud-lxc-base-debian12.tar.zst" || {
             echo "ERROR: Thiếu meowcloud-lxc-base-debian12.tar.zst!"
             exit 1
           }
-          $SSH_CMD "test -f /mnt/pve/shared-fs/template/cache/meowcloud-lxc-docker-debian12.tar.zst" || {
-            echo "ERROR: Thiếu meowcloud-lxc-docker-debian12.tar.zst!"
+
+          # Kiểm tra Live Template LXC Docker (9100)
+          $SSH_CMD "ls /etc/pve/nodes/*/lxc/9100.conf" >/dev/null 2>&1 || {
+            echo "ERROR: Thiếu Live Template LXC 9100! Hãy chạy luồng 00 trước."
             exit 1
           }
 
-          # Sửa lỗi qm status: Kiểm tra file cấu hình được đồng bộ trên toàn cụm Cluster
+          # Kiểm tra file cấu hình KVM được đồng bộ trên toàn cụm Cluster
           for vmid in 9001 9002 9003; do
             $SSH_CMD "ls /etc/pve/nodes/*/qemu-server/${vmid}.conf" >/dev/null 2>&1 || {
               echo "ERROR: Thiếu KVM Template $vmid! Hãy chạy workflow 00-build-golden-images.yml trước."
               exit 1
             }
           done
-          echo "OK: Đầy đủ cả 3 Golden Images (Base LXC, Docker LXC, Multi-node KVM DB)!"
+          echo "OK: Đầy đủ tất cả Golden Images (Base LXC, Docker LXC 9100, KVM DB)!"
 
       - name: "3. Start Benchmark Timer, Detect AI Scale & Terraform Apply"
         working-directory: ./terraform
