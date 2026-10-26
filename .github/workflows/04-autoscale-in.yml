@@ -61,6 +61,12 @@ jobs:
         if: steps.select_lifo.outputs.skip_scale_in == 'false'
         working-directory: /opt/meowcloud-iac/ansible
         run: |
+          # Managed by update_meowcloud_ansible_runtime.sh
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8"
+          export LC_ALL="C.UTF-8"
+
           echo "=== [1/3] RÚT UPSTREAM KHỎI NGINX LOAD BALANCER ==="
           ansible-playbook -i inventory.ini playbooks/02-setup-lb.yml
 
@@ -122,6 +128,12 @@ jobs:
       - name: Rollback State on Failure
         if: failure()
         run: |
+          # Managed by update_meowcloud_ansible_runtime.sh
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8"
+          export LC_ALL="C.UTF-8"
+
           echo "[!] Phát hiện lỗi trong quá trình Scale-in! Khôi phục autoscale.tfvars.json.bak..."
           if [ -f /opt/meowcloud-iac/state/autoscale.tfvars.json.bak ]; then
             cp /opt/meowcloud-iac/state/autoscale.tfvars.json.bak /opt/meowcloud-iac/state/autoscale.tfvars.json

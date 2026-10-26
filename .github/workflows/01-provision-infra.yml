@@ -154,31 +154,67 @@ jobs:
       - name: "5. [Tier 1] Configure Database KVM Cluster (05-setup-database.yml)"
         working-directory: ./ansible
         run: |
+          # Managed by update_meowcloud_ansible_runtime.sh
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8"
+          export LC_ALL="C.UTF-8"
+
           ansible-playbook playbooks/05-setup-database.yml
 
       - name: "6. [Tier 2] Configure Backend API Elastic Pool (03-setup-backend.yml)"
         working-directory: ./ansible
         run: |
+          # Managed by update_meowcloud_ansible_runtime.sh
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8"
+          export LC_ALL="C.UTF-8"
+
           ansible-playbook playbooks/03-setup-backend.yml
 
       - name: "7. [Tier 3] Configure Web Frontend Elastic Pool (04-setup-frontend.yml)"
         working-directory: ./ansible
         run: |
+          # Managed by update_meowcloud_ansible_runtime.sh
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8"
+          export LC_ALL="C.UTF-8"
+
           ansible-playbook playbooks/04-setup-frontend.yml
 
       - name: "8. [Tier 4] Configure HA Load Balancers & Keepalived VIP (02-setup-lb.yml)"
         working-directory: ./ansible
         run: |
+          # Managed by update_meowcloud_ansible_runtime.sh
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8"
+          export LC_ALL="C.UTF-8"
+
           ansible-playbook playbooks/02-setup-lb.yml
 
       - name: "9. [Tier 5] Configure Cloudflare Tunnels Ingress (01-setup-tunnels.yml)"
         working-directory: ./ansible
         run: |
+          # Managed by update_meowcloud_ansible_runtime.sh
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8"
+          export LC_ALL="C.UTF-8"
+
           ansible-playbook playbooks/01-setup-tunnels.yml
 
       - name: "10. [Tier 6] Configure Observer Monitoring Stack (06-setup-observer.yml)"
         working-directory: ./ansible
         run: |
+          # Managed by update_meowcloud_ansible_runtime.sh
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8"
+          export LC_ALL="C.UTF-8"
+
           ansible-playbook playbooks/06-setup-observer.yml
           ANS_END=$(date +%s)
           echo "ANS_DURATION=$((ANS_END - ANS_START))" >> $GITHUB_ENV

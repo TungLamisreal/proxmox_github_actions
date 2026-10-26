@@ -413,6 +413,12 @@ jobs:
         working-directory: ./ansible
         shell: bash
         run: |
+          # Managed by update_meowcloud_ansible_runtime.sh
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8"
+          export LC_ALL="C.UTF-8"
+
           set -euo pipefail
           INVENTORY="$ANSIBLE_INVENTORY_FILE"
 
