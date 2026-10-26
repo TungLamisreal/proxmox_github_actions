@@ -18,10 +18,10 @@ resource "proxmox_virtual_environment_container" "frontend" {
   started      = true
 
   # --- LINKED CLONE TỪ GOLDEN TEMPLATE 9100 TRÊN CEPH RBD ---
+  # Đã xóa datastore_id để fix lỗi HTTP 500
   clone {
     node_name    = "node1"
     vm_id        = 9100
-    datastore_id = var.general_pool
     full         = false
   }
 
@@ -37,8 +37,6 @@ resource "proxmox_virtual_environment_container" "frontend" {
     }
   }
 
-  # Cấu hình tài nguyên theo Bảng 3.3: 1 vCPU / 1024MB RAM
-  # (Ổ đĩa 8GB và SSH Key đã được kế thừa trực tiếp từ Template 9100)
   cpu {
     cores = 1
   }

@@ -18,12 +18,10 @@ resource "proxmox_virtual_environment_container" "backend" {
   started      = true
 
   # --- LINKED CLONE TỪ GOLDEN TEMPLATE 9100 TRÊN CEPH RBD ---
-  # Vì ổ đĩa 9100 nằm trên general_pool (Ceph RBD dùng chung), Proxmox cho phép
-  # clone xuyên Node (từ node1 sang node2/node3) bằng RBD Snapshot Copy-on-Write (~2s)
+  # Đã xóa datastore_id để fix lỗi HTTP 500
   clone {
     node_name    = "node1"
     vm_id        = 9100
-    datastore_id = var.general_pool
     full         = false
   }
 
@@ -39,8 +37,6 @@ resource "proxmox_virtual_environment_container" "backend" {
     }
   }
 
-  # Cấu hình tài nguyên theo Bảng 3.3: 2 vCPU / 1024MB RAM
-  # (Ổ đĩa 8GB và SSH Key đã được kế thừa trực tiếp từ Template 9100)
   cpu {
     cores = 2
   }
@@ -59,7 +55,6 @@ resource "proxmox_virtual_environment_container" "backend" {
     nesting = true
   }
 
-  # Tránh Terraform xóa máy nếu Proxmox HA tự động Live Migrate sang Node khác
   lifecycle {
     ignore_changes = [
       node_name
