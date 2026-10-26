@@ -2,9 +2,6 @@ name: "00 - Build Golden Images (Packer)"
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - 'packer/**'
 
 concurrency:
   group: meowcloud-golden-images
