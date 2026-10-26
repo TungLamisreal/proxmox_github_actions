@@ -1,6 +1,7 @@
 variable "proxmox_host" { default = "192.168.150.49" }
 variable "ssh_username" { default = "root" }
 variable "ssh_private_key_path" { default = "/home/github-runner/.ssh/id_ed25519" }
+variable "ssh_public_key_path" { default = "/home/github-runner/.ssh/id_ed25519.pub" }
 variable "base_tarball" { default = "shared-fs:vztmpl/meowcloud-lxc-base-debian12.tar.zst" }
 variable "storage_pool" { default = "general_pool" }
 variable "target_vmid" { default = 9100 }
@@ -20,15 +21,22 @@ build {
       "echo '=== [1/3] Khởi tạo LXC 9100 trực tiếp trên Ceph RBD (general_pool) ==='",
       "pct stop ${var.target_vmid} >/dev/null 2>&1 || true",
       "pct destroy ${var.target_vmid} --purge >/dev/null 2>&1 || true",
-      "pct create ${var.target_vmid} ${var.base_tarball} -rootfs ${var.storage_pool}:8 -net0 name=eth0,bridge=vmbr0,ip=dhcp,firewall=1 -unprivileged 1 -features nesting=1 -hostname meowcloud-lxc-docker-tpl",
+      "pct create ${var.target_vmid} ${var.base_tarball} -rootfs ${var.storage_pool}:8 -memory 1024 -cores 2 -net0 name=eth0,bridge=vmbr0,ip=dhcp,firewall=1 -unprivileged 1 -features nesting=1 -hostname meowcloud-lxc-docker-tpl",
       "pct start ${var.target_vmid}",
       "sleep 15"
     ]
   }
 
+  # Copy thư mục scripts từ GitHub Runner lên Proxmox Host
   provisioner "file" {
     source      = "scripts"
     destination = "/tmp/packer_scripts_docker"
+  }
+
+  # Copy SSH Public Key từ GitHub Runner lên Proxmox Host
+  provisioner "file" {
+    source      = "${var.ssh_public_key_path}"
+    destination = "/tmp/runner_id_ed25519.pub"
   }
 
   provisioner "shell" {
@@ -46,11 +54,14 @@ build {
   provisioner "shell" {
     inline = [
       "echo '=== [3/3] Nhúng Public SSH Key và Convert thành Template ==='",
-      "PUB_KEY=\"$(cat ${var.ssh_private_key_path}.pub 2>/dev/null || ssh-keygen -y -f ${var.ssh_private_key_path})\"",
-      "pct exec ${var.target_vmid} -- bash -c \"mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo \\\"$PUB_KEY\\\" > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys\"",
+      "pct exec ${var.target_vmid} -- mkdir -p /root/.ssh",
+      "pct push ${var.target_vmid} /tmp/runner_id_ed25519.pub /root/.ssh/authorized_keys",
+      "pct exec ${var.target_vmid} -- chmod 700 /root/.ssh",
+      "pct exec ${var.target_vmid} -- chmod 600 /root/.ssh/authorized_keys",
+      "pct exec ${var.target_vmid} -- chown -R root:root /root/.ssh",
       "pct stop ${var.target_vmid}",
       "pct template ${var.target_vmid}",
-      "rm -rf /tmp/packer_scripts_docker"
+      "rm -rf /tmp/packer_scripts_docker /tmp/runner_id_ed25519.pub"
     ]
   }
 }

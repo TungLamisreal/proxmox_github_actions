@@ -35,6 +35,8 @@ jobs:
       - name: "2. Build LXC Docker Image (-> Ceph RBD Live Template 9100)"
         working-directory: packer
         run: |
+          # Đảm bảo file .pub luôn tồn tại trên GitHub Runner
+          ssh-keygen -y -f /home/github-runner/.ssh/id_ed25519 > /home/github-runner/.ssh/id_ed25519.pub
           packer init lxc-docker.pkr.hcl
           packer build lxc-docker.pkr.hcl
 
