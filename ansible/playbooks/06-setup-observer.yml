@@ -11,6 +11,7 @@
           - prometheus-alertmanager
         state: present
         update_cache: true
+        cache_valid_time: 86400
         update_cache_retries: 5
         update_cache_retry_max_delay: 12
         lock_timeout: 300
@@ -120,7 +121,7 @@
           {% for host in groups['databases'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
-      notify: Restart Prometheus
+      notify: Reload Prometheus
 
     - name: Configure Alertmanager to route Auto-Scale Webhooks to Auto-VM (192.168.150.20:5000)
       ansible.builtin.copy:
@@ -163,10 +164,10 @@
       ansible.builtin.meta: flush_handlers
 
   handlers:
-    - name: Restart Prometheus
+    - name: Reload Prometheus
       ansible.builtin.service:
         name: prometheus
-        state: restarted
+        state: reloaded
     - name: Restart Alertmanager
       ansible.builtin.service:
         name: prometheus-alertmanager
