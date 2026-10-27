@@ -26,12 +26,12 @@
           {% raw %}
           groups:
             - name: meowcloud_autoscale_rules
-              interval: 10s
+              interval: 5s
               rules:
                 # --- BE có 2 Cores: Lấy tổng CPU thực dùng chia 2 ---
                 - alert: BackendPoolHighCPU
                   expr: (sum by (instance) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / 2) * 100 > 80
-                  for: 30s
+                  for: 10s
                   labels:
                     severity: critical
                     autoscale: "true"
@@ -41,7 +41,7 @@
                 # --- FE có 1 Core: Lấy tổng CPU thực dùng chia 1 ---
                 - alert: FrontendPoolHighCPU
                   expr: (sum by (instance) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / 1) * 100 > 80
-                  for: 30s
+                  for: 10s
                   labels:
                     severity: critical
                     autoscale: "true"
@@ -51,7 +51,7 @@
                 # --- Scale-in BE: Tổng tải chia cho (Số máy * 2 nhân) ---
                 - alert: BackendPoolLowCPU
                   expr: ((sum by (job) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / (count by (job) (up{job="backends"}) * 2)) * 100 < 20) and (count by (job) (up{job="backends"}) > 3)
-                  for: 30s
+                  for: 20s
                   labels:
                     severity: info
                     autoscale: "true"
@@ -61,7 +61,7 @@
                 # --- Scale-in FE: Tổng tải chia cho (Số máy * 1 nhân) ---
                 - alert: FrontendPoolLowCPU
                   expr: ((sum by (job) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / (count by (job) (up{job="frontends"}) * 1)) * 100 < 20) and (count by (job) (up{job="frontends"}) > 3)
-                  for: 30s
+                  for: 20s
                   labels:
                     severity: info
                     autoscale: "true"
@@ -78,8 +78,8 @@
         mode: '0644'
         content: |
           global:
-            scrape_interval: 10s
-            evaluation_interval: 10s
+            scrape_interval: 5s
+            evaluation_interval: 5s
           rule_files:
             - /etc/prometheus/alert.rules.yml
           alerting:
@@ -133,10 +133,10 @@
           global:
             resolve_timeout: 5m
           route:
-            group_by: ['alertname', 'scale_target', 'scale_action']
-            group_wait: 10s
-            group_interval: 1m
-            repeat_interval: 5m
+            group_by: ['autoscale', 'scale_action']
+            group_wait: 5s
+            group_interval: 20s
+            repeat_interval: 45s
             receiver: 'default-noop'
             routes:
               - match:
