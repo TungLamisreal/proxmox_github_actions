@@ -491,7 +491,7 @@ jobs:
 
             echo "Node ID mong doi cua ${EXPECTED_BE_NAME}: ${EXPECTED_NODE}"
             ROUTED_OK=false
-            for attempt in $(seq 1 15); do
+            for attempt in $(seq 1 40); do
               RESP=$(curl --fail --silent --show-error --connect-timeout 5 \
                 http://192.168.150.100/api/health 2>/dev/null || true)
               ACTUAL_NODE=$(printf '%s' "$RESP" |
@@ -503,7 +503,7 @@ jobs:
                 break
               fi
 
-              echo "Lan ${attempt}/15: VIP tra node='${ACTUAL_NODE:-khong co response}', dang cho..."
+              echo "Lan ${attempt}/40: VIP tra node='${ACTUAL_NODE:-khong co response}', dang cho..."
               sleep 1
             done
 

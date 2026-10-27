@@ -66,6 +66,7 @@
         image: meow-backend:latest
         state: started
         restart_policy: always
+        hostname: "{{ inventory_hostname }}"
         published_ports:
           - "5000:5000"
 
