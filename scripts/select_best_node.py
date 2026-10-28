@@ -109,7 +109,7 @@ def main():
             node_name = n['node']
             already_scaled = scaled_counts.get(node_name, 0)
             # Cộng bù 512MB cho mỗi LXC Auto-scale đã cấp trên Node (tránh ảo giác LXC mới boot ăn ít RAM RSS)
-            committed_overhead_mb = already_scaled * 512.0
+            committed_overhead_mb = already_scaled * 32.0
             nodes[node_name] = {
                 "maxmem_mb": n['maxmem'] / (1024 * 1024),
                 "mem_used_mb": (n['mem'] / (1024 * 1024)) + committed_overhead_mb,
