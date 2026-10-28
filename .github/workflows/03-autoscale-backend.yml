@@ -131,6 +131,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # --- FRESHNESS CHECK ---
+          echo "=== FRESHNESS CHECK: Kiểm tra tải thực tế trước khi đẻ máy ==="
+          FIRING_OUT=$(curl -fsS "http://192.168.150.21:9090/api/v1/alerts" | jq '[.data.alerts[] | select(.labels.scale_action == "scale_out") | select(.state == "firing")] | length')
+          if [ "$FIRING_OUT" -eq 0 ]; then
+            echo "noop=true" >> "$GITHUB_OUTPUT"
+            echo "Tải đã hạ nhiệt, không còn cảnh báo HighCPU. Tự hủy đơn hàng Scale-out an toàn!"
+            exit 0
+          fi
+          # --- KẾT THÚC FRESHNESS CHECK ---
+
           # Không chèn trực tiếp workflow inputs vào mã shell; lấy từ environment.
           for value_name in ADD_BACKEND_COUNT_INPUT ADD_FRONTEND_COUNT_INPUT RAM_RESERVE_MB_INPUT; do
             value="${!value_name}"

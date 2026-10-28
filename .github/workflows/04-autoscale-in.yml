@@ -40,6 +40,16 @@ jobs:
         id: select_lifo
         working-directory: /opt/meowcloud-iac
         run: |
+          # --- FRESHNESS CHECK ---
+          echo "=== FRESHNESS CHECK: Kiểm tra tải thực tế trước khi xóa máy ==="
+          FIRING_IN=$(curl -fsS "http://192.168.150.21:9090/api/v1/alerts" | jq '[.data.alerts[] | select(.labels.scale_action == "scale_in") | select(.state == "firing")] | length')
+          if [ "$FIRING_IN" -eq 0 ]; then
+            echo "skip_scale_in=true" >> "$GITHUB_OUTPUT"
+            echo "Tải đã tăng vọt trở lại, không an toàn để thu hồi máy lúc này. Tự hủy đơn hàng Scale-in!"
+            exit 0
+          fi
+          # --- KẾT THÚC FRESHNESS CHECK ---
+
           mkdir -p /opt/meowcloud-iac/state
           if [ -f /opt/meowcloud-iac/state/autoscale.tfvars.json ]; then
             cp /opt/meowcloud-iac/state/autoscale.tfvars.json /opt/meowcloud-iac/state/autoscale.tfvars.json.bak
