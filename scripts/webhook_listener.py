@@ -12,9 +12,19 @@ REPO_NAME = os.getenv("GITHUB_REPO_NAME", "proxmox_github_actions")
 WORKFLOW_SCALE_OUT = "03-autoscale-backend.yml"
 WORKFLOW_SCALE_IN = "04-autoscale-in.yml"
 
-# Giảm cooldown xuống 45 giây để khớp nhịp Ansible CI/CD siêu tốc mới
-COOLDOWN_PERIOD = 45
-last_trigger_time = 0
+COOLDOWN_SCALE_OUT = 45          # Cooldown giữa 2 đợt Scale-Out
+COOLDOWN_SCALE_IN = 90           # Cooldown giữa 2 đợt Scale-In
+SCALE_OUT_PRIORITY_LOCK = 120    # Khóa cấm Scale-In trong 120s sau khi vừa Scale-Out
+
+last_scale_out_time = 0
+last_scale_in_time = 0
+
+# Bộ nhớ đệm ngắn hạn (30s) để nếu FE và BE báo lệch nhau vài giây thì tự gộp chung, không đè mất nhau
+recent_overload = {
+    "frontend": {"count": 0, "ts": 0},
+    "backend": {"count": 0, "ts": 0}
+}
+MERGE_WINDOW = 30
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -24,12 +34,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
             try:
                 payload = json.loads(post_data.decode('utf-8'))
                 alerts = payload.get('alerts', [])
-                print(f"[*] Nhận Webhook Batch từ Alertmanager: {len(alerts)} alert(s)", flush=True)
+                print(f"[*] Nhận Webhook từ Alertmanager: {len(alerts)} alert(s)", flush=True)
 
                 if alerts:
-                    # Lấy action của alert đầu tiên (vì đã group_by scale_action)
-                    action = alerts[0].get('labels', {}).get('scale_action', 'scale_out')
-                    self.handle_batch_scale_request(alerts, action)
+                    self.process_alerts(alerts)
 
                 self.send_response(200)
                 self.end_headers()
@@ -42,73 +50,114 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def handle_batch_scale_request(self, alerts, action):
-        global last_trigger_time
-        current_time = time.time()
-        time_since_last = current_time - last_trigger_time
+    def process_alerts(self, alerts):
+        global last_scale_out_time, last_scale_in_time, recent_overload
+        now = time.time()
 
-        if time_since_last < COOLDOWN_PERIOD:
-            print(f"[*] Từ chối {action.upper()} BATCH: Đang Cooldown ({time_since_last:.0f}s / {COOLDOWN_PERIOD}s)", flush=True)
-            return
+        fe_out, be_out = 0, 0
+        fe_in, be_in = 0, 0
 
-        fe_firing = 0
-        be_firing = 0
-
-        # Đếm số lượng máy thực sự quá tải trong batch
         for alert in alerts:
-            if alert.get('status') == 'firing' and alert.get('labels', {}).get('autoscale') == 'true':
-                target = alert.get('labels', {}).get('scale_target')
+            if alert.get('status') != 'firing':
+                continue
+            labels = alert.get('labels', {})
+            if labels.get('autoscale') != 'true':
+                continue
+
+            target = labels.get('scale_target')
+            action = labels.get('scale_action', 'scale_out')
+
+            if action == 'scale_out':
                 if target == 'frontend':
-                    fe_firing += 1
+                    fe_out += 1
                 elif target == 'backend':
-                    be_firing += 1
+                    be_out += 1
+            elif action == 'scale_in':
+                if target == 'frontend':
+                    fe_in += 1
+                elif target == 'backend':
+                    be_in += 1
 
-        if fe_firing == 0 and be_firing == 0:
-            print("[-] Batch trống hoặc không có alert firing hợp lệ. Bỏ qua.")
-            return
+        # ---------------------------------------------------------------------
+        # 1. XỬ LÝ SCALE-OUT (LUÔN ĐƯỢC ƯU TIÊN TUYỆT ĐỐI)
+        # ---------------------------------------------------------------------
+        if fe_out > 0 or be_out > 0:
+            if fe_out > 0:
+                recent_overload["frontend"] = {"count": fe_out, "ts": now}
+            if be_out > 0:
+                recent_overload["backend"] = {"count": be_out, "ts": now}
 
-        last_trigger_time = current_time
-        add_fe = 0
-        add_be = 0
+            # Gộp cả FE và BE nếu cả hai cùng báo quá tải trong cửa sổ 30s gần nhất
+            merged_fe = recent_overload["frontend"]["count"] if (now - recent_overload["frontend"]["ts"] <= MERGE_WINDOW) else 0
+            merged_be = recent_overload["backend"]["count"] if (now - recent_overload["backend"]["ts"] <= MERGE_WINDOW) else 0
 
-        if action == "scale_in":
-            # Scale-in: Rất thận trọng, chỉ thu hồi 1 máy mỗi lần cho hệ thống an toàn, ưu tiên Frontend trước
-            target_scale = "frontend" if fe_firing > 0 else "backend"
-            workflow_id = WORKFLOW_SCALE_IN
-            inputs = {"scale_target": target_scale}
-            print(f"[-] TẢI THẤP: Gửi lệnh Scale-In {target_scale.upper()} (FE={fe_firing}, BE={be_firing})", flush=True)
-        else:
-            # Scale-out: Đẻ máy dựa trên số alert, TRẦN TỐI ĐA LÀ 3 MÁY/LẦN
-            # Nếu cả FE và BE đều quá tải, chia tỷ lệ tối đa 3 máy
-            total_req = fe_firing + be_firing
-            if total_req <= 3:
-                add_fe = fe_firing
-                add_be = be_firing
+            since_last_out = now - last_scale_out_time
+            if since_last_out < COOLDOWN_SCALE_OUT:
+                print(
+                    f"[*] Từ chối SCALE-OUT (FE={merged_fe}, BE={merged_be}): "
+                    f"Đang Cooldown ({since_last_out:.0f}s / {COOLDOWN_SCALE_OUT}s)",
+                    flush=True
+                )
+                return
+
+            # Tính toán số máy đẻ thêm (Trần tối đa: Tổng FE + BE <= 3)
+            if merged_fe + merged_be <= 3:
+                add_fe, add_be = merged_fe, merged_be
             else:
-                # Nếu > 3 máy báo động, ưu tiên cứu vớt đều nhau
-                if fe_firing > 0 and be_firing > 0:
-                    # Tình huống xấu nhất: Cứu 2 FE + 1 BE hoặc ngược lại (ưu tiên thằng nào kêu to hơn)
-                    if fe_firing > be_firing:
-                        add_fe = 2
-                        add_be = 1
+                if merged_fe > 0 and merged_be > 0:
+                    if merged_fe >= merged_be:
+                        add_fe, add_be = 2, 1
                     else:
-                        add_be = 2
-                        add_fe = 1
+                        add_fe, add_be = 1, 2
                 else:
-                    # Bão chỉ tập trung vào 1 hệ
-                    add_fe = min(3, fe_firing)
-                    add_be = min(3, be_firing)
+                    add_fe = min(3, merged_fe)
+                    add_be = min(3, merged_be)
 
-            workflow_id = WORKFLOW_SCALE_OUT
+            last_scale_out_time = now
+            # Reset bộ đếm sau khi đã chốt đơn
+            recent_overload["frontend"]["count"] = 0
+            recent_overload["backend"]["count"] = 0
+
             inputs = {
                 "scale_target": "both",
                 "add_backend_count": str(add_be),
                 "add_frontend_count": str(add_fe),
                 "ram_reserve_mb": "1280"
             }
-            print(f"[!] QUÁ TẢI CPU BATCH: Yêu cầu đẻ +{add_fe} FE, +{add_be} BE. Gọi {workflow_id}...", flush=True)
+            print(f"[!] QUÁ TẢI CPU (BATCH): Gửi lệnh Scale-Out +{add_fe} FE, +{add_be} BE...", flush=True)
+            if not self.dispatch_github(WORKFLOW_SCALE_OUT, inputs):
+                last_scale_out_time = 0
+            return
 
-        # Bắn lệnh tới GitHub API
+        # ---------------------------------------------------------------------
+        # 2. XỬ LÝ SCALE-IN (CHỈ CHẠY KHI KHÔNG CÓ SCALE-OUT TRONG 120 GIÂY QUA)
+        # ---------------------------------------------------------------------
+        if fe_in > 0 or be_in > 0:
+            since_last_out = now - last_scale_out_time
+            if since_last_out < SCALE_OUT_PRIORITY_LOCK:
+                print(
+                    f"[*] CHẶN SCALE-IN: Hệ thống vừa Scale-Out {since_last_out:.0f}s trước "
+                    f"(< {SCALE_OUT_PRIORITY_LOCK}s). Bảo vệ luồng Scale-Out không bị đè!",
+                    flush=True
+                )
+                return
+
+            since_last_in = now - last_scale_in_time
+            if since_last_in < COOLDOWN_SCALE_IN:
+                print(
+                    f"[*] Từ chối SCALE-IN: Đang Cooldown ({since_last_in:.0f}s / {COOLDOWN_SCALE_IN}s)",
+                    flush=True
+                )
+                return
+
+            target_scale = "frontend" if fe_in > 0 else "backend"
+            last_scale_in_time = now
+            inputs = {"scale_target": target_scale}
+            print(f"[-] TẢI THẤP: Gửi lệnh Scale-In {target_scale.upper()}...", flush=True)
+            if not self.dispatch_github(WORKFLOW_SCALE_IN, inputs):
+                last_scale_in_time = 0
+
+    def dispatch_github(self, workflow_id, inputs):
         url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/actions/workflows/{workflow_id}/dispatches"
         headers = {
             "Authorization": f"token {GITHUB_TOKEN}",
@@ -118,16 +167,17 @@ class WebhookHandler(BaseHTTPRequestHandler):
         data = {"ref": "main", "inputs": inputs}
         req = urllib.request.Request(url, headers=headers, data=json.dumps(data).encode('utf-8'))
         try:
-            urllib.request.urlopen(req)
-            print(f"[OK] Đã gửi lệnh Trigger thành công tới GitHub Actions!", flush=True)
+            urllib.request.urlopen(req, timeout=10)
+            print(f"[OK] Đã gửi Trigger tới {workflow_id} với inputs={inputs}!", flush=True)
+            return True
         except Exception as e:
             print(f"[ERROR] Lỗi khi gọi GitHub API: {e}", flush=True)
-            last_trigger_time = 0
+            return False
 
 if __name__ == '__main__':
     if not GITHUB_TOKEN:
         print("[!] Lỗi: Chưa cấu hình biến môi trường GITHUB_PAT_TOKEN.", flush=True)
         exit(1)
     server = HTTPServer(('0.0.0.0', 5000), WebhookHandler)
-    print("=== MeowCloud Auto-Scale Webhook Listener (Batching Mode) Khởi Động ===", flush=True)
+    print("=== MeowCloud Auto-Scale Webhook Listener (Priority & Batching Mode) Khởi Động ===", flush=True)
     server.serve_forever()
