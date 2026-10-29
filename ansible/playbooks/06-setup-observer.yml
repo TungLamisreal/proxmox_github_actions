@@ -30,7 +30,7 @@
               rules:
                 # --- BE có 2 Cores: Lấy tổng CPU thực dùng chia 2 ---
                 - alert: BackendPoolHighCPU
-                  expr: ((sum by (job) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / (count by (job) (up{job="backends"}) * 2)) * 100 > 75)
+                  expr: (sum by (job) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / on(job) (count by (job) (up{job="backends"}) * 2)) * 100 > 75
                   for: 10s
                   labels:
                     severity: critical
@@ -40,7 +40,7 @@
 
                 # --- FE có 1 Core: Lấy tổng CPU thực dùng chia 1 ---
                 - alert: FrontendPoolHighCPU
-                  expr: ((sum by (job) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / (count by (job) (up{job="frontends"}) * 1)) * 100 > 75)
+                  expr: (sum by (job) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / on(job) (count by (job) (up{job="frontends"}) * 1)) * 100 > 75
                   for: 10s
                   labels:
                     severity: critical
