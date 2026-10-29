@@ -19,7 +19,6 @@
         mode: '0644'
         content: |
           upstream backend_cluster {
-              least_conn;
           {% for host in groups['backends'] %}
               server {{ hostvars[host]['ansible_host'] }}:5000 max_fails=3 fail_timeout=10s;
           {% endfor %}
