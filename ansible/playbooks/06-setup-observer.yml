@@ -30,7 +30,7 @@
               rules:
                 # --- BE có 2 Cores: Lấy tổng CPU thực dùng chia 2 ---
                 - alert: BackendPoolHighCPU
-                  expr: (sum by (instance) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / 2) * 100 > 80
+                  expr: ((sum by (job) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / (count by (job) (up{job="backends"}) * 2)) * 100 > 75)
                   for: 10s
                   labels:
                     severity: critical
@@ -40,7 +40,7 @@
 
                 # --- FE có 1 Core: Lấy tổng CPU thực dùng chia 1 ---
                 - alert: FrontendPoolHighCPU
-                  expr: (sum by (instance) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / 1) * 100 > 80
+                  expr: ((sum by (job) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / (count by (job) (up{job="frontends"}) * 1)) * 100 > 75)
                   for: 10s
                   labels:
                     severity: critical
@@ -68,7 +68,7 @@
                     scale_action: "scale_in"
                     scale_target: "frontend"
           {% endraw %}
-      notify: Restart Prometheus
+      notify: Reload Prometheus
 
     - name: Generate dynamic prometheus.yml scraping all MeowCloud tiers and linking Alertmanager
       ansible.builtin.copy:

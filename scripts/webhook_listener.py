@@ -12,8 +12,8 @@ REPO_NAME = os.getenv("GITHUB_REPO_NAME", "proxmox_github_actions")
 WORKFLOW_SCALE_OUT = "03-autoscale-backend.yml"
 WORKFLOW_SCALE_IN = "04-autoscale-in.yml"
 
-COOLDOWN_SCALE_OUT = 45          # Cooldown giữa 2 đợt Scale-Out
-COOLDOWN_SCALE_IN = 90           # Cooldown giữa 2 đợt Scale-In
+COOLDOWN_SCALE_OUT = 50          # Cooldown giữa 2 đợt Scale-Out
+COOLDOWN_SCALE_IN = 70           # Cooldown giữa 2 đợt Scale-In
 SCALE_OUT_PRIORITY_LOCK = 120    # Khóa cấm Scale-In trong 120s sau khi vừa Scale-Out
 
 last_scale_out_time = 0
@@ -24,7 +24,7 @@ recent_overload = {
     "frontend": {"count": 0, "ts": 0},
     "backend": {"count": 0, "ts": 0}
 }
-MERGE_WINDOW = 30
+MERGE_WINDOW = 75
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -83,9 +83,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
         # ---------------------------------------------------------------------
         if fe_out > 0 or be_out > 0:
             if fe_out > 0:
-                recent_overload["frontend"] = {"count": fe_out, "ts": now}
+                prev_fe = recent_overload["frontend"]["count"] if (now - recent_overload["frontend"]["ts"] <= MERGE_WINDOW) else 0
+                recent_overload["frontend"] = {"count": max(prev_fe, fe_out), "ts": now}
             if be_out > 0:
-                recent_overload["backend"] = {"count": be_out, "ts": now}
+                prev_be = recent_overload["backend"]["count"] if (now - recent_overload["backend"]["ts"] <= MERGE_WINDOW) else 0
+                recent_overload["backend"] = {"count": max(prev_be, be_out), "ts": now}
 
             # Gộp cả FE và BE nếu cả hai cùng báo quá tải trong cửa sổ 30s gần nhất
             merged_fe = recent_overload["frontend"]["count"] if (now - recent_overload["frontend"]["ts"] <= MERGE_WINDOW) else 0
