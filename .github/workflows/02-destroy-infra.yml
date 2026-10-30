@@ -56,6 +56,9 @@ jobs:
 
       - name: "4. Terraform Destroy"
         working-directory: ./terraform
+        env:
+          # Legacy Docker templates exist until after 02; never enable this in 00/01/03/04.
+          MEOWCLOUD_ALLOW_LEGACY_TEMPLATE_FOR_DESTROY: "1"
         run: |
           PARALLEL="${{ github.event.inputs.tf_parallelism || '1' }}"
           terraform init -input=false

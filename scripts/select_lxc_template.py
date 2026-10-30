@@ -12,6 +12,9 @@ import urllib.request
 DEFAULT_API = "https://192.168.150.49:8006/api2/json"
 CANDIDATES = (9100, 9101, 9102)
 EXPECTED_DESCRIPTION = "meowcloud-docker-clean-v2"
+LEGACY_DESCRIPTION = "meowcloud-ssh-bootstrap-v1"
+# Only workflow 02 may set this environment flag while destroying pre-v2 workloads.
+ALLOW_LEGACY_DESTROY = os.environ.get("MEOWCLOUD_ALLOW_LEGACY_TEMPLATE_FOR_DESTROY") == "1"
 EXPECTED_ROOTFS_PREFIX = "general_pool:"
 
 
@@ -101,8 +104,10 @@ def main():
             continue
 
         if description != EXPECTED_DESCRIPTION:
-            log(f"VMID {vmid} trên {node}: SSH-bootstrap marker không hợp lệ; bỏ qua.")
-            continue
+            if not (ALLOW_LEGACY_DESTROY and description == LEGACY_DESCRIPTION):
+                log(f"VMID {vmid} trên {node}: clean-v2 marker không hợp lệ; bỏ qua.")
+                continue
+            log(f"VMID {vmid} trên {node}: old marker accepted ONLY for Terraform destroy.")
 
         if not rootfs.startswith(EXPECTED_ROOTFS_PREFIX):
             log(f"VMID {vmid} trên {node}: rootfs không nằm trên general_pool; bỏ qua.")
