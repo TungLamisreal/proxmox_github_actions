@@ -1,0 +1,120 @@
+
+name: "00R - Resume DB Golden Images"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Choose one DB image to build"
+        required: true
+        type: choice
+        options:
+          - node2
+          - node3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meowcloud-iac-state
+  cancel-in-progress: false
+
+jobs:
+  resume-db:
+    name: "Resume DB - ${{ inputs.target }}"
+    runs-on: self-hosted
+    timeout-minutes: 90
+
+    env:
+      TARGET: ${{ inputs.target }}
+      PKR_VAR_proxmox_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Safety preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$TARGET" in
+            node2) VMID=9002; PREVIOUS=9001 ;;
+            node3) VMID=9003; PREVIOUS=9002 ;;
+            *) echo "Invalid target"; exit 1 ;;
+          esac
+
+          command -v packer
+          command -v jq
+          test -n "$PKR_VAR_proxmox_token_secret"
+
+          SSH_CMD=(
+            ssh -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -i /home/github-runner/.ssh/id_ed25519
+            root@192.168.150.49
+          )
+
+          RESOURCES="$("${SSH_CMD[@]}" \
+            "pvesh get /cluster/resources --type vm --output-format json")"
+
+          # Never overwrite an existing VM or template.
+          if jq -e --argjson id "$VMID" \
+            'any(.[]; .vmid == $id)' <<< "$RESOURCES"; then
+            echo "[STOP] VMID $VMID already exists."
+            exit 1
+          fi
+
+          # Seed and preceding DB template must exist.
+          for id in 9000 "$PREVIOUS"; do
+            if ! jq -e --argjson id "$id" '
+              any(.[];
+                .vmid == $id and
+                .type == "qemu" and
+                ((.template // 0) | tostring) == "1"
+              )
+            ' <<< "$RESOURCES" >/dev/null; then
+              echo "[STOP] Required template $id invalid or missing."
+              exit 1
+            fi
+          done
+
+          echo "Preflight OK: build VMID $VMID on $TARGET"
+
+      - name: Build selected DB image
+        working-directory: packer
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          packer init db-kvm.pkr.hcl
+          packer validate db-kvm.pkr.hcl
+
+          packer build \
+            -parallel-builds=1 \
+            -only="proxmox-clone.db_${TARGET}" \
+            db-kvm.pkr.hcl
+
+      - name: Verify resulting template
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$TARGET" in
+            node2) VMID=9002 ;;
+            node3) VMID=9003 ;;
+            *) exit 1 ;;
+          esac
+
+          CONFIG="$(ssh -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -i /home/github-runner/.ssh/id_ed25519 \
+            root@192.168.150.49 \
+            "pvesh get /nodes/$TARGET/qemu/$VMID/config --output-format json")"
+
+          jq -e '
+            ((.template // 0) | tostring) == "1" and
+            ((.scsi0 // "") | startswith("general_pool:"))
+          ' <<< "$CONFIG"
+
+          echo "SUCCESS: DB template $VMID on $TARGET"
