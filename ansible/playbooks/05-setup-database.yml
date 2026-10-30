@@ -26,27 +26,31 @@
         - sdb_fstype.stdout != ""
         - sdb_fstype.stdout != "ext4"
 
-    - name: Uninstall multipath-tools completely to prevent socket re-activation
-      ansible.builtin.apt:
-        name: multipath-tools
-        state: absent
-        purge: true
+    - name: Recovery - Unmount if disk is stuck in mounted state (Fix db-02)
+      ansible.posix.mount:
+        path: "{{ pg_mount_point }}"
+        state: unmounted
+      failed_when: false
+      when: sdb_fstype.stdout != "ext4"
 
-    - name: Flush ALL multipath device maps
-      ansible.builtin.command: multipath -F
+    - name: Recovery - Clear active device-mapper kernel locks (Fix db-01)
+      ansible.builtin.command: dmsetup remove_all
       failed_when: false
       changed_when: false
+      when: sdb_fstype.stdout != "ext4"
 
-    - name: Wipe any leftover DM or RAID signatures on second disk
+    - name: Recovery - Wipe leftover signatures safely
       ansible.builtin.command: "wipefs -a -f {{ pg_device }}"
       failed_when: false
       changed_when: false
+      when: sdb_fstype.stdout != "ext4"
 
     - name: Format second disk as ext4 only if unformatted
       community.general.filesystem:
         fstype: ext4
         dev: "{{ pg_device }}"
-        force: false
+        force: true
+      when: sdb_fstype.stdout != "ext4"
 
     - name: Ensure mount point directory exists
       ansible.builtin.file:
