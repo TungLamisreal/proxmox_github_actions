@@ -23,8 +23,8 @@
         msg: "CRITICAL: {{ pg_device }} has unexpected filesystem '{{ sdb_fstype.stdout }}'. Aborting to protect data!"
       when:
         - sdb_fstype.rc == 0
-        - sdb_fstype.stdout != ""
-        - sdb_fstype.stdout != "ext4""
+        - sdb_fstype.stdout | trim != ''
+        - sdb_fstype.stdout | trim != 'ext4'
 
     - name: Format second disk as ext4 only if unformatted
       community.general.filesystem:
