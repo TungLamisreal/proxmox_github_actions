@@ -26,6 +26,11 @@ on:
         required: true
         default: "0"
         type: string
+      allow_manual_test_without_alert:
+        description: "Manual smoke test only: permit scale-out with no firing HighCPU alert"
+        required: false
+        default: false
+        type: boolean
       ram_reserve_mb:
         description: "RAM dự phòng tối thiểu cho mỗi Node (MB)"
         required: true
@@ -61,6 +66,7 @@ jobs:
       ADD_BACKEND_COUNT_INPUT: ${{ inputs.add_backend_count }}
       ADD_FRONTEND_COUNT_INPUT: ${{ inputs.add_frontend_count }}
       RAM_RESERVE_MB_INPUT: ${{ inputs.ram_reserve_mb }}
+      ALLOW_MANUAL_TEST: ${{ inputs.allow_manual_test_without_alert }}
 
     steps:
       - name: "1. Checkout Repository"
@@ -134,7 +140,7 @@ jobs:
           # --- FRESHNESS CHECK ---
           echo "=== FRESHNESS CHECK: Kiểm tra tải thực tế trước khi đẻ máy ==="
           FIRING_OUT=$(curl -fsS "http://192.168.150.21:9090/api/v1/alerts" | jq '[.data.alerts[] | select(.labels.scale_action == "scale_out") | select(.state == "firing")] | length')
-          if [ "$FIRING_OUT" -eq 0 ]; then
+          if [ "$FIRING_OUT" -eq 0 ] && [ "$ALLOW_MANUAL_TEST" != "true" ]; then
             echo "noop=true" >> "$GITHUB_OUTPUT"
             echo "Tải đã hạ nhiệt, không còn cảnh báo HighCPU. Tự hủy đơn hàng Scale-out an toàn!"
             exit 0
@@ -449,6 +455,14 @@ jobs:
           ansible-playbook -i "$INVENTORY" playbooks/02-setup-lb.yml
           ansible-playbook -i "$INVENTORY" playbooks/06-setup-observer.yml
 
+      - name: "7b. Verify service isolation on all inventory hosts"
+        if: ${{ steps.node_selector.outputs.noop != 'true' }}
+        working-directory: ./ansible
+        shell: bash
+        run: |
+          set -euo pipefail
+          ansible-playbook -i "$ANSIBLE_INVENTORY_FILE" playbooks/07-service-isolation.yml
+
       - name: "8. Three-Layer Healthcheck & Verification"
         if: ${{ steps.node_selector.outputs.noop != 'true' }}
         shell: bash
@@ -471,7 +485,7 @@ jobs:
               FE_IP="192.168.150.$((170 + i))"
               echo "Kiểm tra trực tiếp Frontend mới fe-$i ($FE_IP:80)..."
               curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
-                "http://${FE_IP}/" >/dev/null
+                "http://${FE_IP}/" | grep -q 'MeowCloud Elastic Infrastructure'
               echo "Frontend fe-$i ($FE_IP) phản hồi HTTP 200 OK."
             done
           fi
@@ -479,6 +493,7 @@ jobs:
           echo "=== Layer 1B & Layer 2: Kiểm tra phân phối lưu lượng qua VIP Load Balancer (192.168.150.100) ==="
           curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
             http://192.168.150.100/ >/dev/null
+          curl --fail --silent --show-error http://192.168.150.100/ | grep -q 'MeowCloud Elastic Infrastructure'
           echo "Frontend Web UI qua VIP .100 OK."
 
           if (( ACTUAL_ADD_BE > 0 )); then

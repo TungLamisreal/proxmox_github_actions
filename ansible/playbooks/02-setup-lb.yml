@@ -4,12 +4,16 @@
   become: true
   gather_facts: false
   tasks:
-    - name: Ensure Nginx and Keepalived are present (Pre-baked in Golden Image)
-      ansible.builtin.apt:
-        name:
-          - nginx
-          - keepalived
-        state: present
+    - name: Read pre-baked package inventory
+      ansible.builtin.package_facts:
+        manager: apt
+
+    - name: Require LB golden image packages
+      ansible.builtin.assert:
+        that:
+          - "'nginx' in ansible_facts.packages"
+          - "'keepalived' in ansible_facts.packages"
+        fail_msg: "Missing nginx/keepalived in LB role image; rebuild workflow 00."
 
     - name: Remove default Nginx site
       ansible.builtin.file:

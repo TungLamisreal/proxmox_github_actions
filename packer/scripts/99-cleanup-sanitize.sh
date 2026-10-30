@@ -1,4 +1,5 @@
 #!/bin/bash
+set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 echo "=== [4/4] Bắt đầu dọn dẹp và làm sạch (Sanitize) Khuôn mẫu ==="

@@ -3,6 +3,11 @@ name: "04 - Closed-Loop Auto-Scale In (Graceful Drain & Destroy)"
 on:
   workflow_dispatch:
     inputs:
+      allow_manual_test_without_alert:
+        description: "Manual smoke test only: allow scale-in without firing LowCPU alert"
+        required: false
+        default: false
+        type: boolean
       scale_target:
         description: "Phân hệ cần thu hồi (backend | frontend)"
         required: true
@@ -35,6 +40,8 @@ jobs:
           cp -rf ansible/* /opt/meowcloud-iac/ansible/
           cp -rf terraform/* /opt/meowcloud-iac/terraform/
           cp -rf scripts/* /opt/meowcloud-iac/scripts/
+          mkdir -p /opt/meowcloud-iac/packer/scripts
+          cp -rf packer/scripts/* /opt/meowcloud-iac/packer/scripts/
 
       - name: Backup Elastic Pool State & Select LIFO Instance
         id: select_lifo
@@ -43,7 +50,7 @@ jobs:
           # --- FRESHNESS CHECK ---
           echo "=== FRESHNESS CHECK: Kiểm tra tải thực tế trước khi xóa máy ==="
           FIRING_IN=$(curl -fsS "http://192.168.150.21:9090/api/v1/alerts" | jq '[.data.alerts[] | select(.labels.scale_action == "scale_in") | select(.state == "firing")] | length')
-          if [ "$FIRING_IN" -eq 0 ]; then
+          if [ "$FIRING_IN" -eq 0 ] && [ "${{ inputs.allow_manual_test_without_alert }}" != "true" ]; then
             echo "skip_scale_in=true" >> "$GITHUB_OUTPUT"
             echo "Tải đã tăng vọt trở lại, không an toàn để thu hồi máy lúc này. Tự hủy đơn hàng Scale-in!"
             exit 0
@@ -54,6 +61,7 @@ jobs:
           if [ -f /opt/meowcloud-iac/state/autoscale.tfvars.json ]; then
             cp /opt/meowcloud-iac/state/autoscale.tfvars.json /opt/meowcloud-iac/state/autoscale.tfvars.json.bak
           fi
+          cp /opt/meowcloud-iac/ansible/inventory.ini /opt/meowcloud-iac/state/inventory.ini.before-scale-in
 
           set +e
           META_JSON=$(python3 /opt/meowcloud-iac/scripts/scale_in_node.py --target "${{ inputs.scale_target }}")
@@ -126,39 +134,47 @@ jobs:
           python3 /opt/meowcloud-iac/scripts/verify_tfplan.py tfplan_scale_in.json --allow-scale-in
 
       - name: Step 4 - Terraform Apply (Terminate Drained LXC)
+        id: apply
         if: steps.select_lifo.outputs.skip_scale_in == 'false'
         working-directory: /opt/meowcloud-iac/terraform
         run: |
+          echo "attempted=true" >> "$GITHUB_OUTPUT"
           terraform apply \
             -state=/opt/meowcloud-iac/state/terraform.tfstate \
             -auto-approve \
             tfplan_scale_in
+          echo "applied=true" >> "$GITHUB_OUTPUT"
+          rm -f tfplan_scale_in tfplan_scale_in.json
 
       - name: Step 5 - Post-Scale-In VIP Healthcheck
         if: steps.select_lifo.outputs.skip_scale_in == 'false'
         run: |
           curl -fsS http://192.168.150.100/lb-status
           curl -fsS http://192.168.150.100/api/health
-          echo "[OK] Thu hồi LXC ${{ steps.select_lifo.outputs.retiring_host }} (VMID ${{ steps.select_lifo.outputs.retiring_vmid }}) hoàn tất, dịch vụ ổn định 100%!"
+          cd /opt/meowcloud-iac/ansible
+          ansible-playbook -i inventory.ini playbooks/07-service-isolation.yml
+          echo "[OK] Thu hồi LXC ${{ steps.select_lifo.outputs.retiring_host }} (VMID ${{ steps.select_lifo.outputs.retiring_vmid }}) hoàn tất; service gate PASS."
 
-      - name: Rollback State on Failure
-        if: failure()
+      - name: Restore desired state only when apply was NOT attempted
+        if: ${{ failure() && steps.apply.outputs.attempted != 'true' }}
+        shell: bash
         run: |
-          # Managed by update_meowcloud_ansible_runtime.sh
-          export HOME="/home/github-runner"
-          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
-          export LANG="C.UTF-8"
-          export LC_ALL="C.UTF-8"
-
-          echo "[!] Phát hiện lỗi trong quá trình Scale-in! Khôi phục autoscale.tfvars.json.bak..."
-          if [ -f /opt/meowcloud-iac/state/autoscale.tfvars.json.bak ]; then
+          set -euo pipefail
+          if [ -s /opt/meowcloud-iac/state/autoscale.tfvars.json.bak ]; then
             cp /opt/meowcloud-iac/state/autoscale.tfvars.json.bak /opt/meowcloud-iac/state/autoscale.tfvars.json
           fi
-          cd /opt/meowcloud-iac/terraform
-          terraform apply \
-            -state=/opt/meowcloud-iac/state/terraform.tfstate \
-            -var-file=/opt/meowcloud-iac/state/autoscale.tfvars.json \
-            -auto-approve
-          cd /opt/meowcloud-iac/ansible
-          ansible-playbook -i inventory.ini playbooks/02-setup-lb.yml
-          ansible-playbook -i inventory.ini playbooks/06-setup-observer.yml
+          if [ -s /opt/meowcloud-iac/state/inventory.ini.before-scale-in ]; then
+            cp /opt/meowcloud-iac/state/inventory.ini.before-scale-in /opt/meowcloud-iac/ansible/inventory.ini
+          fi
+          echo "State and inventory restored. Re-apply LB/Observer config when the original inventory is present."
+          if [ -s /opt/meowcloud-iac/state/inventory.ini.before-scale-in ]; then
+            cd /opt/meowcloud-iac/ansible
+            ansible-playbook -i inventory.ini playbooks/02-setup-lb.yml
+            ansible-playbook -i inventory.ini playbooks/06-setup-observer.yml
+          fi
+
+      - name: Report partial or completed apply failure without destructive rollback
+        if: ${{ failure() && steps.apply.outputs.attempted == 'true' }}
+        shell: bash
+        run: |
+          echo "::error::Terraform apply was attempted. No automatic reapply/rollback to avoid recreating a partially removed LXC. Inspect tfstate, guest resources, and desired capacity manually."

@@ -10,3 +10,5 @@
 - import_playbook: 03-setup-backend.yml
 - import_playbook: 04-setup-frontend.yml
 - import_playbook: 06-setup-observer.yml
+
+- import_playbook: 07-service-isolation.yml

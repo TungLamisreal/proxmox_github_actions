@@ -13,28 +13,26 @@
         state: started
         enabled: true
 
-    - name: Check if cloudflared binary is already installed
+    - name: Require cloudflared from the Tunnel Golden Image
       ansible.builtin.stat:
         path: /usr/bin/cloudflared
       register: cloudflared_bin
 
-    - name: Download cloudflared Debian package
-      ansible.builtin.get_url:
-        url: https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-        dest: /tmp/cloudflared.deb
-        mode: '0644'
-      when: not cloudflared_bin.stat.exists
-
-    - name: Install cloudflared package from local deb
-      ansible.builtin.apt:
-        deb: /tmp/cloudflared.deb
-        lock_timeout: 300
-      when: not cloudflared_bin.stat.exists
+    - name: Abort if image lacks cloudflared
+      ansible.builtin.assert:
+        that:
+          - cloudflared_bin.stat.exists
+          - cf_token | length > 0
+        fail_msg: "Missing cloudflared or CLOUDFLARE_TUNNEL_TOKEN."
+      no_log: true
 
     - name: Register and start Cloudflare Tunnel service
       ansible.builtin.shell: |
         if [ ! -f /etc/systemd/system/cloudflared.service ]; then
           cloudflared service install {{ cf_token }}
         fi
-      when: cf_token | length > 0
       no_log: true
+
+    - name: Verify Cloudflare tunnel service is running
+      ansible.builtin.command: systemctl is-active cloudflared
+      changed_when: false

@@ -30,7 +30,7 @@
       community.general.filesystem:
         fstype: ext4
         dev: "{{ pg_device }}"
-        force: true
+        force: false
       when: sdb_fstype.stdout != "ext4"
 
     - name: Ensure mount point directory exists
@@ -76,10 +76,15 @@
         fail_msg: "vault_postgres_password is not set! Pass --vault-password-file."
       no_log: true
 
+    - name: Require pre-baked PostgreSQL image
+      ansible.builtin.command: docker image inspect postgres:15-alpine
+      changed_when: false
+
     - name: Run PostgreSQL Docker Container
       community.docker.docker_container:
         name: meow-postgres
         image: postgres:15-alpine
+        pull: never
         state: started
         restart_policy: always
         published_ports:

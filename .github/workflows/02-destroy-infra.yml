@@ -45,16 +45,14 @@ jobs:
           fi
           echo "Xác nhận hợp lệ. Bắt đầu quy trình thu hồi tài nguyên Lab..."
 
-      - name: "3. Unlock Any Stuck LXC/VM Before Destroy"
+      - name: "3. Abort on locked workloads (never unlock a running backup/task)"
         run: |
+          set -euo pipefail
           SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
-          echo "=== Kiểm tra và gỡ lock dự phòng trước khi xóa ==="
-          for id in 121 131 132 133 141 142 151 152 153 171 172 173; do
-            $SSH_CMD "pct unlock $id 2>/dev/null || true"
-          done
-          for vmid in 271 272; do
-            $SSH_CMD "qm unlock $vmid 2>/dev/null || true"
-          done
+          locked="$($SSH_CMD "grep -l '^lock:' /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null || true")"
+          if [ -n "$locked" ]; then
+            echo "[STOP] Locked guest(s): $locked. Investigate backup/task before destroy."; exit 1
+          fi
 
       - name: "4. Terraform Destroy"
         working-directory: ./terraform

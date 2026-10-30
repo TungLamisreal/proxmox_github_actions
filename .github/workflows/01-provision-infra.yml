@@ -79,10 +79,16 @@ jobs:
           SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@${PVE_HOST}"
 
           # Kiểm tra Base LXC (Tarball trên CephFS)
-          $SSH_CMD "test -f /mnt/pve/shared-fs/template/cache/meowcloud-lxc-base-debian12.tar.zst" || {
-            echo "ERROR: Thiếu meowcloud-lxc-base-debian12.tar.zst!"
+          $SSH_CMD "test -f /mnt/pve/shared-fs/template/cache/meowcloud-lxc-base-debian12-v2.tar.zst" || {
+            echo "ERROR: Thiếu meowcloud-lxc-base-debian12-v2.tar.zst!"
             exit 1
           }
+
+          for role in lb observer tunnel; do
+            $SSH_CMD "test -s /mnt/pve/shared-fs/template/cache/meowcloud-lxc-${role}-debian12-v2.tar.zst" || {
+              echo "ERROR: Missing clean role archive $role. Run workflow 00."; exit 1;
+            }
+          done
 
           # Chọn template theo ưu tiên 9100 -> 9101 -> 9102.
           # Bộ chọn kiểm tra node online, template flag, SSH-bootstrap marker
@@ -130,6 +136,10 @@ jobs:
             echo "⚠️ Phát hiện AI đã Scale-out cụm Backend lên $ACTUAL_BE_COUNT nodes. Ghi đè cấu hình Terraform để không xóa máy của AI!"
             BACKEND_CNT=$ACTUAL_BE_COUNT
           fi
+
+          echo "BASELINE_BACKEND_CNT=$BACKEND_CNT" >> "$GITHUB_ENV"
+          echo "BASELINE_FRONTEND_CNT=$FRONTEND_CNT" >> "$GITHUB_ENV"
+          echo "BASELINE_DB_CNT=$DB_CNT" >> "$GITHUB_ENV"
 
           terraform init -input=false
           terraform validate
@@ -225,10 +235,22 @@ jobs:
           echo "=== [1] Kiểm tra định danh độc lập (machine-id & IP) trên toàn bộ các máy ==="
           ansible all -m shell -a "echo -n 'Host: $(hostname) | IP: $(hostname -I | awk \"{print \$1}\") | Machine-ID: ' && cat /etc/machine-id"
 
+          echo "=== [1b] Verify MeowCloud Frontend content instead of Nginx default page ==="
+          curl -fsS http://192.168.150.100/ | grep -q 'MeowCloud Elastic Infrastructure'
+
           echo "=== [2] Kiểm tra phản hồi từ Keepalived VIP (192.168.150.100) ==="
           curl -f -s http://192.168.150.100/lb-status
           curl -f -s http://192.168.150.100/api/health
           echo ""
+
+          echo "=== [3] Service isolation check ==="
+          ansible-playbook playbooks/07-service-isolation.yml
+          echo "=== [4] Baseline autoscale state ==="
+          mkdir -p /opt/meowcloud-iac/state
+          jq -n --argjson be "$BASELINE_BACKEND_CNT" --argjson fe "$BASELINE_FRONTEND_CNT" \
+            '{backend_count:$be, frontend_count:$fe, backend_node_map:{}, frontend_node_map:{}}' \
+            > /opt/meowcloud-iac/state/autoscale.tfvars.json
+          chmod 600 /opt/meowcloud-iac/state/autoscale.tfvars.json
 
           TOTAL_END=$(date +%s)
           TOTAL_DURATION=$((TOTAL_END - TOTAL_START))

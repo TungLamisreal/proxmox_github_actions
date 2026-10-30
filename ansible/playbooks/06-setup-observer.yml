@@ -4,12 +4,16 @@
   become: true
   gather_facts: false
   tasks:
-    - name: Ensure Prometheus and Alertmanager are present (Pre-baked in Golden Image)
-      ansible.builtin.apt:
-        name:
-          - prometheus
-          - prometheus-alertmanager
-        state: present
+    - name: Read pre-baked package inventory
+      ansible.builtin.package_facts:
+        manager: apt
+
+    - name: Require Observer golden image packages
+      ansible.builtin.assert:
+        that:
+          - "'prometheus' in ansible_facts.packages"
+          - "'prometheus-alertmanager' in ansible_facts.packages"
+        fail_msg: "Missing Prometheus/Alertmanager in Observer role image; rebuild workflow 00."
 
     - name: Generate Prometheus Alert Rules for Scale-Out and Scale-In (Cgroup Quota Fix)
       ansible.builtin.copy:

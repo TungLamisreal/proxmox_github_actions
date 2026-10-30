@@ -11,7 +11,7 @@ variable "proxmox_url" { default = "https://192.168.150.49:8006/api2/json" }
 variable "proxmox_token_id" { default = "root@pam!iac-token" }
 variable "proxmox_token_secret" { 
   type      = string
-  default   = "${env("PROXMOX_API_TOKEN_SECRET")}"
+  default   = ""
   sensitive = true 
 }
 
@@ -131,10 +131,13 @@ build {
 
   provisioner "shell" {
     inline = [
+      "set -e",
       "chmod +x /tmp/packer_scripts_kvm/*.sh",
       "LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/packer_scripts_kvm/01-base-packages.sh",
       "LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/packer_scripts_kvm/02-docker-install.sh",
+      "LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/packer_scripts_kvm/11-preload-db-image.sh",
       "LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/packer_scripts_kvm/03-kvm-specific.sh",
+      "bash /tmp/packer_scripts_kvm/40-image-role-gate.sh db",
       "LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/packer_scripts_kvm/99-cleanup-sanitize.sh",
       "rm -rf /tmp/packer_scripts_kvm"
     ]

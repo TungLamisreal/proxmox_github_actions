@@ -4,6 +4,25 @@
   become: true
   gather_facts: false
   tasks:
+    - name: Ensure Docker and Node Exporter active on Frontend
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - docker
+        - prometheus-node-exporter
+
+    - name: Refuse an unexpected host Nginx package
+      ansible.builtin.command: dpkg-query -W -f='${db:Status-Abbrev}' nginx
+      register: host_nginx_pkg
+      failed_when: host_nginx_pkg.rc == 0 and host_nginx_pkg.stdout is match('^ii')
+      changed_when: false
+
+    - name: Require pre-baked Frontend Docker image
+      ansible.builtin.command: docker image inspect nginx:alpine
+      changed_when: false
+
     - name: Create Frontend App and Config directories
       ansible.builtin.file:
         path: "{{ item }}"
@@ -33,7 +52,7 @@
               gzip_comp_level 9;
               gzip_min_length 128;
               gzip_proxied any;
-              gzip_types text/plain text/css application/json application/javascript text/html;
+              gzip_types text/plain text/css application/json application/javascript;
 
               root /usr/share/nginx/html;
               index index.html;
@@ -106,11 +125,20 @@
         - nginx_fe_conf.changed
         - not fe_container.changed
 
-    - name: Health-check Frontend local endpoint (:80)
+    - name: Require Docker publishing host port 80
+      ansible.builtin.command: docker port meow-frontend-app 80/tcp
+      register: fe_port
+      changed_when: false
+      failed_when: fe_port.rc != 0 or ':80' not in fe_port.stdout
+
+    - name: Health-check actual MeowCloud UI (HTTP 200 alone is insufficient)
       ansible.builtin.uri:
         url: http://127.0.0.1:80/
         status_code: 200
+        return_content: true
       register: fe_health
-      retries: 5
-      delay: 1
-      until: fe_health.status == 200
+      retries: 8
+      delay: 2
+      until: >-
+        fe_health.status == 200 and
+        'MeowCloud Elastic Infrastructure' in (fe_health.content | default(''))

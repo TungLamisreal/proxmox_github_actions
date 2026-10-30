@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: meowcloud-golden-images
+  group: meowcloud-iac-state
   cancel-in-progress: false
 
 jobs:
@@ -14,9 +14,23 @@ jobs:
     timeout-minutes: 90
     env:
       PROXMOX_API_TOKEN_SECRET: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+      PKR_VAR_proxmox_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: "0. Fail-closed preflight: reject stale image IDs"
+        run: |
+          set -euo pipefail
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
+          $SSH_CMD "qm config 9000 >/dev/null"
+          resources="$($SSH_CMD 'pvesh get /cluster/resources --type vm --output-format json')"
+          for vmid in 9100 9101 9102 9001 9002 9003 997 998; do
+            if printf '%s\n' "$resources" | jq -e --argjson vmid "$vmid" 'any(.[]; .vmid == $vmid)' >/dev/null; then
+              echo "[STOP] VMID/CTID $vmid still exists. Never reuse or destroy old templates automatically."
+              exit 1
+            fi
+          done
 
       - name: Install dependencies
         run: |
@@ -28,6 +42,13 @@ jobs:
         run: |
           packer init lxc-base.pkr.hcl
           packer build lxc-base.pkr.hcl
+
+      - name: "1b. Build clean LB, Observer, Tunnel tarballs on CephFS"
+        working-directory: packer
+        run: |
+          set -euo pipefail
+          packer init lxc-roles.pkr.hcl
+          packer build lxc-roles.pkr.hcl
 
       - name: "2. Build LXC Docker Image & Replicate HA Templates (9100/9101/9102)"
         working-directory: packer
@@ -44,7 +65,7 @@ jobs:
 
             printf '%s\n' "$cfg" | jq -e '
               (.template == 1) and
-              (((.description // "") | sub("[\\r\\n]+$"; "")) == "meowcloud-ssh-bootstrap-v1") and
+              (((.description // "") | sub("[\\r\\n]+$"; "")) == "meowcloud-docker-clean-v2") and
               (((.rootfs // "") | startswith("general_pool:")))
             ' >/dev/null
           }
@@ -84,20 +105,14 @@ jobs:
           fi
 
           if [ -n "$source_node" ]; then
-            if ! is_valid_template "$source_node" 9100; then
-              echo "ERROR: Template 9100 đã tồn tại nhưng không vượt qua kiểm chứng."
-              echo "Không tự xóa/rebuild vì có thể đang là nguồn của linked clone hiện hữu."
-              exit 1
-            fi
-            echo "OK: Tái sử dụng template 9100 hợp lệ trên $source_node; không phá template đang dùng."
-          else
-            echo "=== [2/4] Chưa có 9100: build mới bằng Packer ==="
-            ssh-keygen -y -f /home/github-runner/.ssh/id_ed25519 \
-              > /home/github-runner/.ssh/id_ed25519.pub
-
-            packer init lxc-docker.pkr.hcl
-            packer build lxc-docker.pkr.hcl
+            echo "[STOP] VMID 9100 exists on $source_node. Never silently reuse or delete a stale Docker image."
+            echo "Run workflow 02, inspect linked clone dependencies and retire old templates before workflow 00."
+            exit 1
           fi
+          echo "=== Building clean 9100 from new base ==="
+          ssh-keygen -y -f /home/github-runner/.ssh/id_ed25519 > /home/github-runner/.ssh/id_ed25519.pub
+          packer init lxc-docker.pkr.hcl
+          packer build lxc-docker.pkr.hcl
 
           resources_json="$($SSH_CMD "pvesh get /cluster/resources --type vm --output-format json")"
           source_node="$(find_node_for_vmid "$resources_json" 9100)"
@@ -138,21 +153,8 @@ jobs:
             existing_node="$(find_node_for_vmid "$resources_json" "$vmid")"
 
             if [ -n "$existing_node" ]; then
-              if node_is_used "$existing_node"; then
-                echo "ERROR: Template $vmid nằm trên $existing_node, trùng node với template khác."
-                echo "Không tự di chuyển/xóa template vì chưa xác minh các linked clone phụ thuộc."
-                exit 1
-              fi
-
-              if ! node_is_online "$existing_node" || ! is_valid_template "$existing_node" "$vmid"; then
-                echo "ERROR: Template $vmid đã tồn tại nhưng node/template không hợp lệ."
-                echo "Giữ nguyên tài nguyên hiện tại; kiểm tra thủ công trước khi sửa."
-                exit 1
-              fi
-
-              echo "OK: Giữ nguyên template $vmid hợp lệ trên $existing_node."
-              USED_NODES+=("$existing_node")
-              continue
+              echo "[STOP] Template $vmid exists on $existing_node. Retire old templates after checking linked clones."
+              exit 1
             fi
 
             target_node=""
@@ -175,7 +177,7 @@ jobs:
             echo "Tạo full clone: 9100 ($source_node) -> $vmid ($target_node)"
             echo "Full clone tạo bản disk độc lập, không tạo linked clone phụ thuộc 9100."
 
-            clone_result="$($SSH_CMD "pvesh create /nodes/${source_node}/lxc/9100/clone --newid ${vmid} --target ${target_node} --full 1 --hostname meowcloud-lxc-docker-tpl-${vmid} --description meowcloud-ssh-bootstrap-v1")"
+            clone_result="$($SSH_CMD "pvesh create /nodes/${source_node}/lxc/9100/clone --newid ${vmid} --target ${target_node} --full 1 --hostname meowcloud-lxc-docker-tpl-${vmid} --description meowcloud-docker-clean-v2")"
 
             upid="$(printf '%s\n' "$clone_result" |
               sed -n 's/.*\(UPID:[^[:space:]"]*\).*/\1/p' |
@@ -251,15 +253,17 @@ jobs:
 
           echo "OK: Đã kiểm chứng đủ 9100, 9101, 9102 trên 3 node riêng biệt."
 
-      - name: "3. Build KVM Database Templates (-> Ceph RBD Templates 9001, 9002, 9003)"
+      - name: "3. Build clean KVM Database Templates (9001/9002/9003)"
         working-directory: packer
         run: |
-          # Gỡ khóa và xóa KVM cũ trước khi build để tránh xung đột
+          set -euo pipefail
           SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
-          $SSH_CMD "qm destroy 9001 --purge 1 2>/dev/null || true"
-          $SSH_CMD "qm destroy 9002 --purge 1 2>/dev/null || true"
-          $SSH_CMD "qm destroy 9003 --purge 1 2>/dev/null || true"
-
+          $SSH_CMD "qm config 9000 >/dev/null" || { echo '[STOP] Missing seed VM 9000'; exit 1; }
+          for vmid in 9001 9002 9003; do
+            if $SSH_CMD "qm config ${vmid} >/dev/null 2>&1"; then
+              echo "[STOP] KVM template $vmid still exists; will NOT delete it implicitly."
+              exit 1
+            fi
+          done
           packer init db-kvm.pkr.hcl
-          # Sử dụng parallel-builds=1 để clone tuần tự chống sập lock snapshot của Ceph RBD
           packer build -parallel-builds=1 db-kvm.pkr.hcl

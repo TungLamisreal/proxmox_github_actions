@@ -66,18 +66,18 @@ variable "db_pool" {
   default     = "db_pool"
 }
 
-# Image B: Dùng cho Observer, Tunnels, Load Balancers
+# Clean base archive - used for building role images, not directly deployed
 variable "lxc_base_template" {
   type        = string
   description = "Golden Image LXC Base trên CephFS (shared-fs)"
-  default     = "shared-fs:vztmpl/meowcloud-lxc-base-debian12.tar.zst"
+  default     = "shared-fs:vztmpl/meowcloud-lxc-base-debian12-v2.tar.zst"
 }
 
 # Image C: Dùng cho Backend, Frontend (Đã tích hợp Docker CE)
 variable "lxc_docker_template" {
   type        = string
   description = "Golden Image LXC Docker trên CephFS (shared-fs)"
-  default     = "shared-fs:vztmpl/meowcloud-lxc-docker-debian12.tar.zst"
+  default     = "shared-fs:vztmpl/meowcloud-lxc-docker-debian12-v2.tar.zst"
 }
 
 # --- 4. CO GIÃN TẢI (AUTO-SCALING) ---
@@ -121,4 +121,18 @@ variable "frontend_node_map" {
   type        = map(string)
   description = "Ánh xạ cứng VMID -> Node cho các LXC Frontend được tạo bởi Auto-scale"
   default     = {}
+}
+
+# Role-specific LXC archives stored in CephFS (running rootfs remains on RBD general_pool)
+variable "lxc_lb_template" {
+  type    = string
+  default = "shared-fs:vztmpl/meowcloud-lxc-lb-debian12-v2.tar.zst"
+}
+variable "lxc_observer_template" {
+  type    = string
+  default = "shared-fs:vztmpl/meowcloud-lxc-observer-debian12-v2.tar.zst"
+}
+variable "lxc_tunnel_template" {
+  type    = string
+  default = "shared-fs:vztmpl/meowcloud-lxc-tunnel-debian12-v2.tar.zst"
 }

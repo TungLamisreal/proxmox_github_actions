@@ -17,9 +17,9 @@ build {
 
   provisioner "shell" {
     inline = [
+      "set -e",
       "echo '=== [1/5] Khởi tạo LXC Build Môi trường (CTID 998) ==='",
-      "pct stop 998 >/dev/null 2>&1 || true",
-      "pct destroy 998 --purge >/dev/null 2>&1 || true",
+      "if pct config 998 >/dev/null 2>&1; then echo 'Refuse to delete existing CTID 998' >&2; exit 1; fi",
       "pct create 998 ${var.base_tarball} -rootfs ${var.storage_pool}:8 -net0 name=eth0,bridge=vmbr0,ip=dhcp,firewall=0 -unprivileged 1 -features nesting=1",
       "pct start 998",
       "echo 'Chờ LXC nhận mạng...'",
@@ -41,8 +41,10 @@ build {
       "pct exec 998 -- mkdir -p /tmp/scripts",
       "pct push 998 /tmp/packer_scripts_base/01-base-packages.sh /tmp/scripts/01-base-packages.sh",
       "pct push 998 /tmp/packer_scripts_base/99-cleanup-sanitize.sh /tmp/scripts/99-cleanup-sanitize.sh",
+      "pct push 998 /tmp/packer_scripts_base/40-image-role-gate.sh /tmp/scripts/40-image-role-gate.sh",
       "pct exec 998 -- bash -c 'chmod +x /tmp/scripts/*.sh'",
       "pct exec 998 -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/01-base-packages.sh'",
+      "pct exec 998 -- bash /tmp/scripts/40-image-role-gate.sh base",
       "pct exec 998 -- bash -c 'LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/scripts/99-cleanup-sanitize.sh'"
     ]
   }
@@ -50,14 +52,14 @@ build {
   provisioner "shell" {
     inline = [
       "echo '=== [4/5] Đóng gói thành RootFS Archive ==='",
-      "pct exec 998 -- bash -c 'tar -I zstd -cpf /tmp/meowcloud-lxc-base-debian12.tar.zst --exclude=/tmp/meowcloud-lxc-base-debian12.tar.zst --exclude=/lost+found --exclude=/dev/* --exclude=/proc/* --exclude=/sys/* --exclude=/run/* --exclude=/mnt/* --exclude=/media/* / '"
+      "pct exec 998 -- bash -c 'tar -I zstd -cpf /tmp/meowcloud-lxc-base-debian12-v2.tar.zst --exclude=/tmp/meowcloud-lxc-base-debian12-v2.tar.zst --exclude=/lost+found --exclude=/dev/* --exclude=/proc/* --exclude=/sys/* --exclude=/run/* --exclude=/mnt/* --exclude=/media/* / '"
     ]
   }
 
   provisioner "shell" {
     inline = [
       "echo '=== [5/5] Lưu trữ vào CephFS và dọn dẹp ==='",
-      "pct pull 998 /tmp/meowcloud-lxc-base-debian12.tar.zst ${var.shared_fs_path}/meowcloud-lxc-base-debian12.tar.zst",
+      "pct pull 998 /tmp/meowcloud-lxc-base-debian12-v2.tar.zst ${var.shared_fs_path}/meowcloud-lxc-base-debian12-v2.tar.zst",
       "pct stop 998",
       "pct destroy 998 --purge",
       "rm -rf /tmp/packer_scripts_base"

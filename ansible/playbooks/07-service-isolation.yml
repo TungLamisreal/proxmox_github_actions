@@ -1,0 +1,20 @@
+---
+- name: Enforce and verify service roles on every MeowCloud guest
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    meowcloud_role: >-
+      {{ 'db' if 'databases' in group_names else
+         'docker' if ('backends' in group_names or 'frontends' in group_names) else
+         'lb' if 'loadbalancers' in group_names else
+         'observer' if 'monitoring' in group_names else
+         'tunnel' if 'tunnels' in group_names else 'unknown' }}
+  tasks:
+    - name: Validate known inventory role
+      ansible.builtin.assert:
+        that:
+          - meowcloud_role != 'unknown'
+    - name: Validate installed packages and forbidden active services
+      ansible.builtin.script: "../../packer/scripts/40-image-role-gate.sh {{ meowcloud_role }}"
+      changed_when: false

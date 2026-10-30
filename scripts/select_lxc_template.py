@@ -11,7 +11,7 @@ import urllib.request
 
 DEFAULT_API = "https://192.168.150.49:8006/api2/json"
 CANDIDATES = (9100, 9101, 9102)
-EXPECTED_DESCRIPTION = "meowcloud-ssh-bootstrap-v1"
+EXPECTED_DESCRIPTION = "meowcloud-docker-clean-v2"
 EXPECTED_ROOTFS_PREFIX = "general_pool:"
 
 
