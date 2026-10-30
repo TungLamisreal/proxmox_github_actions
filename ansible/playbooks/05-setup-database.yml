@@ -6,7 +6,7 @@
   vars:
     pg_mount_point: /opt/pgdata
     pg_data_dir: /opt/pgdata/data
-    pg_device: /dev/sdb
+    pg_device: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
 
   tasks:
     # =========================================================================
@@ -24,26 +24,7 @@
       when:
         - sdb_fstype.rc == 0
         - sdb_fstype.stdout != ""
-        - sdb_fstype.stdout != "ext4"
-
-    - name: Recovery - Unmount if disk is stuck in mounted state (Fix db-02)
-      ansible.posix.mount:
-        path: "{{ pg_mount_point }}"
-        state: unmounted
-      failed_when: false
-      when: sdb_fstype.stdout != "ext4"
-
-    - name: Recovery - Clear active device-mapper kernel locks (Fix db-01)
-      ansible.builtin.command: dmsetup remove_all
-      failed_when: false
-      changed_when: false
-      when: sdb_fstype.stdout != "ext4"
-
-    - name: Recovery - Wipe leftover signatures safely
-      ansible.builtin.command: "wipefs -a -f {{ pg_device }}"
-      failed_when: false
-      changed_when: false
-      when: sdb_fstype.stdout != "ext4"
+        - sdb_fstype.stdout != "ext4""
 
     - name: Format second disk as ext4 only if unformatted
       community.general.filesystem:
