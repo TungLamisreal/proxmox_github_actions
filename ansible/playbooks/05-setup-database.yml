@@ -26,15 +26,19 @@
         - sdb_fstype.stdout != ""
         - sdb_fstype.stdout != "ext4"
 
-    - name: Disable multipathd service to prevent SCSI disk locking
-      ansible.builtin.service:
-        name: multipathd
-        state: stopped
-        enabled: false
-      failed_when: false
+    - name: Uninstall multipath-tools completely to prevent socket re-activation
+      ansible.builtin.apt:
+        name: multipath-tools
+        state: absent
+        purge: true
 
-    - name: Flush device-mapper locks on second disk
-      ansible.builtin.command: "multipath -f {{ pg_device }}"
+    - name: Flush ALL multipath device maps
+      ansible.builtin.command: multipath -F
+      failed_when: false
+      changed_when: false
+
+    - name: Wipe any leftover DM or RAID signatures on second disk
+      ansible.builtin.command: "wipefs -a -f {{ pg_device }}"
       failed_when: false
       changed_when: false
 
