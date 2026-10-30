@@ -26,6 +26,18 @@
         - sdb_fstype.stdout != ""
         - sdb_fstype.stdout != "ext4"
 
+    - name: Disable multipathd service to prevent SCSI disk locking
+      ansible.builtin.service:
+        name: multipathd
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Flush device-mapper locks on second disk
+      ansible.builtin.command: "multipath -f {{ pg_device }}"
+      failed_when: false
+      changed_when: false
+
     - name: Format second disk as ext4 only if unformatted
       community.general.filesystem:
         fstype: ext4

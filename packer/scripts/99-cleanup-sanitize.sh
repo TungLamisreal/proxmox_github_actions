@@ -7,8 +7,13 @@ apt-get autoremove -y -qq
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 rm -rf /var/cache/apt/archives/*
+rm -f /var/lib/apt/periodic/update-success-stamp
 
-# Chỉ xóa khóa định danh cũ để các Clone không dùng chung một vân tay SSH. 
+# Đánh dấu cache cũ để Ansible buộc refresh khi clone
+mkdir -p /var/lib/apt/lists
+touch -d '@1' /var/lib/apt/lists
+
+# Chỉ xóa khóa định danh cũ để các Clone không dùng chung một vân tay SSH.
 # Drop-in systemd ở bước 1 sẽ tự động sinh lại khóa mới tinh khi Clone khởi động.
 rm -f /etc/ssh/ssh_host_*
 
