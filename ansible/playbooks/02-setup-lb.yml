@@ -4,17 +4,12 @@
   become: true
   gather_facts: false
   tasks:
-    - name: Install Nginx and Keepalived (Base packages & psmisc already in Golden Image)
+    - name: Ensure Nginx and Keepalived are present (Pre-baked in Golden Image)
       ansible.builtin.apt:
         name:
           - nginx
           - keepalived
         state: present
-        update_cache: true
-        cache_valid_time: 86400
-        update_cache_retries: 5
-        update_cache_retry_max_delay: 12
-        lock_timeout: 300
 
     - name: Remove default Nginx site
       ansible.builtin.file:

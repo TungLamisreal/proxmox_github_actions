@@ -4,6 +4,7 @@ export DEBIAN_FRONTEND=noninteractive
 echo "=== [1/4] Cập nhật OS và cài đặt các công cụ nền tảng ==="
 apt-get update -qq
 apt-get upgrade -y -qq
+apt-get install -y -qq nginx keepalived prometheus prometheus-alertmanager
 
 apt-get install -y -qq \
     ca-certificates \
