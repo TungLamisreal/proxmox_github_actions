@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Disposable integration tests on ubuntu-latest only. Never touch production KVM/LXC.
+set -Eeuo pipefail
+BE_IMAGE="${1:?backend image digest}"
+GIT_SHA="${2:?commit SHA}"
+NETWORK="meow-crud-ci"
+TOKEN="ci-ephemeral-token-123"
+PW="ci-only-postgres-password"
+
+cleanup() {
+  docker rm -f meow-be-crud-ci meow-pg-crud-ci >/dev/null 2>&1 || true
+  docker network rm "$NETWORK" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker network create "$NETWORK" >/dev/null
+docker run -d --rm --network "$NETWORK" --name meow-pg-crud-ci \
+  -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=meowcloud_demo postgres:15-alpine >/dev/null
+
+for i in $(seq 1 45); do
+  docker exec meow-pg-crud-ci pg_isready -U postgres -d meowcloud_demo >/dev/null 2>&1 && break
+  sleep 1
+done
+docker exec meow-pg-crud-ci pg_isready -U postgres -d meowcloud_demo
+docker exec -i meow-pg-crud-ci psql -X -v ON_ERROR_STOP=1 -U postgres -d meowcloud_demo < db/schema.sql
+
+docker run -d --rm --network "$NETWORK" --name meow-be-crud-ci \
+  -p 127.0.0.1:18095:5000 \
+  -e DB_HOST=meow-pg-crud-ci -e DB_PORT=5432 \
+  -e DB_NAME=meowcloud_demo -e DB_USER=postgres -e DB_PASSWORD="$PW" \
+  -e DEMO_TOKEN="$TOKEN" "$BE_IMAGE" >/dev/null
+
+API=http://127.0.0.1:18095
+for i in $(seq 1 45); do
+  curl -fsS "$API/db-health" >/dev/null 2>&1 && break
+  sleep 1
+done
+
+curl -fsS "$API/health" | jq -e '.status == "UP"'
+curl -fsS "$API/version" | jq -e --arg sha "$GIT_SHA" '.version == $sha'
+curl -fsS "$API/db-health" | jq -e '.status == "UP"'
+
+unauthorized="$(curl -s -o /dev/null -w '%{http_code}' "$API/products")"
+[[ "$unauthorized" == "401" ]] || { echo "::error::CRUD must require demo token"; exit 1; }
+
+AUTH=(-H "X-Demo-Token: $TOKEN")
+JSON=(-H "Content-Type: application/json")
+
+category_id="$(curl -fsS "${AUTH[@]}" "$API/categories" | jq -er '.[0].id')"
+
+product_body="$(jq -nc --argjson id "$category_id" '{category_id:$id,sku:"CI-SKU-001",name:"Sản phẩm CI",price:"125000.00",stock:5}')"
+product_id="$(curl -fsS "${AUTH[@]}" "${JSON[@]}" -X POST -d "$product_body" "$API/products" | jq -er '.id')"
+
+customer_body='{"name":"Khách hàng CI","email":"ci@example.test","phone":"0123456789"}'
+customer_id="$(curl -fsS "${AUTH[@]}" "${JSON[@]}" -X POST -d "$customer_body" "$API/customers" | jq -er '.id')"
+
+order_body="$(jq -nc --argjson c "$customer_id" --argjson p "$product_id" '{customer_id:$c,product_id:$p,quantity:2,status:"pending"}')"
+order_id="$(curl -fsS "${AUTH[@]}" "${JSON[@]}" -X POST -d "$order_body" "$API/orders" | jq -er '.id')"
+
+curl -fsS "${AUTH[@]}" "$API/stats" | jq -e '.products == 1 and .customers == 1 and .orders == 1'
+
+product_update="$(jq -nc --argjson id "$category_id" '{category_id:$id,sku:"CI-SKU-001",name:"Sản phẩm CI cập nhật",price:"155000.00",stock:3}')"
+curl -fsS "${AUTH[@]}" "${JSON[@]}" -X PUT -d "$product_update" "$API/products/$product_id" |
+  jq -e '.stock == 3 and .name == "Sản phẩm CI cập nhật"'
+
+order_update="$(jq -nc --argjson c "$customer_id" --argjson p "$product_id" '{customer_id:$c,product_id:$p,quantity:2,status:"paid"}')"
+curl -fsS "${AUTH[@]}" "${JSON[@]}" -X PUT -d "$order_update" "$API/orders/$order_id" |
+  jq -e '.status == "paid"'
+
+# Foreign key must prevent accidental product deletion while a related order exists.
+conflict="$(curl -s -o /dev/null -w '%{http_code}' "${AUTH[@]}" -X DELETE "$API/products/$product_id")"
+[[ "$conflict" == "409" ]] || { echo "::error::FK delete protection is missing"; exit 1; }
+
+curl -fsS "${AUTH[@]}" -X DELETE "$API/orders/$order_id"
+curl -fsS "${AUTH[@]}" -X DELETE "$API/products/$product_id"
+curl -fsS "${AUTH[@]}" -X DELETE "$API/customers/$customer_id"
+curl -fsS "${AUTH[@]}" "$API/stats" | jq -e '.products == 0 and .customers == 0 and .orders == 0'
+echo "PASS: PostgreSQL CRUD Create/Read/Update/Delete, access token, FK protection, /db-health"
