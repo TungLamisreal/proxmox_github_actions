@@ -15,12 +15,18 @@
           - "'prometheus-alertmanager' in ansible_facts.packages"
         fail_msg: "Missing Prometheus/Alertmanager in Observer role image; rebuild workflow 00."
 
+    - name: Require promtool for fail-closed config validation
+      ansible.builtin.command: promtool --version
+      changed_when: false
+
     - name: Generate Prometheus Alert Rules for Scale-Out and Scale-In (Cgroup Quota Fix)
       ansible.builtin.copy:
         dest: /etc/prometheus/alert.rules.yml
         owner: prometheus
         group: prometheus
         mode: '0644'
+        backup: true
+        validate: 'promtool check rules %s'
         content: |
           {% raw %}
           groups:
@@ -74,6 +80,8 @@
         owner: prometheus
         group: prometheus
         mode: '0644'
+        backup: true
+        validate: 'promtool check config %s'
         content: |
           global:
             scrape_interval: 5s
