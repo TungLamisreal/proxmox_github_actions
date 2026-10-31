@@ -288,7 +288,7 @@ jobs:
 
           terraform plan \
             -input=false \
-            -parallelism=4 \
+            -parallelism=1 \
             -var-file="$AUTOSCALE_STATE_FILE" \
             -out="$TFPLAN_FILE"
           chmod 600 "$TFPLAN_FILE"
@@ -367,7 +367,7 @@ jobs:
           set -euo pipefail
           echo "attempted=true" >> "$GITHUB_OUTPUT"
           # PVE/Ceph nhỏ: tạo tuần tự để giảm va chạm lock storage/container.
-          terraform apply -parallelism=4 -auto-approve -input=false "$TFPLAN_FILE"
+          terraform apply -parallelism=1 -auto-approve -input=false "$TFPLAN_FILE"
           echo "applied=true" >> "$GITHUB_OUTPUT"
           rm -f "$TFPLAN_FILE" "$TFPLAN_JSON"
 
