@@ -59,7 +59,7 @@
       register: cpu_metrics
       retries: 8
       delay: 2
-      until: cpu_metrics.status == 200 and 'meowcloud_lxc_cpu_usage_seconds_total' in (cpu_metrics.content | default(''))
+      until: (cpu_metrics.status | default(0)) == 200 and 'meowcloud_lxc_cpu_usage_seconds_total' in (cpu_metrics.content | default(''))
 
     - name: Ensure configured capacity matches Terraform 2 vCPU BE / 1 vCPU FE
       ansible.builtin.assert:
