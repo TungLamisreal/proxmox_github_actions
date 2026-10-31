@@ -11,7 +11,7 @@ class CrudContractTests(unittest.TestCase):
         source = (ROOT / 'apps/backend/app.py').read_text()
         tree = ast.parse(source)
         for name in ('health', 'db_health', 'version', 'create_record',
-                     'list_records', 'update_record', 'delete_record'):
+                     'list_records', 'update_record', 'delete_record', 'low_stock_report'):
             self.assertTrue(any(isinstance(n, ast.FunctionDef) and n.name == name
                                 for n in tree.body))
 
@@ -19,13 +19,15 @@ class CrudContractTests(unittest.TestCase):
         migration = (ROOT / 'apps/backend/migrations/versions/0001_initial_crud.py').read_text()
         model = (ROOT / 'apps/backend/models.py').read_text()
         self.assertIn('revision = "0001_initial_crud"', migration)
-        for table in ('categories', 'products', 'customers', 'orders'):
+        for table in ('categories', 'products', 'customers', 'orders', 'Inventory Intelligence', 'stockThreshold'):
             self.assertIn('"' + table + '"', migration)
             self.assertIn('__tablename__ = "' + table + '"', model)
         self.assertIn('raise RuntimeError("Destructive schema downgrade disabled', migration)
         self.assertNotIn('op.drop_table(', migration)
         self.assertNotIn('op.execute("DROP', migration)
         self.assertIn('alembic_version', (ROOT / 'docs/05-crud-demo.md').read_text())
+        # V2 works without a new migration; data in the original four tables is retained.
+        self.assertNotIn('0002_', '\\n'.join(p.name for p in (ROOT / 'apps/backend/migrations/versions').glob('*.py')))
 
     def test_frontend_contract(self):
         html = (ROOT / 'apps/frontend/index.html').read_text()
