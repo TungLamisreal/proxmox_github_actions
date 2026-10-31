@@ -18,7 +18,10 @@ def main():
     parser = argparse.ArgumentParser(description="Zero-Destroy / Controlled Scale-In Terraform Plan Gate")
     parser.add_argument("plan_json_file", help="Đường dẫn tới file JSON xuất từ terraform show -json")
     parser.add_argument("--allow-scale-in", action="store_true", help="Chỉ bật khi chủ động chạy luồng Scale-in")
+    parser.add_argument("--expected-vmid", type=int, help="Exact elastic LXC VMID selected by scale_in_node.py")
     args = parser.parse_args()
+    if args.allow_scale_in and args.expected_vmid is None:
+        parser.error("--expected-vmid is required for controlled scale-in")
 
     with open(args.plan_json_file, "r") as f:
         plan = json.load(f)
@@ -26,6 +29,7 @@ def main():
     changes = plan.get("resource_changes", [])
     created = []
     deleted_compute = []
+    deleted_vmids = []
     updated = []
     violations = []
 
@@ -40,7 +44,7 @@ def main():
         # 1. Bảo vệ tuyệt đối các VMID cốt lõi và Base Pool
         for obj in (before, after):
             vmid = obj.get("vm_id") or obj.get("container_id")
-            if vmid in PROTECTED_VMIDS and "delete" in actions and res_type in [
+            if str(vmid).isdigit() and int(vmid) in PROTECTED_VMIDS and "delete" in actions and res_type in [
                 "proxmox_virtual_environment_container",
                 "proxmox_virtual_environment_vm"
             ]:
@@ -82,6 +86,7 @@ def main():
                     is_elastic_fe = (174 <= int(vmid) <= 250)
                     if is_elastic_be or is_elastic_fe:
                         deleted_compute.append(f"{address} [VMID={vmid}]")
+                        deleted_vmids.append(int(vmid))
                     else:
                         violations.append(
                             f"[VI PHẠM PHẠM VI SCALE-IN] VMID {vmid} ({address}) không thuộc vùng co giãn!"
@@ -96,6 +101,12 @@ def main():
             updated.append(address)
 
     # Trong 1 lượt Scale-in chỉ cho phép thu hồi đúng 1 LXC
+    if args.allow_scale_in and deleted_vmids != [args.expected_vmid]:
+        violations.append(f"[SAI VMID] Expected exactly one LXC VMID {args.expected_vmid}, actual deleted VMIDs: {deleted_vmids}")
+
+    if args.allow_scale_in and created:
+        violations.append(f"[SCALE-IN CREATE] Unexpected creates during scale-in: {created}")
+
     if args.allow_scale_in and len(deleted_compute) > 1:
         violations.append(
             f"[CHẶN XÓA HÀNG LOẠT] Phát hiện {len(deleted_compute)} LXC bị xóa cùng lúc ({deleted_compute}). Chỉ cho phép thu hồi 1 máy/lượt!"
