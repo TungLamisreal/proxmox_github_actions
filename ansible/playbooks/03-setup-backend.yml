@@ -8,6 +8,7 @@
     meow_release: "{{ (lookup('ansible.builtin.file', '/opt/meowcloud-iac/state/app-release.json', errors='ignore') | default('{}', true)) | from_json }}"
     meow_selected_backend_image: "{{ meow_backend_image | default(meow_release.backend_image | default('meow-backend:latest')) }}"
     meow_remote_backend: "{{ meow_selected_backend_image.startswith('ghcr.io/') }}"
+    meow_expected_version: "{{ meow_app_version | default(meow_release.version | default('')) }}"
   tasks:
     - name: Ensure Docker and Node Exporter active
       ansible.builtin.service:
@@ -80,3 +81,14 @@
       until: >-
         be_health.status == 200 and
         be_health.json.status | default('') == 'UP'
+
+    - name: Verify pinned Backend application version
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5000/version
+        return_content: true
+        status_code: 200
+      register: meow_be_version_check
+      retries: 5
+      delay: 2
+      until: meow_be_version_check.json.version | default('') == meow_expected_version
+      when: meow_remote_backend and meow_expected_version | length > 0
