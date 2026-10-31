@@ -76,6 +76,27 @@ jobs:
           echo "backend_image=$BACKEND_REPO@$BACKEND_DIGEST" >> "$GITHUB_OUTPUT"
           echo "frontend_image=$FRONTEND_REPO@$FRONTEND_DIGEST" >> "$GITHUB_OUTPUT"
 
+      - name: Smoke-test both images before deploying to CT120
+        shell: bash
+        env:
+          BACKEND_IMAGE: ${{ steps.references.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.references.outputs.frontend_image }}
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name meow-be-ci -p 127.0.0.1:18085:5000 "$BACKEND_IMAGE"
+          docker run -d --rm --name meow-fe-ci -p 127.0.0.1:18086:80 "$FRONTEND_IMAGE"
+          trap 'docker rm -f meow-be-ci meow-fe-ci >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 20); do
+            curl --fail --silent http://127.0.0.1:18085/health >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18085/health | jq -e '.status == "UP"'
+          curl -fsS http://127.0.0.1:18085/version |
+            jq -e --arg sha "$GITHUB_SHA" '.version == $sha'
+          curl -fsS http://127.0.0.1:18086/ | grep -q 'MeowCloud Elastic Infrastructure'
+          curl -fsS http://127.0.0.1:18086/version.json |
+            jq -e --arg sha "$GITHUB_SHA" '.version == $sha'
+
   deploy:
     name: "Rolling BE + FE deploy to current elastic pool"
     needs: build
