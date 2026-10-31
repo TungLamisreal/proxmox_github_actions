@@ -138,7 +138,7 @@ jobs:
                 -o IdentitiesOnly=yes -o BatchMode=yes \
                 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 -o ConnectTimeout=5 "root@${RET_IP}" \
-                "set -o pipefail; ss -Htn state established '( sport = :${RET_PORT} )' | wc -l"); then
+                "bash -o pipefail -c \"ss -Htn state established '( sport = :${RET_PORT} )' | wc -l\""); then
               echo "::error::SSH or ss failed on retiring guest ${RET_IP}; refusing Terraform destroy."
               exit 1
             fi
