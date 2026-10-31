@@ -44,12 +44,15 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 env:
   TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL || 'https://192.168.150.49:8006/api2/json' }}
   TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
   TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
   ANSIBLE_FORCE_COLOR: "1"
+  GHCR_USERNAME: ${{ github.actor }}
+  GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   # Phải khớp với đường dẫn mà scripts/select_best_node.py đang sử dụng.
   AUTOSCALE_STATE_FILE: /opt/meowcloud-iac/state/autoscale.tfvars.json
   # Terraform tạo inventory tại ansible/inventory.ini qua 07-ansible-generator.tf.
