@@ -306,6 +306,22 @@ jobs:
           echo "Backend: $BACKEND_RELEASE" >> "$GITHUB_STEP_SUMMARY"
           echo "Frontend: $FRONTEND_RELEASE" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Archive verified CRUD release for future baseline/v1/v2 replay
+        if: steps.publish.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          EDITION="$(curl -fsS --retry 5 http://192.168.150.100/version.json | jq -er .app_edition)"
+          case "$EDITION" in
+            crud-v1) TARGET=v1 ;;
+            crud-v2) TARGET=v2 ;;
+            *) echo "::error::Unexpected release edition: $EDITION"; exit 1 ;;
+          esac
+          curl -fsS --retry 5 http://192.168.150.100/api/version |
+            jq -e --arg ed "$EDITION" --arg sha "$GITHUB_SHA"               '.app_edition == $ed and .version == $sha'
+          python3 scripts/demo_release.py checkpoint --target "$TARGET"
+          echo "Saved pinned release snapshot: app-release-$TARGET.json"
+
       - name: Roll back to last committed app release if rollout or smoke fails
         if: ${{ failure() && steps.rollout.outcome != 'skipped' && steps.publish.outcome != 'success' }}
         working-directory: ./ansible
