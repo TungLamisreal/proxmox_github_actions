@@ -17,6 +17,28 @@ docker network create "$NETWORK" >/dev/null
 docker run -d --rm --network "$NETWORK" --name meow-pg-crud-ci \
   -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=meowcloud_demo postgres:15-alpine >/dev/null
 
+# Use a non-superuser database OWNER just like the live meowcrud role.
+# DB initdb has a temporary server; retry these idempotent operations until stable.
+ROLE_READY=false
+for i in $(seq 1 45); do
+  if docker exec -i meow-pg-crud-ci psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null 2>&1 <<'SQL'
+DO $
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meowcrud') THEN
+    CREATE ROLE meowcrud LOGIN PASSWORD 'ci-only-postgres-password';
+  END IF;
+END $;
+ALTER DATABASE meowcloud_demo OWNER TO meowcrud;
+SQL
+  then ROLE_READY=true; break; fi
+  sleep 2
+done
+if [[ "$ROLE_READY" != "true" ]]; then
+  docker logs --tail 30 meow-pg-crud-ci
+  echo "::error::Cannot initialize isolated CI DB owner role"
+  exit 1
+fi
+
 # PostgreSQL initdb briefly starts and stops a temporary server. Wait for an
 # actual connection before applying the versioned Alembic migration.
 SCHEMA_READY=false
@@ -25,7 +47,7 @@ for i in $(seq 1 45); do
     # Alembic schema upgrades are transactional on PostgreSQL and can be retried.
     if docker run --rm --network "$NETWORK" \
        -e DB_HOST=meow-pg-crud-ci -e DB_PORT=5432 -e DB_NAME=meowcloud_demo \
-       -e DB_USER=postgres -e DB_PASSWORD="$PW" \
+       -e DB_USER=meowcrud -e DB_PASSWORD="$PW" \
        "$BE_IMAGE" alembic -c /app/alembic.ini upgrade head >/dev/null 2>&1; then
        SCHEMA_READY=true
        break
@@ -41,21 +63,21 @@ fi
 # Idempotence: repeating the same migration must leave all data intact.
 docker run --rm --network "$NETWORK" \
   -e DB_HOST=meow-pg-crud-ci -e DB_PORT=5432 -e DB_NAME=meowcloud_demo \
-  -e DB_USER=postgres -e DB_PASSWORD="$PW" \
+  -e DB_USER=meowcrud -e DB_PASSWORD="$PW" \
   "$BE_IMAGE" alembic -c /app/alembic.ini upgrade head
 docker exec meow-pg-crud-ci psql -X -U postgres -d meowcloud_demo -At \
   -c 'SELECT version_num FROM alembic_version' | grep -qx '0001_initial_crud'
 # Same CLI that Ansible migration job uses to verify the current head.
 docker run --rm --network "$NETWORK" \
   -e DB_HOST=meow-pg-crud-ci -e DB_PORT=5432 -e DB_NAME=meowcloud_demo \
-  -e DB_USER=postgres -e DB_PASSWORD="$PW" \
+  -e DB_USER=meowcrud -e DB_PASSWORD="$PW" \
   "$BE_IMAGE" alembic -c /app/alembic.ini current | grep -F '(head)'
 
 
 docker run -d --rm --network "$NETWORK" --name meow-be-crud-ci \
   -p 127.0.0.1:18095:5000 \
   -e DB_HOST=meow-pg-crud-ci -e DB_PORT=5432 \
-  -e DB_NAME=meowcloud_demo -e DB_USER=postgres -e DB_PASSWORD="$PW" \
+  -e DB_NAME=meowcloud_demo -e DB_USER=meowcrud -e DB_PASSWORD="$PW" \
   -e DEMO_TOKEN="$TOKEN" "$BE_IMAGE" >/dev/null
 
 API=http://127.0.0.1:18095
