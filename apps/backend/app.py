@@ -14,7 +14,7 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 32768
 VERSION = os.getenv('APP_VERSION', 'dev')
-EDITION = 'crud-v1'
+EDITION = 'crud-v2'
 DB_HOST = os.getenv('DB_HOST', '')
 DB_NAME = os.getenv('DB_NAME', '')
 DB_USER = os.getenv('DB_USER', '')
