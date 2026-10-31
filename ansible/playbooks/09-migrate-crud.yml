@@ -105,7 +105,7 @@
               - current
           register: migration_current
           changed_when: false
-          failed_when: "migration_current.rc != 0 or '0001_initial_crud' not in migration_current.stdout"
+          failed_when: "migration_current.rc != 0 or '(head)' not in migration_current.stdout"
           no_log: true
       always:
         - name: Erase short-lived migration credentials file
@@ -116,4 +116,4 @@
 
     - name: Report schema migration applied
       ansible.builtin.debug:
-        msg: "PostgreSQL Alembic revision 0001_initial_crud verified (data preserved)."
+        msg: "PostgreSQL Alembic current revision matches head (data preserved)."
