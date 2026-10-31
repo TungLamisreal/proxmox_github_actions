@@ -107,28 +107,19 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 print("[*] Active or unknown IaC workflow status; skip scale-out.", flush=True)
                 return
 
-            # Tính toán số máy đẻ thêm (Trần tối đa: Tổng FE + BE <= 3)
-            if merged_fe + merged_be <= 3:
-                add_fe, add_be = merged_fe, merged_be
+            # Two new linked-clone guests maximum per dispatch.
+            # Both tiers hot -> +1 BE / +1 FE; one tier hot -> +2 of that tier.
+            # One dispatch is still serialized by the existing IaC workflow gates.
+            if merged_be > 0 and merged_fe > 0:
+                add_be, add_fe = 1, 1
+            elif merged_be > 0:
+                add_be, add_fe = 2, 0
             else:
-                if merged_fe > 0 and merged_be > 0:
-                    if merged_fe >= merged_be:
-                        add_fe, add_be = 2, 1
-                    else:
-                        add_fe, add_be = 1, 2
-                else:
-                    add_fe = min(3, merged_fe)
-                    add_be = min(3, merged_be)
+                add_be, add_fe = 0, 2
 
-            # Reset bộ đếm sau khi đã chốt đơn
+            # Reset merged alert counters once the proposal has been selected.
             recent_overload["frontend"]["count"] = 0
             recent_overload["backend"]["count"] = 0
-
-            # Add at most one guest per run in the nested 32 GiB lab.
-            if add_be:
-                add_be, add_fe = 1, 0
-            else:
-                add_be, add_fe = 0, 1
 
             inputs = {
                 "scale_target": "both",
