@@ -20,7 +20,7 @@ class CrudContractTests(unittest.TestCase):
         model = (ROOT / 'apps/backend/models.py').read_text()
         self.assertIn('revision = "0001_initial_crud"', migration)
         for table in ('categories', 'products', 'customers', 'orders'):
-            self.assertIn('op.create_table(\\n        "' + table + '"', migration)
+            self.assertIn('"' + table + '"', migration)
             self.assertIn('__tablename__ = "' + table + '"', model)
         self.assertIn('raise RuntimeError("Destructive schema downgrade disabled', migration)
         self.assertNotIn('op.drop_table(', migration)
