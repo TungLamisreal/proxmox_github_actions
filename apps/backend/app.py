@@ -14,6 +14,7 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 32768
 VERSION = os.getenv('APP_VERSION', 'dev')
+EDITION = 'crud-v1'
 DB_HOST = os.getenv('DB_HOST', '')
 DB_NAME = os.getenv('DB_NAME', '')
 DB_USER = os.getenv('DB_USER', '')
@@ -111,7 +112,7 @@ def health():
 @app.get('/version')
 def version():
     return jsonify(service='MeowCloud Backend API (Docker)',
-                   node=socket.gethostname(), version=VERSION)
+                   node=socket.gethostname(), version=VERSION, app_edition=EDITION)
 
 
 @app.get('/db-health')
