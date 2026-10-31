@@ -1,0 +1,119 @@
+---
+# One-shot Alembic migration on exactly ONE existing Backend guest.
+# Runs BEFORE rolling BE/FE deployment and never changes Terraform or DB volumes.
+- name: Apply versioned MeowCloud CRUD schema once
+  hosts: backend-01
+  become: true
+  gather_facts: false
+  vars:
+    meow_migrate_image: "{{ lookup('env', 'MEOW_MIGRATION_IMAGE') }}"
+    meow_db_config: "{{ lookup('ansible.builtin.file', '/opt/meowcloud-iac/state/meowcrud.json') | from_json }}"
+    meow_db_envfile: /root/.meowcloud-crud-migrate.env
+  tasks:
+    - name: Require isolated database configuration and immutable release image
+      ansible.builtin.assert:
+        that:
+          - meow_db_config.initialized | default(false) | bool
+          - meow_db_config.db_host == '192.168.150.71'
+          - meow_db_config.db_name == 'meowcloud_demo'
+          - meow_db_config.db_user == 'meowcrud'
+          - meow_db_config.db_password | length > 0
+          - meow_migrate_image is match('^ghcr[.]io/.+@sha256:[0-9a-f]{64}$')
+        fail_msg: "Missing isolated DB bootstrap or immutable image. Migration refused."
+      no_log: true
+
+    - name: Inspect migration image on Backend01
+      ansible.builtin.command:
+        argv: [docker, image, inspect, "{{ meow_migrate_image }}"]
+      register: migration_local
+      failed_when: false
+      changed_when: false
+
+    - name: Temporarily authenticate and pull immutable migration image
+      when: migration_local.rc != 0
+      block:
+        - name: Require GHCR pull credentials
+          ansible.builtin.assert:
+            that:
+              - lookup('env', 'GHCR_USERNAME') | length > 0
+              - lookup('env', 'GHCR_TOKEN') | length > 0
+          no_log: true
+        - name: Login GHCR temporarily
+          community.docker.docker_login:
+            registry_url: ghcr.io
+            username: "{{ lookup('env', 'GHCR_USERNAME') }}"
+            password: "{{ lookup('env', 'GHCR_TOKEN') }}"
+          no_log: true
+        - name: Pull migration image
+          ansible.builtin.command:
+            argv: [docker, pull, "{{ meow_migrate_image }}"]
+      always:
+        - name: Remove temporary GHCR login
+          community.docker.docker_login:
+            registry_url: ghcr.io
+            state: absent
+          no_log: true
+
+    - name: Apply schema migration with credentials in a short-lived protected file
+      block:
+        - name: Create temporary root-only migration environment file
+          ansible.builtin.copy:
+            dest: "{{ meow_db_envfile }}"
+            owner: root
+            group: root
+            mode: '0600'
+            content: |
+              DB_HOST={{ meow_db_config.db_host }}
+              DB_PORT={{ meow_db_config.db_port }}
+              DB_NAME={{ meow_db_config.db_name }}
+              DB_USER={{ meow_db_config.db_user }}
+              DB_PASSWORD={{ meow_db_config.db_password }}
+          no_log: true
+
+        - name: Apply Alembic head once (PostgreSQL handles transaction and revision tracking)
+          ansible.builtin.command:
+            argv:
+              - docker
+              - run
+              - --rm
+              - --network
+              - host
+              - --env-file
+              - "{{ meow_db_envfile }}"
+              - "{{ meow_migrate_image }}"
+              - alembic
+              - -c
+              - /app/alembic.ini
+              - upgrade
+              - head
+          no_log: true
+
+        - name: Confirm applied migration revision
+          ansible.builtin.command:
+            argv:
+              - docker
+              - run
+              - --rm
+              - --network
+              - host
+              - --env-file
+              - "{{ meow_db_envfile }}"
+              - "{{ meow_migrate_image }}"
+              - alembic
+              - -c
+              - /app/alembic.ini
+              - current
+          register: migration_current
+          changed_when: false
+          failed_when: "migration_current.rc != 0 or '0001_initial_crud' not in migration_current.stdout"
+          no_log: true
+      always:
+        - name: Erase short-lived migration credentials file
+          ansible.builtin.file:
+            path: "{{ meow_db_envfile }}"
+            state: absent
+          no_log: true
+
+    - name: Report schema migration applied
+      ansible.builtin.debug:
+        msg: "PostgreSQL Alembic revision 0001_initial_crud verified (data preserved)."
