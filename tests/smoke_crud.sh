@@ -22,12 +22,12 @@ docker run -d --rm --network "$NETWORK" --name meow-pg-crud-ci \
 ROLE_READY=false
 for i in $(seq 1 45); do
   if docker exec -i meow-pg-crud-ci psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null 2>&1 <<'SQL'
-DO $
+DO $meow$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'meowcrud') THEN
     CREATE ROLE meowcrud LOGIN PASSWORD 'ci-only-postgres-password';
   END IF;
-END $;
+END $meow$;
 ALTER DATABASE meowcloud_demo OWNER TO meowcrud;
 SQL
   then ROLE_READY=true; break; fi
