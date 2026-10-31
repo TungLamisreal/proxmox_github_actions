@@ -15,21 +15,29 @@
           - "'prometheus-alertmanager' in ansible_facts.packages"
         fail_msg: "Missing Prometheus/Alertmanager in Observer role image; rebuild workflow 00."
 
+    - name: Require promtool for fail-closed config validation
+      ansible.builtin.command: promtool --version
+      changed_when: false
+
     - name: Generate Prometheus Alert Rules for Scale-Out and Scale-In (Cgroup Quota Fix)
       ansible.builtin.copy:
         dest: /etc/prometheus/alert.rules.yml
         owner: prometheus
         group: prometheus
         mode: '0644'
+        backup: true
+        validate: 'promtool check rules %s'
         content: |
           {% raw %}
           groups:
             - name: meowcloud_autoscale_rules
               interval: 5s
               rules:
-                # --- BE có 2 Cores: Lấy tổng CPU thực dùng chia 2 ---
+                # CPU is charged to each LXC cgroup (including nested Docker).
+                # Normalize by Terraform vCPU allocations: 2 for BE, 1 for FE.
+                # min(up)==1 prevents decisions when even one exporter is down.
                 - alert: BackendPoolHighCPU
-                  expr: (sum by (job) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / on(job) (count by (job) (up{job="backends"}) * 2)) * 100 > 55
+                  expr: ((100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job="lxc_backends"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job="lxc_backends"})) > 55) and on() (min(up{job="lxc_backends"}) == 1)
                   for: 10s
                   labels:
                     severity: critical
@@ -37,9 +45,8 @@
                     scale_action: "scale_out"
                     scale_target: "backend"
 
-                # --- FE có 1 Core: Lấy tổng CPU thực dùng chia 1 ---
                 - alert: FrontendPoolHighCPU
-                  expr: (sum by (job) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / on(job) (count by (job) (up{job="frontends"}) * 1)) * 100 > 55
+                  expr: ((100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job="lxc_frontends"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job="lxc_frontends"})) > 55) and on() (min(up{job="lxc_frontends"}) == 1)
                   for: 10s
                   labels:
                     severity: critical
@@ -47,9 +54,8 @@
                     scale_action: "scale_out"
                     scale_target: "frontend"
 
-                # --- Scale-in BE: Tổng tải chia cho (Số máy * 2 nhân) ---
                 - alert: BackendPoolLowCPU
-                  expr: ((sum by (job) (rate(node_cpu_seconds_total{job="backends",mode!="idle"}[1m])) / (count by (job) (up{job="backends"}) * 2)) * 100 < 20) and (count by (job) (up{job="backends"}) > 3)
+                  expr: ((100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job="lxc_backends"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job="lxc_backends"})) < 20) and on() (count(up{job="lxc_backends"}) > 3) and on() (min(up{job="lxc_backends"}) == 1)
                   for: 20s
                   labels:
                     severity: info
@@ -57,9 +63,8 @@
                     scale_action: "scale_in"
                     scale_target: "backend"
 
-                # --- Scale-in FE: Tổng tải chia cho (Số máy * 1 nhân) ---
                 - alert: FrontendPoolLowCPU
-                  expr: ((sum by (job) (rate(node_cpu_seconds_total{job="frontends",mode!="idle"}[1m])) / (count by (job) (up{job="frontends"}) * 1)) * 100 < 20) and (count by (job) (up{job="frontends"}) > 3)
+                  expr: ((100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job="lxc_frontends"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job="lxc_frontends"})) < 20) and on() (count(up{job="lxc_frontends"}) > 3) and on() (min(up{job="lxc_frontends"}) == 1)
                   for: 20s
                   labels:
                     severity: info
@@ -75,6 +80,8 @@
         owner: prometheus
         group: prometheus
         mode: '0644'
+        backup: true
+        validate: 'promtool check config %s'
         content: |
           global:
             scrape_interval: 5s
@@ -113,6 +120,19 @@
                 - targets:
           {% for host in groups['frontends'] %}
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
+          {% endfor %}
+            # Separate cgroup CPU metrics: do not use node_cpu_seconds_total for LXC autoscaling.
+            - job_name: 'lxc_backends'
+              static_configs:
+                - targets:
+          {% for host in groups['backends'] %}
+                    - '{{ hostvars[host]["ansible_host"] }}:9101'
+          {% endfor %}
+            - job_name: 'lxc_frontends'
+              static_configs:
+                - targets:
+          {% for host in groups['frontends'] %}
+                    - '{{ hostvars[host]["ansible_host"] }}:9101'
           {% endfor %}
             - job_name: 'databases'
               static_configs:

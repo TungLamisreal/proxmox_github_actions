@@ -463,6 +463,9 @@ jobs:
             ansible-playbook -i "$INVENTORY" playbooks/04-setup-frontend.yml --limit "$NEW_FRONTENDS"
           fi
 
+          echo "=== Đảm bảo CPU cgroup exporter hoạt động trên TOÀN BỘ Backend/Frontend ==="
+          ansible-playbook -i "$INVENTORY" playbooks/08-setup-lxc-cpu-exporter.yml
+
           echo "=== Cập nhật cấu hình Upstream cho cụm Load Balancer và Prometheus ==="
           ansible-playbook -i "$INVENTORY" playbooks/02-setup-lb.yml
           ansible-playbook -i "$INVENTORY" playbooks/06-setup-observer.yml
