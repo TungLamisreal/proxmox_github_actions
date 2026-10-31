@@ -11,7 +11,7 @@ class CrudContractTests(unittest.TestCase):
         source = (ROOT / 'apps/backend/app.py').read_text()
         tree = ast.parse(source)
         for name in ('health', 'db_health', 'version', 'create_record',
-                     'list_records', 'update_record', 'delete_record'):
+                     'list_records', 'update_record', 'delete_record', 'low_stock_report'):
             self.assertTrue(any(isinstance(n, ast.FunctionDef) and n.name == name
                                 for n in tree.body))
 
@@ -26,11 +26,13 @@ class CrudContractTests(unittest.TestCase):
         self.assertNotIn('op.drop_table(', migration)
         self.assertNotIn('op.execute("DROP', migration)
         self.assertIn('alembic_version', (ROOT / 'docs/05-crud-demo.md').read_text())
+        # V2 works without a new migration; data in the original four tables is retained.
+        self.assertNotIn('0002_', '\\n'.join(p.name for p in (ROOT / 'apps/backend/migrations/versions').glob('*.py')))
 
     def test_frontend_contract(self):
         html = (ROOT / 'apps/frontend/index.html').read_text()
         for phrase in ('MeowCloud Elastic Infrastructure', '/api/', 'meow_demo_token',
-                       'categories', 'products', 'customers', 'orders'):
+                       'categories', 'products', 'customers', 'orders', 'Inventory Intelligence', 'stockThreshold', 'reports/low-stock'):
             self.assertIn(phrase, html)
 
     def test_bootstrap_requires_explicit_confirmation(self):

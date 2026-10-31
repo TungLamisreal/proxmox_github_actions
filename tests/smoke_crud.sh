@@ -87,7 +87,7 @@ for i in $(seq 1 45); do
 done
 
 curl -fsS "$API/health" | jq -e '.status == "UP"'
-curl -fsS "$API/version" | jq -e --arg sha "$GIT_SHA" '.version == $sha and .app_edition == "crud-v1"'
+curl -fsS "$API/version" | jq -e --arg sha "$GIT_SHA" '.version == $sha and .app_edition == "crud-v2"'
 curl -fsS "$API/db-health" | jq -e '.status == "UP"'
 
 unauthorized="$(curl -s -o /dev/null -w '%{http_code}' "$API/products")"
@@ -112,6 +112,16 @@ curl -fsS "${AUTH[@]}" "$API/stats" | jq -e '.products == 1 and .customers == 1 
 product_update="$(jq -nc --argjson id "$category_id" '{category_id:$id,sku:"CI-SKU-001",name:"Sản phẩm CI cập nhật",price:"155000.00",stock:3}')"
 curl -fsS "${AUTH[@]}" "${JSON[@]}" -X PUT -d "$product_update" "$API/products/$product_id" |
   jq -e '.stock == 3 and .name == "Sản phẩm CI cập nhật"'
+
+# v2 read-only inventory analysis uses the same v1 tables and preserves all rows.
+report_unauthorized="$(curl -s -o /dev/null -w '%{http_code}' "$API/reports/low-stock?threshold=5")"
+[[ "$report_unauthorized" == "401" ]] || { echo "::error::Report must require demo token"; exit 1; }
+report_invalid="$(curl -s -o /dev/null -w '%{http_code}' "${AUTH[@]}" "$API/reports/low-stock?threshold=bad")"
+[[ "$report_invalid" == "400" ]] || { echo "::error::Invalid report threshold must return 400"; exit 1; }
+curl -fsS "${AUTH[@]}" "$API/reports/low-stock?threshold=5" |
+  jq -e --argjson product "$product_id" '.threshold == 5 and .total == 1 and (.items | length) == 1 and .items[0].id == $product and .items[0].stock == 3'
+curl -fsS "${AUTH[@]}" "$API/reports/low-stock?threshold=2" |
+  jq -e '.threshold == 2 and .total == 0 and (.items | length) == 0'
 
 order_update="$(jq -nc --argjson c "$customer_id" --argjson p "$product_id" '{customer_id:$c,product_id:$p,quantity:2,status:"paid"}')"
 curl -fsS "${AUTH[@]}" "${JSON[@]}" -X PUT -d "$order_update" "$API/orders/$order_id" |
