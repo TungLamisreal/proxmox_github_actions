@@ -53,7 +53,8 @@ jobs:
             [ "$(basename "$source")" = "autoscale.auto.tfvars.json" ] && continue
             cp -rf "$source" /opt/meowcloud-iac/terraform/
           done
-          cp -rf scripts/* /opt/meowcloud-iac/scripts/
+          # Scripts used by this workflow run directly from the checkout via GITHUB_WORKSPACE.
+          # Never overwrite runtime monitoring tools (which may be owned by root).
           mkdir -p /opt/meowcloud-iac/packer/scripts
           cp -rf packer/scripts/* /opt/meowcloud-iac/packer/scripts/
 
@@ -86,7 +87,7 @@ jobs:
           echo "INVENTORY_BACKUP=$INVENTORY_BACKUP" >> "$GITHUB_ENV"
 
           set +e
-          META_JSON=$(python3 /opt/meowcloud-iac/scripts/scale_in_node.py --target "${{ inputs.scale_target }}")
+          META_JSON=$(python3 "$GITHUB_WORKSPACE/scripts/scale_in_node.py" --target "${{ inputs.scale_target }}")
           EXIT_CODE=$?
           set -e
 
@@ -176,7 +177,7 @@ jobs:
             -out=tfplan_scale_in
 
           terraform show -json tfplan_scale_in > tfplan_scale_in.json
-          python3 /opt/meowcloud-iac/scripts/verify_tfplan.py tfplan_scale_in.json \
+          python3 "$GITHUB_WORKSPACE/scripts/verify_tfplan.py" tfplan_scale_in.json \
             --allow-scale-in \
             --expected-vmid "${{ steps.select_lifo.outputs.retiring_vmid }}"
 
@@ -208,6 +209,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ -z "${STATE_BACKUP:-}" ] && [ -z "${INVENTORY_BACKUP:-}" ]; then
+            echo "[*] Failure before backup creation; no capacity/inventory changes to restore."
+            exit 0
+          fi
           test -s "${STATE_BACKUP:-}" && test -s "${INVENTORY_BACKUP:-}" || {
             echo "::error::Missing pre-scale-in backups; manual inspection required."
             exit 1
