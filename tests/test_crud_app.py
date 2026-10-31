@@ -15,12 +15,17 @@ class CrudContractTests(unittest.TestCase):
             self.assertTrue(any(isinstance(n, ast.FunctionDef) and n.name == name
                                 for n in tree.body))
 
-    def test_four_tables_and_no_destructive_schema_statements(self):
-        schema = (ROOT / 'db/schema.sql').read_text().upper()
-        for table in ('CATEGORIES', 'PRODUCTS', 'CUSTOMERS', 'ORDERS'):
-            self.assertIn('CREATE TABLE IF NOT EXISTS ' + table, schema)
-        for forbidden in ('DROP TABLE', 'TRUNCATE', 'DROP DATABASE', 'DELETE FROM'):
-            self.assertNotIn(forbidden, schema)
+    def test_alembic_revision_defines_four_tables_without_data_destruction(self):
+        migration = (ROOT / 'apps/backend/migrations/versions/0001_initial_crud.py').read_text()
+        model = (ROOT / 'apps/backend/models.py').read_text()
+        self.assertIn('revision = "0001_initial_crud"', migration)
+        for table in ('categories', 'products', 'customers', 'orders'):
+            self.assertIn('op.create_table(\\n        "' + table + '"', migration)
+            self.assertIn('__tablename__ = "' + table + '"', model)
+        self.assertIn('raise RuntimeError("Destructive schema downgrade disabled', migration)
+        self.assertNotIn('op.drop_table(', migration)
+        self.assertNotIn('op.execute("DROP', migration)
+        self.assertIn('alembic_version', (ROOT / 'docs/05-crud-demo.md').read_text())
 
     def test_frontend_contract(self):
         html = (ROOT / 'apps/frontend/index.html').read_text()
