@@ -176,8 +176,8 @@ jobs:
           esac
 
           # An toàn cho cụm PVE nhỏ: tối đa 2 máy tổng cộng trong một lần chạy.
-          MAX_ADD_PER_COMPONENT=3
-          MAX_ADD_TOTAL=3
+          MAX_ADD_PER_COMPONENT=2
+          MAX_ADD_TOTAL=2
           if (( ADD_BE > MAX_ADD_PER_COMPONENT || ADD_FE > MAX_ADD_PER_COMPONENT )); then
             echo "::error::Mỗi lần chạy tối đa $MAX_ADD_PER_COMPONENT máy cho mỗi thành phần."
             exit 1
