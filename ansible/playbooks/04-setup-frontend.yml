@@ -3,6 +3,11 @@
   hosts: frontends
   become: true
   gather_facts: false
+  serial: "{{ meow_rolling_batch_size | default('100%') }}"
+  vars:
+    meow_release: "{{ (lookup('ansible.builtin.file', '/opt/meowcloud-iac/state/app-release.json', errors='ignore') | default('{}', true)) | from_json }}"
+    meow_selected_frontend_image: "{{ meow_frontend_image | default(meow_release.frontend_image | default('nginx:alpine')) }}"
+    meow_remote_frontend: "{{ meow_selected_frontend_image is match('^ghcr\\.io/') }}"
   tasks:
     - name: Ensure Docker and Node Exporter active on Frontend
       ansible.builtin.service:
@@ -19,8 +24,44 @@
       failed_when: host_nginx_pkg.rc == 0 and host_nginx_pkg.stdout is match('^ii')
       changed_when: false
 
-    - name: Require pre-baked Frontend Docker image
-      ansible.builtin.command: docker image inspect nginx:alpine
+    - name: Inspect requested Frontend image locally
+      ansible.builtin.command:
+        argv: [docker, image, inspect, "{{ meow_selected_frontend_image }}"]
+      register: meow_fe_image_local
+      changed_when: false
+      failed_when: false
+
+    - name: Require credentials before pulling an uncached GHCR release
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'GHCR_USERNAME') | length > 0
+          - lookup('env', 'GHCR_TOKEN') | length > 0
+        fail_msg: "GHCR image is missing locally; set GHCR_USERNAME and GHCR_TOKEN in Actions."
+      when: meow_remote_frontend and meow_fe_image_local.rc != 0
+      no_log: true
+
+    - name: Pull pinned Frontend application release from GHCR
+      when: meow_remote_frontend and meow_fe_image_local.rc != 0
+      block:
+        - name: Authenticate with GHCR (temporary)
+          community.docker.docker_login:
+            registry_url: ghcr.io
+            username: "{{ lookup('env', 'GHCR_USERNAME') }}"
+            password: "{{ lookup('env', 'GHCR_TOKEN') }}"
+          no_log: true
+        - name: Pull immutable Frontend image
+          ansible.builtin.command:
+            argv: [docker, pull, "{{ meow_selected_frontend_image }}"]
+      always:
+        - name: Remove temporary GHCR Docker login
+          community.docker.docker_login:
+            registry_url: ghcr.io
+            state: absent
+          no_log: true
+
+    - name: Require local Frontend image (fail closed)
+      ansible.builtin.command:
+        argv: [docker, image, inspect, "{{ meow_selected_frontend_image }}"]
       changed_when: false
 
     - name: Create Frontend App and Config directories
@@ -70,7 +111,8 @@
           }
       register: nginx_fe_conf
 
-    - name: Deploy MeowCloud E-Commerce Web UI
+    - name: Deploy legacy MeowCloud Web UI only for Golden Image baseline
+      when: not meow_remote_frontend
       ansible.builtin.copy:
         dest: /opt/meow-frontend/html/index.html
         mode: '0644'
@@ -108,15 +150,15 @@
     - name: Run Frontend Nginx Container (Instant Start from Pre-baked Image)
       community.docker.docker_container:
         name: meow-frontend-app
-        image: nginx:alpine
+        image: "{{ meow_selected_frontend_image }}"
         pull: never
         state: started
         restart_policy: always
         published_ports:
           - "80:80"
-        volumes:
-          - /opt/meow-frontend/html:/usr/share/nginx/html:ro
-          - /opt/meow-frontend/conf/default.conf:/etc/nginx/conf.d/default.conf:ro
+        volumes: >-
+          {{ ['/opt/meow-frontend/conf/default.conf:/etc/nginx/conf.d/default.conf:ro'] +
+             (['/opt/meow-frontend/html:/usr/share/nginx/html:ro'] if not meow_remote_frontend else []) }}
       register: fe_container
 
     - name: Zero-Downtime Reload Nginx inside container when upstream changes
