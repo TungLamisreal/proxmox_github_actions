@@ -12,8 +12,8 @@ REPO_NAME = os.getenv("GITHUB_REPO_NAME", "proxmox_github_actions")
 WORKFLOW_SCALE_OUT = "03-autoscale-backend.yml"
 WORKFLOW_SCALE_IN = "04-autoscale-in.yml"
 
-COOLDOWN_SCALE_OUT = 120         # 2-minute cooldown
-COOLDOWN_SCALE_IN = 120          # 2-minute cooldown
+COOLDOWN_SCALE_OUT = 90          # 90-second cooldown (lab demo)
+COOLDOWN_SCALE_IN = 75           # 75-second cooldown (lab demo)
 SCALE_OUT_PRIORITY_LOCK = 180    # Stabilization after scale-out
 
 last_scale_out_time = 0
