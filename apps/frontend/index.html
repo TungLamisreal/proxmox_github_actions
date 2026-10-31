@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MeowCloud · Application CI/CD</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; background: #101827; color: #e2e8f0; display: grid; place-items: center; }
+    main { width: min(640px, 92vw); background: #1e293b; border: 1px solid #334155; border-radius: 18px; padding: 30px; }
+    h1 { margin: 0 0 12px; color: #38bdf8; }
+    .sub { color: #94a3b8; }
+    .pill { display: inline-block; border: 1px solid #475569; padding: 7px 12px; border-radius: 99px; font-size: 13px; }
+    button { padding: 12px 16px; border: 0; border-radius: 8px; background: #38bdf8; color: #082f49; cursor: pointer; font-weight: 700; }
+    pre { overflow: auto; min-height: 80px; padding: 18px; border-radius: 10px; background: #020617; color: #4ade80; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>🐾 MeowCloud Elastic Infrastructure</h1>
+    <p class="sub">Application CI/CD · Docker Registry · Rolling Deployment</p>
+    <p class="pill">Frontend release: <span id="release">Đang tải...</span></p>
+    <p><button id="check">Kiểm tra Backend API</button></p>
+    <pre id="result">Đang kết nối /api/health...</pre>
+  </main>
+  <script>
+    async function fetchJson(path) {
+      const response = await fetch(path, {cache: "no-store"});
+      if (!response.ok) throw new Error(path + ": HTTP " + response.status);
+      return response.json();
+    }
+    async function checkApi() {
+      try {
+        const [health, version] = await Promise.all([fetchJson("/api/health"), fetchJson("/api/version")]);
+        document.getElementById("result").textContent = JSON.stringify({health, version}, null, 2);
+      } catch (error) {
+        document.getElementById("result").textContent = String(error);
+      }
+    }
+    document.getElementById("check").addEventListener("click", checkApi);
+    fetchJson("/version.json").then(v => {
+      document.getElementById("release").textContent = (v.version || "unknown").slice(0, 12);
+    }).catch(() => { document.getElementById("release").textContent = "unavailable"; });
+    checkApi();
+  </script>
+</body>
+</html>
