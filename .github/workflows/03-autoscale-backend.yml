@@ -371,6 +371,18 @@ jobs:
           echo "applied=true" >> "$GITHUB_OUTPUT"
           rm -f "$TFPLAN_FILE" "$TFPLAN_JSON"
 
+      - name: "5b. Publish Generated Inventory to Runtime"
+        if: ${{ steps.node_selector.outputs.noop != 'true' && steps.apply.outputs.applied == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s ./ansible/inventory.ini || {
+            echo "::error::Terraform did not generate inventory; manual inspection required."
+            exit 1
+          }
+          install -m 0644 ./ansible/inventory.ini /opt/meowcloud-iac/ansible/inventory.ini
+          echo "Published generated inventory to CT120 runtime for subsequent scale-in."
+
       - name: "6. Verify Inventory & Wait for New Hosts"
         if: ${{ steps.node_selector.outputs.noop != 'true' }}
         working-directory: ./ansible
