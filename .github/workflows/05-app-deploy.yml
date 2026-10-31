@@ -6,9 +6,17 @@ on:
     paths:
       - "apps/**"
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/**"
+      - "db/**"
+      - "tests/**"
+      - "scripts/bootstrap_meowcrud.py"
+      - "ansible/playbooks/03-setup-backend.yml"
+      - ".github/workflows/05-app-deploy.yml"
 
 concurrency:
-  group: meowcloud-iac-state
+  group: ${{ github.event_name == 'pull_request' && format('meowcrud-pr-{0}', github.event.pull_request.number) || 'meowcloud-iac-state' }}
   cancel-in-progress: false
 
 permissions:
@@ -16,7 +24,34 @@ permissions:
   packages: write
 
 jobs:
+  validate-pr:
+    name: "PR validation: build locally + real PostgreSQL CRUD tests"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python contracts
+        run: |
+          python3 -m unittest discover -s tests -p 'test_app_release.py' -v
+          python3 -m unittest discover -s tests -p 'test_crud_app.py' -v
+      - name: Build Docker images without publishing to GHCR
+        run: |
+          docker build --build-arg "APP_VERSION=$GITHUB_SHA" -t meow-backend:pr ./apps/backend
+          docker build --build-arg "APP_VERSION=$GITHUB_SHA" -t meow-frontend:pr ./apps/frontend
+      - name: CRUD integration tests against ephemeral PostgreSQL
+        run: bash tests/smoke_crud.sh meow-backend:pr "$GITHUB_SHA"
+      - name: Frontend static and release smoke
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name meow-fe-pr -p 127.0.0.1:18086:80 meow-frontend:pr
+          trap 'docker rm -f meow-fe-pr >/dev/null 2>&1 || true' EXIT
+          curl -fsS --retry 10 --retry-delay 1 --retry-connrefused http://127.0.0.1:18086/ |
+            grep -q 'MeowCloud Elastic Infrastructure'
+          curl -fsS http://127.0.0.1:18086/version.json |
+            jq -e --arg sha "$GITHUB_SHA" '.version == $sha'
+
   build:
+    if: github.event_name != 'pull_request'
     name: "Build and push immutable BE/FE images"
     runs-on: ubuntu-latest
     outputs:
