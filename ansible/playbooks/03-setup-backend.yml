@@ -9,6 +9,7 @@
     meow_selected_backend_image: "{{ meow_backend_image | default(meow_release.backend_image | default('meow-backend:latest')) }}"
     meow_remote_backend: "{{ meow_selected_backend_image.startswith('ghcr.io/') }}"
     meow_expected_version: "{{ meow_app_version | default(meow_release.version | default('')) }}"
+    meow_crud_config: "{{ (lookup('ansible.builtin.file', '/opt/meowcloud-iac/state/meowcrud.json', errors='ignore') | default('{}', true)) | from_json }}"
   tasks:
     - name: Ensure Docker and Node Exporter active
       ansible.builtin.service:
@@ -67,8 +68,18 @@
         state: started
         restart_policy: always
         hostname: "{{ inventory_hostname }}"
+        env: >-
+          {{ {
+            'DB_HOST': meow_crud_config.db_host,
+            'DB_PORT': meow_crud_config.db_port | string,
+            'DB_NAME': meow_crud_config.db_name,
+            'DB_USER': meow_crud_config.db_user,
+            'DB_PASSWORD': meow_crud_config.db_password,
+            'DEMO_TOKEN': meow_crud_config.demo_token
+          } if (meow_crud_config.initialized | default(false) | bool) else {} }}
         published_ports:
           - "5000:5000"
+      no_log: true  # The container environment contains DB credentials.
 
     - name: Verify Backend health
       ansible.builtin.uri:
