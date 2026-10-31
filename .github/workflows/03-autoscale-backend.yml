@@ -176,8 +176,8 @@ jobs:
           esac
 
           # An toàn cho cụm PVE nhỏ: tối đa 2 máy tổng cộng trong một lần chạy.
-          MAX_ADD_PER_COMPONENT=3
-          MAX_ADD_TOTAL=3
+          MAX_ADD_PER_COMPONENT=2
+          MAX_ADD_TOTAL=2
           if (( ADD_BE > MAX_ADD_PER_COMPONENT || ADD_FE > MAX_ADD_PER_COMPONENT )); then
             echo "::error::Mỗi lần chạy tối đa $MAX_ADD_PER_COMPONENT máy cho mỗi thành phần."
             exit 1
@@ -288,7 +288,7 @@ jobs:
 
           terraform plan \
             -input=false \
-            -parallelism=4 \
+            -parallelism=1 \
             -var-file="$AUTOSCALE_STATE_FILE" \
             -out="$TFPLAN_FILE"
           chmod 600 "$TFPLAN_FILE"
@@ -367,9 +367,21 @@ jobs:
           set -euo pipefail
           echo "attempted=true" >> "$GITHUB_OUTPUT"
           # PVE/Ceph nhỏ: tạo tuần tự để giảm va chạm lock storage/container.
-          terraform apply -parallelism=4 -auto-approve -input=false "$TFPLAN_FILE"
+          terraform apply -parallelism=1 -auto-approve -input=false "$TFPLAN_FILE"
           echo "applied=true" >> "$GITHUB_OUTPUT"
           rm -f "$TFPLAN_FILE" "$TFPLAN_JSON"
+
+      - name: "5b. Publish Generated Inventory to Runtime"
+        if: ${{ steps.node_selector.outputs.noop != 'true' && steps.apply.outputs.applied == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s ./ansible/inventory.ini || {
+            echo "::error::Terraform did not generate inventory; manual inspection required."
+            exit 1
+          }
+          install -m 0644 ./ansible/inventory.ini /opt/meowcloud-iac/ansible/inventory.ini
+          echo "Published generated inventory to CT120 runtime for subsequent scale-in."
 
       - name: "6. Verify Inventory & Wait for New Hosts"
         if: ${{ steps.node_selector.outputs.noop != 'true' }}

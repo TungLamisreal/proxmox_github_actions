@@ -12,9 +12,9 @@ REPO_NAME = os.getenv("GITHUB_REPO_NAME", "proxmox_github_actions")
 WORKFLOW_SCALE_OUT = "03-autoscale-backend.yml"
 WORKFLOW_SCALE_IN = "04-autoscale-in.yml"
 
-COOLDOWN_SCALE_OUT = 50          # Cooldown giữa 2 đợt Scale-Out
-COOLDOWN_SCALE_IN = 70           # Cooldown giữa 2 đợt Scale-In
-SCALE_OUT_PRIORITY_LOCK = 120    # Khóa cấm Scale-In trong 120s sau khi vừa Scale-Out
+COOLDOWN_SCALE_OUT = 120         # 2-minute cooldown
+COOLDOWN_SCALE_IN = 120          # 2-minute cooldown
+SCALE_OUT_PRIORITY_LOCK = 180    # Stabilization after scale-out
 
 last_scale_out_time = 0
 last_scale_in_time = 0
@@ -25,6 +25,7 @@ recent_overload = {
     "backend": {"count": 0, "ts": 0}
 }
 MERGE_WINDOW = 75
+IAC_WORKFLOWS = {"01-provision-infra.yml", "03-autoscale-backend.yml", "04-autoscale-in.yml"}
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -102,21 +103,21 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-            # Tính toán số máy đẻ thêm (Trần tối đa: Tổng FE + BE <= 3)
-            if merged_fe + merged_be <= 3:
-                add_fe, add_be = merged_fe, merged_be
-            else:
-                if merged_fe > 0 and merged_be > 0:
-                    if merged_fe >= merged_be:
-                        add_fe, add_be = 2, 1
-                    else:
-                        add_fe, add_be = 1, 2
-                else:
-                    add_fe = min(3, merged_fe)
-                    add_be = min(3, merged_be)
+            if self.iac_busy():
+                print("[*] Active or unknown IaC workflow status; skip scale-out.", flush=True)
+                return
 
-            last_scale_out_time = now
-            # Reset bộ đếm sau khi đã chốt đơn
+            # Two new linked-clone guests maximum per dispatch.
+            # Both tiers hot -> +1 BE / +1 FE; one tier hot -> +2 of that tier.
+            # One dispatch is still serialized by the existing IaC workflow gates.
+            if merged_be > 0 and merged_fe > 0:
+                add_be, add_fe = 1, 1
+            elif merged_be > 0:
+                add_be, add_fe = 2, 0
+            else:
+                add_be, add_fe = 0, 2
+
+            # Reset merged alert counters once the proposal has been selected.
             recent_overload["frontend"]["count"] = 0
             recent_overload["backend"]["count"] = 0
 
@@ -124,11 +125,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 "scale_target": "both",
                 "add_backend_count": str(add_be),
                 "add_frontend_count": str(add_fe),
-                "ram_reserve_mb": "1280"
+                "ram_reserve_mb": "2048"
             }
             print(f"[!] QUÁ TẢI CPU (BATCH): Gửi lệnh Scale-Out +{add_fe} FE, +{add_be} BE...", flush=True)
-            if not self.dispatch_github(WORKFLOW_SCALE_OUT, inputs):
-                last_scale_out_time = 0
+            if self.dispatch_github(WORKFLOW_SCALE_OUT, inputs):
+                last_scale_out_time = now
             return
 
         # ---------------------------------------------------------------------
@@ -152,12 +153,38 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            if self.iac_busy():
+                print("[*] Active or unknown IaC workflow status; skip scale-in.", flush=True)
+                return
+
             target_scale = "frontend" if fe_in > 0 else "backend"
-            last_scale_in_time = now
             inputs = {"scale_target": target_scale}
             print(f"[-] TẢI THẤP: Gửi lệnh Scale-In {target_scale.upper()}...", flush=True)
-            if not self.dispatch_github(WORKFLOW_SCALE_IN, inputs):
-                last_scale_in_time = 0
+            if self.dispatch_github(WORKFLOW_SCALE_IN, inputs):
+                last_scale_in_time = now
+
+    def iac_busy(self):
+        """Do not queue an IaC run when another is active; fail closed on API errors."""
+        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/actions/runs?per_page=100"
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "MeowCloud-autoscale/1.0"
+        }
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.load(response)
+            for run in data.get("workflow_runs", []):
+                if run.get("status") in ("queued", "in_progress", "waiting", "pending", "requested") and (
+                    str(run.get("path", "")).split("/")[-1] in IAC_WORKFLOWS
+                ):
+                    print(f"[*] Busy: {run.get('name')} ({run.get('status')})", flush=True)
+                    return True
+            return False
+        except Exception as exc:
+            print(f"[!] GitHub Actions status unavailable: {exc}", flush=True)
+            return True
 
     def dispatch_github(self, workflow_id, inputs):
         url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/actions/workflows/{workflow_id}/dispatches"
