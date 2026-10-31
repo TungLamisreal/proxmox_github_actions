@@ -225,6 +225,8 @@ jobs:
           export LANG="C.UTF-8"
           export LC_ALL="C.UTF-8"
 
+          # Deploy actual LXC cgroup CPU metric before the observer begins scraping it.
+          ansible-playbook playbooks/08-setup-lxc-cpu-exporter.yml
           ansible-playbook playbooks/06-setup-observer.yml
           ANS_END=$(date +%s)
           echo "ANS_DURATION=$((ANS_END - ANS_START))" >> $GITHUB_ENV
