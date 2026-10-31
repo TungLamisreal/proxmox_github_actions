@@ -100,6 +100,7 @@ jobs:
   deploy:
     name: "Rolling BE + FE deploy to current elastic pool"
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: self-hosted
     timeout-minutes: 35
     env:
