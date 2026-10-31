@@ -87,7 +87,7 @@ for i in $(seq 1 45); do
 done
 
 curl -fsS "$API/health" | jq -e '.status == "UP"'
-curl -fsS "$API/version" | jq -e --arg sha "$GIT_SHA" '.version == $sha'
+curl -fsS "$API/version" | jq -e --arg sha "$GIT_SHA" '.version == $sha and .app_edition == "crud-v1"'
 curl -fsS "$API/db-health" | jq -e '.status == "UP"'
 
 unauthorized="$(curl -s -o /dev/null -w '%{http_code}' "$API/products")"
