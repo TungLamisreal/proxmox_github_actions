@@ -24,6 +24,10 @@ jobs:
       frontend_image: ${{ steps.references.outputs.frontend_image }}
     steps:
       - uses: actions/checkout@v4
+      - name: Test application release state validation
+        shell: bash
+        run: python3 -m unittest discover -s tests -p 'test_app_release.py' -v
+
       - name: Normalize GHCR image names
         id: images
         shell: bash
@@ -100,7 +104,8 @@ jobs:
   deploy:
     name: "Rolling BE + FE deploy to current elastic pool"
     needs: build
-    if: github.ref == 'refs/heads/main'
+    # Explicit opt-in: merging a PR can build images but cannot alter a live cluster.
+    if: github.ref == 'refs/heads/main' && vars.MEOWCLOUD_APP_CICD_ENABLED == 'true'
     runs-on: self-hosted
     timeout-minutes: 35
     env:
@@ -138,10 +143,12 @@ jobs:
           INVENTORY=/opt/meowcloud-iac/ansible/inventory.ini
           ansible-playbook -i "$INVENTORY" playbooks/03-setup-backend.yml \
             -e 'meow_rolling_batch_size=1' \
-            -e "meow_backend_image=$BACKEND_RELEASE"
+            -e "meow_backend_image=$BACKEND_RELEASE" \
+            -e "meow_app_version=$GITHUB_SHA"
           ansible-playbook -i "$INVENTORY" playbooks/04-setup-frontend.yml \
             -e 'meow_rolling_batch_size=1' \
-            -e "meow_frontend_image=$FRONTEND_RELEASE"
+            -e "meow_frontend_image=$FRONTEND_RELEASE" \
+            -e "meow_app_version=$GITHUB_SHA"
 
       - name: Verify both releases through production VIP
         id: smoke
