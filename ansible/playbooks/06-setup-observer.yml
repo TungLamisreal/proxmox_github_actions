@@ -37,7 +37,7 @@
                 # Normalize by Terraform vCPU allocations: 2 for BE, 1 for FE.
                 # min(up)==1 prevents decisions when even one exporter is down.
                 - alert: BackendPoolHighCPU
-                  expr: ((100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job="lxc_backends"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job="lxc_backends"})) > 55) and on() (min(up{job="lxc_backends"}) == 1)
+                  expr: ((100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job="lxc_backends"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job="lxc_backends"})) > 35) and on() (min(up{job="lxc_backends"}) == 1)
                   for: 10s
                   labels:
                     severity: critical
@@ -55,7 +55,7 @@
                     scale_target: "frontend"
 
                 - alert: BackendPoolLowCPU
-                  expr: ((100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job="lxc_backends"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job="lxc_backends"})) < 20) and on() (count(up{job="lxc_backends"}) > 3) and on() (min(up{job="lxc_backends"}) == 1)
+                  expr: ((100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job="lxc_backends"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job="lxc_backends"})) < 10) and on() (count(up{job="lxc_backends"}) > 3) and on() (min(up{job="lxc_backends"}) == 1)
                   for: 20s
                   labels:
                     severity: info
