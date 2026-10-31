@@ -7,7 +7,7 @@
   vars:
     meow_release: "{{ (lookup('ansible.builtin.file', '/opt/meowcloud-iac/state/app-release.json', errors='ignore') | default('{}', true)) | from_json }}"
     meow_selected_backend_image: "{{ meow_backend_image | default(meow_release.backend_image | default('meow-backend:latest')) }}"
-    meow_remote_backend: "{{ meow_selected_backend_image is match('^ghcr\\.io/') }}"
+    meow_remote_backend: "{{ meow_selected_backend_image.startswith('ghcr.io/') }}"
   tasks:
     - name: Ensure Docker and Node Exporter active
       ansible.builtin.service:
