@@ -45,6 +45,12 @@ docker run --rm --network "$NETWORK" \
   "$BE_IMAGE" alembic -c /app/alembic.ini upgrade head
 docker exec meow-pg-crud-ci psql -X -U postgres -d meowcloud_demo -At \
   -c 'SELECT version_num FROM alembic_version' | grep -qx '0001_initial_crud'
+# Same CLI that Ansible migration job uses to verify the current head.
+docker run --rm --network "$NETWORK" \
+  -e DB_HOST=meow-pg-crud-ci -e DB_PORT=5432 -e DB_NAME=meowcloud_demo \
+  -e DB_USER=postgres -e DB_PASSWORD="$PW" \
+  "$BE_IMAGE" alembic -c /app/alembic.ini current | grep -F '(head)'
+
 
 docker run -d --rm --network "$NETWORK" --name meow-be-crud-ci \
   -p 127.0.0.1:18095:5000 \
