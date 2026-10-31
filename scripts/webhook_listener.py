@@ -25,7 +25,7 @@ recent_overload = {
     "backend": {"count": 0, "ts": 0}
 }
 MERGE_WINDOW = 75
-IAC_WORKFLOWS = {"01-provision-infra.yml", "03-autoscale-backend.yml", "04-autoscale-in.yml"}
+IAC_WORKFLOWS = {"01-provision-infra.yml", "03-autoscale-backend.yml", "04-autoscale-in.yml", "05-app-deploy.yml"}
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):

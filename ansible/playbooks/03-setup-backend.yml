@@ -1,8 +1,14 @@
 ---
-- name: Configure Backend API Elastic Pool (pre-baked Docker image)
+- name: Configure Backend API Elastic Pool (baseline image or pinned CI/CD release)
   hosts: backends
   become: true
   gather_facts: false
+  serial: "{{ meow_rolling_batch_size | default('100%') }}"
+  vars:
+    meow_release: "{{ (lookup('ansible.builtin.file', '/opt/meowcloud-iac/state/app-release.json', errors='ignore') | default('{}', true)) | from_json }}"
+    meow_selected_backend_image: "{{ meow_backend_image | default(meow_release.backend_image | default('meow-backend:latest')) }}"
+    meow_remote_backend: "{{ meow_selected_backend_image.startswith('ghcr.io/') }}"
+    meow_expected_version: "{{ meow_app_version | default(meow_release.version | default('')) }}"
   tasks:
     - name: Ensure Docker and Node Exporter active
       ansible.builtin.service:
@@ -13,14 +19,50 @@
         - docker
         - prometheus-node-exporter
 
-    - name: Require pre-baked Backend Docker image
-      ansible.builtin.command: docker image inspect meow-backend:latest
+    - name: Inspect requested Backend image locally
+      ansible.builtin.command:
+        argv: [docker, image, inspect, "{{ meow_selected_backend_image }}"]
+      register: meow_be_image_local
+      changed_when: false
+      failed_when: false
+
+    - name: Require credentials before pulling an uncached GHCR release
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'GHCR_USERNAME') | length > 0
+          - lookup('env', 'GHCR_TOKEN') | length > 0
+        fail_msg: "GHCR image is missing locally; set GHCR_USERNAME and GHCR_TOKEN in Actions."
+      when: meow_remote_backend and meow_be_image_local.rc != 0
+      no_log: true
+
+    - name: Pull pinned Backend application release from GHCR
+      when: meow_remote_backend and meow_be_image_local.rc != 0
+      block:
+        - name: Authenticate with GHCR (temporary)
+          community.docker.docker_login:
+            registry_url: ghcr.io
+            username: "{{ lookup('env', 'GHCR_USERNAME') }}"
+            password: "{{ lookup('env', 'GHCR_TOKEN') }}"
+          no_log: true
+        - name: Pull immutable Backend image
+          ansible.builtin.command:
+            argv: [docker, pull, "{{ meow_selected_backend_image }}"]
+      always:
+        - name: Remove temporary GHCR Docker login
+          community.docker.docker_login:
+            registry_url: ghcr.io
+            state: absent
+          no_log: true
+
+    - name: Require local Backend image (fail closed)
+      ansible.builtin.command:
+        argv: [docker, image, inspect, "{{ meow_selected_backend_image }}"]
       changed_when: false
 
-    - name: Run Backend API container without network pull or build
+    - name: Start Backend API container using selected release
       community.docker.docker_container:
         name: meow-backend-app
-        image: meow-backend:latest
+        image: "{{ meow_selected_backend_image }}"
         pull: never
         state: started
         restart_policy: always
@@ -39,3 +81,14 @@
       until: >-
         be_health.status == 200 and
         be_health.json.status | default('') == 'UP'
+
+    - name: Verify pinned Backend application version
+      ansible.builtin.uri:
+        url: http://127.0.0.1:5000/version
+        return_content: true
+        status_code: 200
+      register: meow_be_version_check
+      retries: 5
+      delay: 2
+      until: meow_be_version_check.json.version | default('') == meow_expected_version
+      when: meow_remote_backend and meow_expected_version | length > 0
