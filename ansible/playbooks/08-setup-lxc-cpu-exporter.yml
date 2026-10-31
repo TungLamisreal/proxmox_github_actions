@@ -1,0 +1,67 @@
+---
+# Read-only cgroup CPU accounting from inside each LXC; no Terraform or Ceph changes.
+- name: Deploy MeowCloud LXC CPU exporter (Backend and Frontend)
+  hosts: backends:frontends
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require exactly one tier to determine allocated vCPU capacity
+      ansible.builtin.assert:
+        that:
+          - "('backends' in group_names) != ('frontends' in group_names)"
+        fail_msg: "Host must belong to exactly one of backends/frontends."
+
+    - name: Install standalone Python cgroup CPU exporter
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/lxc_cpu_exporter.py"
+        dest: /usr/local/bin/meowcloud-lxc-cpu-exporter.py
+        owner: root
+        group: root
+        mode: '0755'
+      register: meowcloud_cpu_script
+
+    - name: Configure dedicated exporter service (port 9101)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/meowcloud-lxc-cpu-exporter.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=MeowCloud LXC cgroup v2 CPU exporter
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=nobody
+          Group=nogroup
+          ExecStart=/usr/bin/python3 /usr/local/bin/meowcloud-lxc-cpu-exporter.py --capacity-cores {{ 2 if 'backends' in group_names else 1 }} --port 9101
+          Restart=on-failure
+          RestartSec=3
+          NoNewPrivileges=true
+
+          [Install]
+          WantedBy=multi-user.target
+      register: meowcloud_cpu_unit
+
+    - name: Enable and run exporter; restart only when code or unit changed
+      ansible.builtin.systemd_service:
+        name: meowcloud-lxc-cpu-exporter.service
+        daemon_reload: "{{ meowcloud_cpu_unit.changed }}"
+        enabled: true
+        state: "{{ 'restarted' if (meowcloud_cpu_script.changed or meowcloud_cpu_unit.changed) else 'started' }}"
+
+    - name: Verify metric endpoint on this LXC
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9101/metrics
+        status_code: 200
+        return_content: true
+      register: cpu_metrics
+      retries: 8
+      delay: 2
+      until: cpu_metrics.status == 200 and 'meowcloud_lxc_cpu_usage_seconds_total' in (cpu_metrics.content | default(''))
+
+    - name: Ensure configured capacity matches Terraform 2 vCPU BE / 1 vCPU FE
+      ansible.builtin.assert:
+        that:
+          - "('meowcloud_lxc_cpu_capacity_cores 2' in cpu_metrics.content) if ('backends' in group_names) else ('meowcloud_lxc_cpu_capacity_cores 1' in cpu_metrics.content)"
