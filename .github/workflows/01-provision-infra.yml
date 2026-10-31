@@ -32,12 +32,18 @@ concurrency:
   group: meowcloud-iac-state
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  packages: read
+
 env:
   TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
   TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
   TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
   CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
   ANSIBLE_FORCE_COLOR: "1"
+  GHCR_USERNAME: ${{ github.actor }}
+  GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   PVE_HOST: "192.168.150.49"
 
 jobs:
