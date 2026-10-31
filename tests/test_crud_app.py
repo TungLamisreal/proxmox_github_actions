@@ -19,7 +19,7 @@ class CrudContractTests(unittest.TestCase):
         migration = (ROOT / 'apps/backend/migrations/versions/0001_initial_crud.py').read_text()
         model = (ROOT / 'apps/backend/models.py').read_text()
         self.assertIn('revision = "0001_initial_crud"', migration)
-        for table in ('categories', 'products', 'customers', 'orders', 'Inventory Intelligence', 'stockThreshold'):
+        for table in ('categories', 'products', 'customers', 'orders'):
             self.assertIn('"' + table + '"', migration)
             self.assertIn('__tablename__ = "' + table + '"', model)
         self.assertIn('raise RuntimeError("Destructive schema downgrade disabled', migration)
@@ -32,7 +32,7 @@ class CrudContractTests(unittest.TestCase):
     def test_frontend_contract(self):
         html = (ROOT / 'apps/frontend/index.html').read_text()
         for phrase in ('MeowCloud Elastic Infrastructure', '/api/', 'meow_demo_token',
-                       'categories', 'products', 'customers', 'orders'):
+                       'categories', 'products', 'customers', 'orders', 'Inventory Intelligence', 'stockThreshold', 'reports/low-stock'):
             self.assertIn(phrase, html)
 
     def test_bootstrap_requires_explicit_confirmation(self):
