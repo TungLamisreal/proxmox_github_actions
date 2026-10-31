@@ -35,10 +35,24 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Sync Latest Code to /opt/meowcloud-iac
+      - name: Sync Latest Code to /opt/meowcloud-iac (preserve runtime inventory/state)
+        shell: bash
         run: |
-          cp -rf ansible/* /opt/meowcloud-iac/ansible/
-          cp -rf terraform/* /opt/meowcloud-iac/terraform/
+          set -euo pipefail
+          # The generated inventory on CT120 is authoritative after workflow 03.
+          # Never overwrite it with the 3/3 baseline tracked in the Git repository.
+          test -s /opt/meowcloud-iac/ansible/inventory.ini || {
+            echo "::error::Missing runtime Ansible inventory. Do not scale-in."
+            exit 1
+          }
+          for source in ansible/*; do
+            [ "$(basename "$source")" = "inventory.ini" ] && continue
+            cp -rf "$source" /opt/meowcloud-iac/ansible/
+          done
+          for source in terraform/*; do
+            [ "$(basename "$source")" = "autoscale.auto.tfvars.json" ] && continue
+            cp -rf "$source" /opt/meowcloud-iac/terraform/
+          done
           cp -rf scripts/* /opt/meowcloud-iac/scripts/
           mkdir -p /opt/meowcloud-iac/packer/scripts
           cp -rf packer/scripts/* /opt/meowcloud-iac/packer/scripts/
@@ -47,6 +61,8 @@ jobs:
         id: select_lifo
         working-directory: /opt/meowcloud-iac
         run: |
+          set -euo pipefail
+          umask 077
           # --- FRESHNESS CHECK ---
           echo "=== FRESHNESS CHECK: Kiểm tra tải thực tế trước khi xóa máy ==="
           FIRING_IN=$(curl -fsS "http://192.168.150.21:9090/api/v1/alerts" | jq '[.data.alerts[] | select(.labels.scale_action == "scale_in") | select(.state == "firing")] | length')
@@ -58,10 +74,16 @@ jobs:
           # --- KẾT THÚC FRESHNESS CHECK ---
 
           mkdir -p /opt/meowcloud-iac/state
-          if [ -f /opt/meowcloud-iac/state/autoscale.tfvars.json ]; then
-            cp /opt/meowcloud-iac/state/autoscale.tfvars.json /opt/meowcloud-iac/state/autoscale.tfvars.json.bak
-          fi
-          cp /opt/meowcloud-iac/ansible/inventory.ini /opt/meowcloud-iac/state/inventory.ini.before-scale-in
+          test -s /opt/meowcloud-iac/state/autoscale.tfvars.json || {
+            echo "::error::Missing desired capacity state; refusing scale-in."
+            exit 1
+          }
+          STATE_BACKUP="$RUNNER_TEMP/autoscale.tfvars.before-scale-in.json"
+          INVENTORY_BACKUP="$RUNNER_TEMP/inventory.before-scale-in.ini"
+          cp -p /opt/meowcloud-iac/state/autoscale.tfvars.json "$STATE_BACKUP"
+          cp -p /opt/meowcloud-iac/ansible/inventory.ini "$INVENTORY_BACKUP"
+          echo "STATE_BACKUP=$STATE_BACKUP" >> "$GITHUB_ENV"
+          echo "INVENTORY_BACKUP=$INVENTORY_BACKUP" >> "$GITHUB_ENV"
 
           set +e
           META_JSON=$(python3 /opt/meowcloud-iac/scripts/scale_in_node.py --target "${{ inputs.scale_target }}")
@@ -102,36 +124,61 @@ jobs:
           echo "=== [3/3] CẬP NHẬT PROMETHEUS SCRAPE TARGETS ==="
           ansible-playbook -i inventory.ini playbooks/06-setup-observer.yml
 
-      - name: Step 2 - Wait for In-Flight Requests to Drain to Zero
+      - name: Step 2 - Wait for In-Flight Requests to Drain to Zero (fail-closed)
         if: steps.select_lifo.outputs.skip_scale_in == 'false'
+        shell: bash
         run: |
+          set -euo pipefail
           RET_IP="${{ steps.select_lifo.outputs.retiring_ip }}"
           RET_PORT="${{ steps.select_lifo.outputs.retiring_port }}"
-          echo "[*] Kiểm tra kết nối đang xử lý (ESTABLISHED) trên ${RET_IP}:${RET_PORT}..."
-
-          for i in {1..15}; do
-            ACTIVE_CONN=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 root@${RET_IP} \
-              "ss -tn state established '( sport = :${RET_PORT} )' | tail -n +2 | wc -l" 2>/dev/null || echo "0")
-            echo "    - Giây thứ ${i}/15: Số kết nối active = ${ACTIVE_CONN}"
-            if [ "${ACTIVE_CONN}" -eq 0 ]; then
-              echo "[OK] Toàn bộ kết nối trên ${RET_IP} đã rút cạn (0 active requests)!"
+          echo "[*] Waiting for established TCP connections to drain on ${RET_IP}:${RET_PORT}..."
+          DRAINED=false
+          for i in {1..30}; do
+            if ! ACTIVE_CONN=$(ssh -i /home/github-runner/.ssh/id_ed25519 \
+                -o IdentitiesOnly=yes -o BatchMode=yes \
+                -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=5 "root@${RET_IP}" \
+                "set -o pipefail; ss -Htn state established '( sport = :${RET_PORT} )' | wc -l"); then
+              echo "::error::SSH or ss failed on retiring guest ${RET_IP}; refusing Terraform destroy."
+              exit 1
+            fi
+            ACTIVE_CONN=$(printf '%s' "$ACTIVE_CONN" | tr -d '[:space:]')
+            if [[ ! "$ACTIVE_CONN" =~ ^[0-9]+$ ]]; then
+              echo "::error::Invalid connection count from ${RET_IP}: '$ACTIVE_CONN'"
+              exit 1
+            fi
+            echo "Drain check ${i}/30: established connections = ${ACTIVE_CONN}"
+            if (( ACTIVE_CONN == 0 )); then
+              DRAINED=true
               break
             fi
             sleep 1
           done
+          if [ "$DRAINED" != "true" ]; then
+            echo "::error::Drain timed out while active connections remain; refusing Terraform destroy."
+            exit 1
+          fi
+          echo "[OK] Retiring guest has no established TCP connections."
 
       - name: Step 3 - Terraform Plan & Controlled Scale-In Gate
         if: steps.select_lifo.outputs.skip_scale_in == 'false'
         working-directory: /opt/meowcloud-iac/terraform
         run: |
           terraform init -input=false
+          terraform state list | grep -q '^proxmox_virtual_environment_container\.' || {
+            echo "::error::Terraform compute state missing; refusing scale-in."
+            exit 1
+          }
           terraform plan \
-            -state=/opt/meowcloud-iac/state/terraform.tfstate \
+            -input=false \
+            -parallelism=1 \
             -var-file=/opt/meowcloud-iac/state/autoscale.tfvars.json \
             -out=tfplan_scale_in
 
           terraform show -json tfplan_scale_in > tfplan_scale_in.json
-          python3 /opt/meowcloud-iac/scripts/verify_tfplan.py tfplan_scale_in.json --allow-scale-in
+          python3 /opt/meowcloud-iac/scripts/verify_tfplan.py tfplan_scale_in.json \
+            --allow-scale-in \
+            --expected-vmid "${{ steps.select_lifo.outputs.retiring_vmid }}"
 
       - name: Step 4 - Terraform Apply (Terminate Drained LXC)
         id: apply
@@ -140,7 +187,8 @@ jobs:
         run: |
           echo "attempted=true" >> "$GITHUB_OUTPUT"
           terraform apply \
-            -state=/opt/meowcloud-iac/state/terraform.tfstate \
+            -input=false \
+            -parallelism=1 \
             -auto-approve \
             tfplan_scale_in
           echo "applied=true" >> "$GITHUB_OUTPUT"
@@ -160,18 +208,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -s /opt/meowcloud-iac/state/autoscale.tfvars.json.bak ]; then
-            cp /opt/meowcloud-iac/state/autoscale.tfvars.json.bak /opt/meowcloud-iac/state/autoscale.tfvars.json
+          test -s "${STATE_BACKUP:-}" && test -s "${INVENTORY_BACKUP:-}" || {
+            echo "::error::Missing pre-scale-in backups; manual inspection required."
+            exit 1
+          }
+          cp -p "$STATE_BACKUP" /opt/meowcloud-iac/state/autoscale.tfvars.json
+          cp -p "$INVENTORY_BACKUP" /opt/meowcloud-iac/ansible/inventory.ini
+          echo "State and inventory restored before any Terraform apply."
+          cd /opt/meowcloud-iac/ansible
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          if [ "${{ inputs.scale_target }}" = "backend" ]; then
+            ansible-playbook -i inventory.ini playbooks/04-setup-frontend.yml
           fi
-          if [ -s /opt/meowcloud-iac/state/inventory.ini.before-scale-in ]; then
-            cp /opt/meowcloud-iac/state/inventory.ini.before-scale-in /opt/meowcloud-iac/ansible/inventory.ini
-          fi
-          echo "State and inventory restored. Re-apply LB/Observer config when the original inventory is present."
-          if [ -s /opt/meowcloud-iac/state/inventory.ini.before-scale-in ]; then
-            cd /opt/meowcloud-iac/ansible
-            ansible-playbook -i inventory.ini playbooks/02-setup-lb.yml
-            ansible-playbook -i inventory.ini playbooks/06-setup-observer.yml
-          fi
+          ansible-playbook -i inventory.ini playbooks/02-setup-lb.yml
+          ansible-playbook -i inventory.ini playbooks/06-setup-observer.yml
 
       - name: Report partial or completed apply failure without destructive rollback
         if: ${{ failure() && steps.apply.outputs.attempted == 'true' }}
