@@ -4,6 +4,7 @@ import os
 import socket
 from decimal import Decimal, InvalidOperation
 from functools import wraps
+from contextlib import closing
 
 import psycopg2
 from psycopg2 import errors
@@ -92,7 +93,7 @@ def body_for(table):
 
 
 def query_rows(sql, params=(), *, one=False):
-    with db_connection() as conn:
+    with closing(db_connection()) as conn, conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
             return dict(cur.fetchone()) if one and cur.rowcount else (
@@ -127,7 +128,7 @@ def db_health():
 @app.get('/stats')
 @require_demo_token
 def stats():
-    with db_connection() as conn:
+    with closing(db_connection()) as conn, conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute('SELECT (SELECT count(*) FROM categories) AS categories, '
                         '(SELECT count(*) FROM products) AS products, '
@@ -151,7 +152,7 @@ def create_record(table):
     if table not in TABLES:
         return jsonify(error='Bảng không tồn tại'), 404
     fields = body_for(table)
-    with db_connection() as conn:
+    with closing(db_connection()) as conn, conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if table == 'orders':
                 cur.execute('SELECT price FROM products WHERE id = %s', (fields['product_id'],))
@@ -172,7 +173,7 @@ def update_record(table, record_id):
     if table not in TABLES:
         return jsonify(error='Bảng không tồn tại'), 404
     fields = body_for(table)
-    with db_connection() as conn:
+    with closing(db_connection()) as conn, conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if table == 'orders':
                 cur.execute('SELECT price FROM products WHERE id = %s', (fields['product_id'],))
@@ -199,7 +200,7 @@ def update_record(table, record_id):
 def delete_record(table, record_id):
     if table not in TABLES:
         return jsonify(error='Bảng không tồn tại'), 404
-    with db_connection() as conn:
+    with closing(db_connection()) as conn, conn:
         with conn.cursor() as cur:
             cur.execute(f'DELETE FROM {table} WHERE id = %s', (record_id,))
             if not cur.rowcount:
