@@ -85,6 +85,23 @@ class DemoReleaseReplayTests(unittest.TestCase):
                 self.assertEqual(applied.returncode, 0, applied.stderr)
                 self.assertEqual(json.loads((directory / "app-release.json").read_text()), manifest)
 
+    def test_checkpoint_only_accepts_matching_verified_release(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = pathlib.Path(d)
+            current = directory / "app-release.json"
+            live = {"backend_image": BACKEND, "frontend_image": FRONTEND,
+                    "version": "f" * 40}
+            current.write_text(json.dumps(live))
+            denied = self.run_demo(directory, "checkpoint", "v1")
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertFalse((directory / "app-release-v1.json").exists())
+            ok = self.run_demo(directory, "checkpoint", "v2")
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            snapshot = directory / "app-release-v2.json"
+            self.assertEqual(json.loads(snapshot.read_text()), live)
+            self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(current.read_text()), live)
+
     def test_invalid_v1_digest_or_sha_cannot_publish(self):
         with tempfile.TemporaryDirectory() as d:
             directory = pathlib.Path(d)
