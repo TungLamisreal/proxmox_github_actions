@@ -1,0 +1,167 @@
+name: "05 - CI/CD Application Deployment (Build, GHCR, Rolling Release)"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+  workflow_dispatch:
+
+concurrency:
+  group: meowcloud-iac-state
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: "Build and push immutable BE/FE images"
+    runs-on: ubuntu-latest
+    outputs:
+      backend_image: ${{ steps.references.outputs.backend_image }}
+      frontend_image: ${{ steps.references.outputs.frontend_image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Normalize GHCR image names
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+          REGISTRY_PATH="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          echo "backend=ghcr.io/$REGISTRY_PATH/backend" >> "$GITHUB_OUTPUT"
+          echo "frontend=ghcr.io/$REGISTRY_PATH/frontend" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish Backend
+        id: backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/backend
+          push: true
+          tags: "${{ steps.images.outputs.backend }}:${{ github.sha }}"
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+
+      - name: Build and publish Frontend
+        id: frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/frontend
+          push: true
+          tags: "${{ steps.images.outputs.frontend }}:${{ github.sha }}"
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+
+      - name: Export immutable digest references
+        id: references
+        shell: bash
+        env:
+          BACKEND_REPO: ${{ steps.images.outputs.backend }}
+          BACKEND_DIGEST: ${{ steps.backend.outputs.digest }}
+          FRONTEND_REPO: ${{ steps.images.outputs.frontend }}
+          FRONTEND_DIGEST: ${{ steps.frontend.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$BACKEND_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$FRONTEND_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "backend_image=$BACKEND_REPO@$BACKEND_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=$FRONTEND_REPO@$FRONTEND_DIGEST" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: "Rolling BE + FE deploy to current elastic pool"
+    needs: build
+    runs-on: self-hosted
+    timeout-minutes: 35
+    env:
+      ANSIBLE_CONFIG: /opt/meowcloud-iac/ansible/ansible.cfg
+      ANSIBLE_FORCE_COLOR: "1"
+      GHCR_USERNAME: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BACKEND_RELEASE: ${{ needs.build.outputs.backend_image }}
+      FRONTEND_RELEASE: ${{ needs.build.outputs.frontend_image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail-closed preflight for runtime inventory and desired state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s /opt/meowcloud-iac/ansible/inventory.ini
+          test -s /opt/meowcloud-iac/state/autoscale.tfvars.json
+          test -n "$GHCR_USERNAME"
+          test -n "$GHCR_TOKEN"
+          test -n "$BACKEND_RELEASE"
+          test -n "$FRONTEND_RELEASE"
+          test -x /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook
+          jq -e '.backend_count >= 3 and .frontend_count >= 3' /opt/meowcloud-iac/state/autoscale.tfvars.json
+
+      - name: Rolling rollout, one LXC at a time with per-instance healthchecks
+        id: rollout
+        working-directory: ./ansible
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8" LC_ALL="C.UTF-8"
+          INVENTORY=/opt/meowcloud-iac/ansible/inventory.ini
+          ansible-playbook -i "$INVENTORY" playbooks/03-setup-backend.yml \
+            -e 'meow_rolling_batch_size=1' \
+            -e "meow_backend_image=$BACKEND_RELEASE"
+          ansible-playbook -i "$INVENTORY" playbooks/04-setup-frontend.yml \
+            -e 'meow_rolling_batch_size=1' \
+            -e "meow_frontend_image=$FRONTEND_RELEASE"
+
+      - name: Verify both releases through production VIP
+        id: smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 5 --retry-delay 2 --max-time 5 \
+            http://192.168.150.100/api/version |
+            jq -e --arg sha "$GITHUB_SHA" '.version == $sha'
+          curl -fsS --retry 5 --retry-delay 2 --max-time 5 \
+            http://192.168.150.100/version.json |
+            jq -e --arg sha "$GITHUB_SHA" '.version == $sha'
+          curl -fsS --retry 5 --retry-delay 2 --max-time 5 \
+            http://192.168.150.100/api/health |
+            jq -e '.status == "UP" and (.node | length > 0)'
+
+      - name: Publish desired release only after every health gate passes
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/set_app_release.py \
+            --backend "$BACKEND_RELEASE" \
+            --frontend "$FRONTEND_RELEASE" \
+            --version "$GITHUB_SHA"
+          echo "## Application release deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Backend: $BACKEND_RELEASE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Frontend: $FRONTEND_RELEASE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Roll back to last committed app release if rollout or smoke fails
+        if: ${{ failure() && steps.rollout.outcome != 'skipped' && steps.publish.outcome != 'success' }}
+        working-directory: ./ansible
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME="/home/github-runner"
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG="C.UTF-8" LC_ALL="C.UTF-8"
+          INVENTORY=/opt/meowcloud-iac/ansible/inventory.ini
+          # Old manifest is unchanged until the publish step succeeds.
+          ansible-playbook -i "$INVENTORY" playbooks/03-setup-backend.yml \
+            -e 'meow_rolling_batch_size=1'
+          ansible-playbook -i "$INVENTORY" playbooks/04-setup-frontend.yml \
+            -e 'meow_rolling_batch_size=1'
+          echo "::warning::Rollback attempted; verify VIP and all guests before retry."
