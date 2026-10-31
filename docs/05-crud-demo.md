@@ -1,32 +1,35 @@
-# Workflow 05 — CRUD Demo with PostgreSQL
+# Workflow 05 — MeowCloud CRUD v1: SQLAlchemy + Alembic + PostgreSQL
 
-## Architecture and safety
-- Frontend Nginx container: UI at http://192.168.150.100/
-- Backend Flask container: HTTP API at VIP /api/
-- PostgreSQL: existing DB primary VM .71, in a **new isolated database meowcloud_demo** (role meowcrud).
-- Four tables: categories, products, customers, orders. FK constraints preserve references. Never drop existing databases.
-- DB-02 (.72) is not shown as a configured streaming replica in the current playbooks; do NOT assume its data is synchronized.
-- No template rebuild, no changes to Terraform, Ceph or PostgreSQL volumes.
-- New app uses a demo access token in X-Demo-Token header. Do not store real customer data in this public lab.
+## Versioned application demo plan
 
-IMPORTANT: Workflow 05 CD is gated by TWO repository Actions variables:
-  MEOWCLOUD_APP_CICD_ENABLED=true
-  MEOWCLOUD_CRUD_DEMO_ENABLED=true
-Leave the second variable **unset or false** until the app DB has been bootstrapped.
-Merging the PR can build Docker images but cannot deploy them while the second variable is false.
+- CRUD app **v1**: four related PostgreSQL tables (categories, products, customers, orders), Create/Read/Update/Delete. BE Flask and FE web dashboard have identical commit SHA metadata, Docker digest pinned in CT120 release manifest.
+- CRUD app **v2**: a SECOND independent Git release planned only *after v1 is running and verified*. BE v2 gains a stock-report endpoint; FE v2 changes its layout/colors and displays that new report. Both versions will be identifiable by immutable images and a release label. Do not mix app v1/v2 with the previously running status-page release.
+- PostgreSQL schema migrations are independent of Docker image rollbacks. Future additive migration 0002 is appropriate only when v2 needs extra DB fields. Initial app v1 is revision `0001_initial_crud`.
 
-## 1. Verify existing system, PostgreSQL, and TCP access from Backend LXC
+## Current architecture and limitations
 
-CT120 read-only commands:
+Frontend is an Nginx Docker image served via VIP 192.168.150.100; Backend is Flask/Gunicorn behind VIP /api/ on three or more LXC guests. Data lives only on existing PostgreSQL KVM `192.168.150.71` in separate DB `meowcloud_demo` with role `meowcrud`. Proxmox Terraform, KVM persistent data disk and Golden Images are untouched.
+
+The second KVM .72 has no verified PostgreSQL streaming replication configuration. Do not assume automatic failover or equal data until separately configured and tested.
+
+The browser uses a shared demo token sent in `X-Demo-Token`; use synthetic demo data only.
+
+## Safety gates: NEVER merge and auto-deploy blindly
+
+Workflow 05 application CD requires BOTH GitHub Actions repository variables:
+- `MEOWCLOUD_APP_CICD_ENABLED=true`
+- `MEOWCLOUD_CRUD_DEMO_ENABLED=true`
+
+Keep the SECOND variable absent/false until you deliberately initialize the separate demo database and approve rollout. PR validation on GitHub-hosted runner builds Docker images locally and tests SQLAlchemy/Alembic migrations against **throwaway PostgreSQL 15**. PR CI never alters the real CT120 or PostgreSQL VM.
+
+## Preflight from CT120 (already passed in lab)
+
+SSH from github-runner to DB1 via trusted host key, and PostgreSQL port 5432 reachable from all BE LXC guests:
 
 ~~~sh
-jq '{backend_count,frontend_count}' /opt/meowcloud-iac/state/autoscale.tfvars.json
-jq -r .version /opt/meowcloud-iac/state/app-release.json
-
 runuser -u github-runner -- env HOME=/home/github-runner \
-  ssh -o BatchMode=yes -o ConnectTimeout=10 root@192.168.150.71 \
+  ssh -o BatchMode=yes root@192.168.150.71 \
   'docker exec meow-postgres pg_isready -U postgres'
-
 runuser -u github-runner -- env HOME=/home/github-runner \
   ANSIBLE_CONFIG=/opt/meowcloud-iac/ansible/ansible.cfg \
   /home/github-runner/.venvs/ansible-2.21/bin/ansible \
@@ -34,40 +37,39 @@ runuser -u github-runner -- env HOME=/home/github-runner \
   -m ansible.builtin.wait_for -a 'host=192.168.150.71 port=5432 timeout=8'
 ~~~
 
-If BE cannot connect to .71: STOP. Inspect DB firewall/security group and PostgreSQL listener. Do not weaken the firewall without inspecting rules.
+## Step 1: create a SEPARATE database and owner only (after merging PR)
 
-## 2. Explicit one-time isolated DB bootstrap (after merge)
-
-Use a **separate clean checkout** of merged main on CT120 (or the GitHub Runner workspace). Do not overwrite runtime Terraform state/inventory in /opt/meowcloud-iac. The script requires adjacent db/schema.sql. As github-runner:
+Use a clean checkout on CT120, as github-runner. Do not overwrite the Terraform runtime or inventory:
 
 ~~~sh
-env HOME=/home/github-runner python3 scripts/bootstrap_meowcrud.py \
+git clone --depth 1 --branch main \
+  https://github.com/TungLamisreal/proxmox_github_actions.git \
+  /home/github-runner/meowcrud-bootstrap
+python3 /home/github-runner/meowcrud-bootstrap/scripts/bootstrap_meowcrud.py \
   --confirm CREATE_MEOWCLOUD_DEMO_DB
 ~~~
 
-This uses the existing SSH identity to DB-01, creates role meowcrud and database meowcloud_demo only if not already present, and applies additive schema. It writes sensitive credential state in /opt/meowcloud-iac/state/meowcrud.json with mode 0600. If interrupted, rerun from the same user/config; NEVER delete the saved state merely to retry.
+The bootstrap makes ONLY the PostgreSQL role `meowcrud`, database `meowcloud_demo`, and an atomic 0600 credential state file at `/opt/meowcloud-iac/state/meowcrud.json`. It **does not create tables**. If a conflicting database or role exists without known state, it fails closed; never remove state to force a retry. `initialized=true` means DB and credentials are ready, not that migrations have run.
+
+Inspect without printing passwords or login tokens:
 
 ~~~sh
 jq '{initialized,db_host,db_name,db_user}' /opt/meowcloud-iac/state/meowcrud.json
 ~~~
 
-Use a private terminal to display the browser login token; never screenshot or paste the DB password:
+## Step 2: apply schema via Alembic BEFORE rolling out the new app
 
-~~~sh
-jq -r .demo_token /opt/meowcloud-iac/state/meowcrud.json
-~~~
+Only after Step 1 succeeds, set `MEOWCLOUD_CRUD_DEMO_ENABLED=true` in GitHub Actions variables, and manually run workflow 05 on `main`. Keep other IaC jobs idle; pause the webhook if needed, resume it afterward.
 
-Preserve this secret file outside the Git repository. This app demo will later provide database contents for backup/restore testing.
+The workflow now has three sequential jobs:
 
-## 3. Enable deploy and verify
+1. **build (CI)**: builds/pushes BE+FE immutable GHCR images and validates CRUD on ephemeral PostgreSQL. The same Alembic revision is executed twice to prove it is idempotent.
+2. **migrate (CD)**: on CT120, uses Ansible once on `backend-01` to pull the immutable BE image (contains SQLAlchemy models and Alembic migrations), makes a temporary mode 0600 DB env file, and executes `alembic upgrade head` via a one-shot Docker container on that BE host. It checks `alembic current` and deletes the temporary env file. PostgreSQL records the applied version in `alembic_version`. This job fails closed before rolling out the app if migration fails.
+3. **deploy (CD)**: rolling BE1, BE2, BE3 then FE1, FE2, FE3, with per-LXC and VIP version checks plus real DB connectivity. Publish new release digest only after success.
 
-After PR checks succeed and the database is ready, check no IaC workflow is running. Temporarily stop CT120 webhook to avoid an automatic competing scale event. Set GitHub Actions repository variable MEOWCLOUD_CRUD_DEMO_ENABLED=true. Manually run workflow 05 from main.
+Rollback of Docker images does **not** undo DB schema/data; every migration must remain backward compatible with previously deployed app versions. Never do automatic destructive downgrades. Preserve PostgreSQL backups before potentially destructive migrations.
 
-- Hosted runner: builds/tests Docker images against an ephemeral Postgres 15, checking create/read/update/delete, access-token enforcement and FK delete protection.
-- CT120 runner: checks secret file and BE-to-DB TCP access, rolls out one BE/FE at a time, checks VIP /api/db-health and /api/stats, then publishes release digest.
-- If deployment fails, workflow 05 attempts rollback to the previously published image version; DB data is NOT rolled back automatically.
-
-CT120 checks after workflow Success:
+## Step 3: verify and demo
 
 ~~~sh
 curl -fsS http://192.168.150.100/api/db-health
@@ -76,9 +78,12 @@ curl -fsS -H "X-Demo-Token: $(jq -r .demo_token /opt/meowcloud-iac/state/meowcru
   http://192.168.150.100/api/stats
 ~~~
 
-Browser: open your MeowCloud site, enter the token, perform Create/Read/Update/Delete. Make a category, product, customer and order; an order prevents deletion of referenced product/customer until the order is deleted.
+Via the browser open the MeowCloud URL and enter your demo token (retrieve privately with `jq -r .demo_token ...`). Create a product, customer and order; edit the price/status, reload, prove records persist, then delete order before deleting its referenced product/customer. FK checks intentionally block invalid deletes.
 
-After demonstration, restart CT120 webhook and check systemctl is-active meowcloud-webhook. A new Backend scale-out guest gets the same image digest and local DB credentials from CT120.
+For later scale-out, workflows 03/04 consume the published pinned BE/FE digests and pass the separate DB credentials to new BE hosts. They do NOT run schema migrations per-guest.
 
-## Limitations
-This is a lab console with one shared token, not a production multi-user application. Use fake test customers. DB KVM .72 replication is not proven. Schema migration and backup/restore require a separate, controlled workflow. No live data or PostgreSQL volumes are destroyed by this application PR.
+## Future phases (not performed by this PR)
+
+- CRUD application v2 via separate PR/commit, new BE feature and distinct FE visual theme; prove app v1 ↔ v2 release behavior with preserved data.
+- PostgreSQL replica .72 streaming replication, start with manual controlled promotion and verified read-only standby; Patroni only if automated HA is a stated requirement, and a proper DCS/quorum/fencing mechanism is available.
+- PostgreSQL backup/restore tests and RPO/RTO measurement. Replication does not replace backup.
