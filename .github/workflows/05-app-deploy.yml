@@ -153,7 +153,13 @@ jobs:
           curl -fsS http://127.0.0.1:18085/health | jq -e '.status == "UP"'
           curl -fsS http://127.0.0.1:18085/version |
             jq -e --arg sha "$GITHUB_SHA" '.version == $sha'
-          curl -fsS http://127.0.0.1:18086/ | grep -q 'MeowCloud Elastic Infrastructure'
+          frontend_ready=false
+          for i in $(seq 1 30); do
+            html="$(curl -fsS --max-time 3 http://127.0.0.1:18086/ 2>/dev/null || true)"
+            if [[ "$html" == *"MeowCloud Elastic Infrastructure"* ]]; then frontend_ready=true; break; fi
+            sleep 1
+          done
+          [[ "$frontend_ready" == "true" ]] || exit 1
           curl -fsS http://127.0.0.1:18086/version.json |
             jq -e --arg sha "$GITHUB_SHA" '.version == $sha'
 
@@ -163,9 +169,50 @@ jobs:
           BACKEND_IMAGE: ${{ steps.references.outputs.backend_image }}
         run: bash tests/smoke_crud.sh "$BACKEND_IMAGE" "$GITHUB_SHA"
 
+  migrate:
+    name: "Apply Alembic schema migration once (DB primary .71)"
+    needs: build
+    # Keep pre-existing app release intact until the new CRUD gate is explicitly enabled.
+    if: github.ref == 'refs/heads/main' && vars.MEOWCLOUD_APP_CICD_ENABLED == 'true' && vars.MEOWCLOUD_CRUD_DEMO_ENABLED == 'true'
+    runs-on: self-hosted
+    timeout-minutes: 15
+    env:
+      ANSIBLE_CONFIG: /opt/meowcloud-iac/ansible/ansible.cfg
+      GHCR_USERNAME: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MEOW_MIGRATION_IMAGE: ${{ needs.build.outputs.backend_image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail closed if isolated PostgreSQL DB has not been bootstrapped
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s /opt/meowcloud-iac/ansible/inventory.ini
+          test -s /opt/meowcloud-iac/state/meowcrud.json
+          test -n "$MEOW_MIGRATION_IMAGE"
+          jq -e '.initialized == true and .db_host == "192.168.150.71" and .db_name == "meowcloud_demo" and .db_user == "meowcrud"' \
+            /opt/meowcloud-iac/state/meowcrud.json >/dev/null
+      - name: Prove PostgreSQL reachable from migration runner Backend01
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME=/home/github-runner
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          ansible -i /opt/meowcloud-iac/ansible/inventory.ini backend-01 \
+            -m ansible.builtin.wait_for -a "host=192.168.150.71 port=5432 timeout=8"
+      - name: Run versioned database migration (single BE, transactional)
+        working-directory: ./ansible
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME=/home/github-runner
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          ansible-playbook -i /opt/meowcloud-iac/ansible/inventory.ini \
+            playbooks/09-migrate-crud.yml
+
   deploy:
     name: "Rolling BE + FE deploy to current elastic pool"
-    needs: build
+    needs: [build, migrate]
     # Explicit opt-in: merging a PR can build images but cannot alter a live cluster.
     # Second explicit gate: first ensure the isolated DB is bootstrapped manually.
     # This PR changes apps/**; merging must NEVER auto-replace the working v2.
