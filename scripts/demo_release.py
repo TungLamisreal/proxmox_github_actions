@@ -25,13 +25,17 @@ def select(target, directory):
         raise ValueError("Expected baseline, v1 or v2")
     path = directory / ("app-release-" + target + ".json")
     data = json.loads(path.read_text(encoding="utf-8"))
-    if set(data) != {"backend_image", "frontend_image", "version"}:
+    return validate_saved_release(data, target)
+
+
+def validate_saved_release(data, target):
+    if not isinstance(data, dict) or set(data) != {"backend_image", "frontend_image", "version"}:
         raise ValueError("Release manifest has missing or unexpected keys")
     for kind in ("backend", "frontend"):
         image = data[kind + "_image"]
         if not isinstance(image, str) or not IMAGE.fullmatch(image) or (
-                "/"+kind+"@" not in image):
-            raise ValueError("Invalid immutable "+kind+" image")
+                "/" + kind + "@" not in image):
+            raise ValueError("Invalid immutable " + kind + " image")
     version = data["version"]
     if not isinstance(version, str) or not SHA.fullmatch(version):
         raise ValueError("Release requires full 40-character commit SHA")
@@ -60,12 +64,20 @@ def atomic_write(path, payload):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["resolve", "publish"])
+    parser.add_argument("action", choices=["resolve", "publish", "checkpoint"])
     parser.add_argument("--target", required=True, choices=["baseline", "v1", "v2"])
     parser.add_argument("--state-dir", default="/opt/meowcloud-iac/state")
     parser.add_argument("--confirm", default="")
     args = parser.parse_args()
     directory = pathlib.Path(args.state_dir)
+    if args.action == "checkpoint":
+        if args.target == "baseline":
+            parser.error("The baseline image is not a versioned CRUD checkpoint")
+        source = directory / "app-release.json"
+        release = validate_saved_release(json.loads(source.read_text(encoding="utf-8")), args.target)
+        atomic_write(directory / ("app-release-" + args.target + ".json"), release)
+        print("PASS: archived checked " + args.target + " release")
+        return
     release = select(args.target, directory)
     if args.action == "resolve":
         print(json.dumps(release, sort_keys=True))
