@@ -21,11 +21,17 @@ concurrency:
   group: meowcloud-iac-state
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  packages: read
+
 env:
   TF_VAR_proxmox_api_url: "https://192.168.150.49:8006/api2/json"
   TF_VAR_proxmox_api_token_id: "root@pam!iac-token"
   TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
   ANSIBLE_CONFIG: "/opt/meowcloud-iac/ansible/ansible.cfg"
+  GHCR_USERNAME: ${{ github.actor }}
+  GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   scale_in:
