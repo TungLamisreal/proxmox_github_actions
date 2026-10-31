@@ -1,0 +1,171 @@
+name: "05R - Replay MeowCloud App Release (Baseline / v1 / v2)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_release:
+        description: "Select an existing pinned release; baseline is local golden-image app"
+        required: true
+        type: choice
+        default: v1
+        options:
+          - baseline
+          - v1
+          - v2
+      dry_run:
+        description: "Safe preview only: validate manifests and prerequisites without deploying"
+        type: boolean
+        required: true
+        default: true
+      confirm:
+        description: "For actual deployment only, type REPLAY-MEOWCLOUD"
+        type: string
+        required: false
+        default: ""
+
+concurrency:
+  group: meowcloud-iac-state
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  replay:
+    name: "Select, validate and optionally replay application release"
+    runs-on: self-hosted
+    timeout-minutes: 40
+    env:
+      ANSIBLE_CONFIG: /opt/meowcloud-iac/ansible/ansible.cfg
+      ANSIBLE_FORCE_COLOR: "1"
+      GHCR_USERNAME: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPLAY_TARGET: ${{ inputs.target_release }}
+      REPLAY_DRY_RUN: ${{ inputs.dry_run }}
+      REPLAY_CONFIRM: ${{ inputs.confirm }}
+      REPLAY_INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+
+    steps:
+      - name: Checkout trusted main release controller
+        uses: actions/checkout@v4
+
+      - name: Fail-closed release selection and read-only preflight
+        id: select
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "::error::Only run a replay from main"; exit 1;
+          }
+          test -s "$REPLAY_INVENTORY"
+          test -s /opt/meowcloud-iac/state/autoscale.tfvars.json
+          test -s /opt/meowcloud-iac/state/app-release.json
+          test -x /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook
+          if [[ "$REPLAY_DRY_RUN" == "false" && "$REPLAY_CONFIRM" != "REPLAY-MEOWCLOUD" ]]; then
+            echo "::error::Actual rollout requires confirmation REPLAY-MEOWCLOUD"; exit 1;
+          fi
+          if [[ "$REPLAY_DRY_RUN" != "false" && "$REPLAY_DRY_RUN" != "true" ]]; then
+            echo "::error::Invalid dry-run flag"; exit 1;
+          fi
+          python3 scripts/demo_release.py resolve --target "$REPLAY_TARGET"             > "$RUNNER_TEMP/replay-target.json"
+          BACKEND="$(jq -er .backend_image "$RUNNER_TEMP/replay-target.json")"
+          FRONTEND="$(jq -er .frontend_image "$RUNNER_TEMP/replay-target.json")"
+          VERSION="$(jq -r .version "$RUNNER_TEMP/replay-target.json")"
+          echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
+          echo "frontend=$FRONTEND" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          export HOME=/home/github-runner
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          if [[ "$REPLAY_TARGET" == "baseline" ]]; then
+            echo "Checking golden-image local Docker images before baseline replay"
+            ansible -i "$REPLAY_INVENTORY" backends               -m ansible.builtin.command -a 'docker image inspect meow-backend:latest' >/dev/null
+            ansible -i "$REPLAY_INVENTORY" frontends               -m ansible.builtin.command -a 'docker image inspect nginx:alpine' >/dev/null
+          else
+            jq -e '.initialized == true and .db_host == "192.168.150.71" and .db_name == "meowcloud_demo"'               /opt/meowcloud-iac/state/meowcrud.json >/dev/null
+            ansible -i "$REPLAY_INVENTORY" backends               -m ansible.builtin.wait_for -a 'host=192.168.150.71 port=5432 timeout=8'
+          fi
+          echo "Target: $REPLAY_TARGET"
+          echo "Backend: $BACKEND"
+          echo "Frontend: $FRONTEND"
+          echo "Version: ${VERSION:-baseline}"
+          echo "Dry run: $REPLAY_DRY_RUN"
+          if [[ "$REPLAY_DRY_RUN" == "true" ]]; then
+            echo "PASS: read-only preflight. No Docker containers or state changed."
+          fi
+
+      - name: Preserve previous published release before changing any guest
+        if: inputs.dry_run == false
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          PREVIOUS="/opt/meowcloud-iac/state/app-release-before-replay-$(date -u +%Y%m%dT%H%M%SZ).json"
+          cp -p /opt/meowcloud-iac/state/app-release.json "$PREVIOUS"
+          test -s "$PREVIOUS"
+          echo "Saved previous release manifest: $PREVIOUS"
+
+      - name: Rolling deployment of selected Backend and Frontend images
+        if: inputs.dry_run == false
+        id: rollout
+        working-directory: ./ansible
+        shell: bash
+        env:
+          BACKEND_RELEASE: ${{ steps.select.outputs.backend }}
+          FRONTEND_RELEASE: ${{ steps.select.outputs.frontend }}
+          RELEASE_VERSION: ${{ steps.select.outputs.version }}
+        run: |
+          set -euo pipefail
+          export HOME=/home/github-runner
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export LANG=C.UTF-8 LC_ALL=C.UTF-8
+          ansible-playbook -i "$REPLAY_INVENTORY" playbooks/03-setup-backend.yml             -e 'meow_rolling_batch_size=1'             -e "meow_backend_image=$BACKEND_RELEASE"             -e "meow_app_version=$RELEASE_VERSION"
+          ansible-playbook -i "$REPLAY_INVENTORY" playbooks/04-setup-frontend.yml             -e 'meow_rolling_batch_size=1'             -e "meow_frontend_image=$FRONTEND_RELEASE"             -e "meow_app_version=$RELEASE_VERSION"
+
+      - name: Verify selected version through production VIP before publishing
+        id: verify
+        if: inputs.dry_run == false
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.select.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 5 --retry-delay 2             http://192.168.150.100/api/health | jq -e '.status == "UP"'
+          HTML="$(curl -fsS --retry 5 --retry-delay 2 http://192.168.150.100/)"
+          [[ "$HTML" == *"MeowCloud Elastic Infrastructure"* ]]
+          if [[ "$REPLAY_TARGET" == "baseline" ]]; then
+            echo "PASS: baseline MeowCloud HTML and Backend health"
+          else
+            EDITION="crud-$REPLAY_TARGET"
+            curl -fsS --retry 5 --retry-delay 2               http://192.168.150.100/version.json |
+              jq -e --arg version "$RELEASE_VERSION" --arg edition "$EDITION"                 '.version == $version and .app_edition == $edition'
+            curl -fsS --retry 5 --retry-delay 2               http://192.168.150.100/api/version |
+              jq -e --arg version "$RELEASE_VERSION" --arg edition "$EDITION"                 '.version == $version and .app_edition == $edition'
+            curl -fsS --retry 5 --retry-delay 2               http://192.168.150.100/api/db-health | jq -e '.status == "UP"'
+            DEMO_TOKEN="$(jq -er .demo_token /opt/meowcloud-iac/state/meowcrud.json)"
+            curl -fsS --retry 5 --retry-delay 2               -H "X-Demo-Token: $DEMO_TOKEN"               http://192.168.150.100/api/stats |
+              jq -e '.categories >= 3 and .products >= 0 and .customers >= 0 and .orders >= 0'
+          fi
+
+      - name: Atomically publish replayed release only after VIP checks pass
+        id: publish
+        if: inputs.dry_run == false
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/demo_release.py publish --target "$REPLAY_TARGET"             --confirm PUBLISH-VERIFIED-RELEASE
+          echo "## Demo release replay PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "Selected: $REPLAY_TARGET" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published: /opt/meowcloud-iac/state/app-release.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Best-effort rollback of guests to prior published manifest
+        if: ${{ failure() && steps.rollout.outcome != 'skipped' && steps.publish.outcome != 'success' }}
+        working-directory: ./ansible
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOME=/home/github-runner
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          ansible-playbook -i "$REPLAY_INVENTORY" playbooks/03-setup-backend.yml             -e 'meow_rolling_batch_size=1'
+          ansible-playbook -i "$REPLAY_INVENTORY" playbooks/04-setup-frontend.yml             -e 'meow_rolling_batch_size=1'
+          echo "::warning::Rollback attempted. Verify every guest and VIP before retry."
