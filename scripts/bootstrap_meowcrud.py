@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""One-time opt-in PostgreSQL app DB bootstrap on CT120.
+"""One-time opt-in PostgreSQL ROLE + DATABASE bootstrap on CT120.
+
+Schema is created and versioned exclusively by Alembic during workflow 05.
 
 NEVER formats, drops, truncates or replaces an existing PostgreSQL database.
 Targets existing DB primary KVM (192.168.150.71) via SSH / docker exec psql.
@@ -14,7 +16,6 @@ import subprocess
 import sys
 
 STATE = pathlib.Path('/opt/meowcloud-iac/state/meowcrud.json')
-SCHEMA = pathlib.Path(__file__).resolve().parents[1] / 'db' / 'schema.sql'
 HOST = '192.168.150.71'
 DB = 'meowcloud_demo'
 ROLE = 'meowcrud'
@@ -87,17 +88,13 @@ def main():
         psql(f"ALTER ROLE {ROLE} WITH LOGIN PASSWORD '{password}';")
     if not psql(f"SELECT 1 FROM pg_database WHERE datname = '{DB}';"):
         psql(f'CREATE DATABASE {DB} OWNER {ROLE};')
-    if not SCHEMA.is_file():
-        raise RuntimeError(f'Missing schema: {SCHEMA}')
-    psql(SCHEMA.read_text(), database=DB, user=ROLE)
-    count = psql('SELECT count(*) FROM information_schema.tables '
-                 "WHERE table_schema='public' AND table_name IN "
-                 "('categories','products','customers','orders');", database=DB, user=ROLE)
-    if count != '4':
-        raise RuntimeError(f'Expected 4 app tables, found {count}')
+    # Bootstrap grants ownership only. Alembic is the sole writer of app schema.
+    # initialized=True means the role/database/credentials exist, NOT that tables exist.
     cfg['initialized'] = True
     persist(cfg)
-    print(f'PASS: {DB} on {HOST} contains 4 tables. State: {STATE}')
+    print(f'PASS: empty or existing isolated database {DB} and role {ROLE} ready on {HOST}.')
+    print('NEXT: run Alembic upgrade head once via workflow 05 migration job.')
+    print(f'Credential state: {STATE}')
     print('Demo login token is intentionally not printed. '
           "Retrieve on CT120 with: jq -r .demo_token /opt/meowcloud-iac/state/meowcrud.json")
 
