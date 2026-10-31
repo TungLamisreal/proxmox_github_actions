@@ -17,12 +17,22 @@ docker network create "$NETWORK" >/dev/null
 docker run -d --rm --network "$NETWORK" --name meow-pg-crud-ci \
   -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=meowcloud_demo postgres:15-alpine >/dev/null
 
+# postgres Docker initdb starts a temporary server, then shuts it down before
+# launching the real server. pg_isready can report success in that unstable window.
+# Retry the actual idempotent schema transaction until it commits successfully.
+SCHEMA_READY=false
 for i in $(seq 1 45); do
-  docker exec meow-pg-crud-ci pg_isready -U postgres -d meowcloud_demo >/dev/null 2>&1 && break
-  sleep 1
+  if docker exec -i meow-pg-crud-ci psql -X -v ON_ERROR_STOP=1 -U postgres -d meowcloud_demo < db/schema.sql >/dev/null 2>&1; then
+    SCHEMA_READY=true
+    break
+  fi
+  sleep 2
 done
-docker exec meow-pg-crud-ci pg_isready -U postgres -d meowcloud_demo
-docker exec -i meow-pg-crud-ci psql -X -v ON_ERROR_STOP=1 -U postgres -d meowcloud_demo < db/schema.sql
+if [[ "$SCHEMA_READY" != "true" ]]; then
+  docker logs --tail 60 meow-pg-crud-ci
+  echo "::error::PostgreSQL schema bootstrap failed after retries"
+  exit 1
+fi
 
 docker run -d --rm --network "$NETWORK" --name meow-be-crud-ci \
   -p 127.0.0.1:18095:5000 \
