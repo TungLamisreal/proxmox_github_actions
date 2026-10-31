@@ -67,7 +67,7 @@ jobs:
           done
           [[ "$frontend_ready" == "true" ]] || { echo "::error::Frontend did not become ready"; exit 1; }
           curl -fsS http://127.0.0.1:18086/version.json |
-            jq -e --arg sha "$GITHUB_SHA" '.version == $sha'
+            jq -e --arg sha "$GITHUB_SHA" '.version == $sha and .app_edition == "crud-v1"'
 
   build:
     if: github.event_name != 'pull_request'
