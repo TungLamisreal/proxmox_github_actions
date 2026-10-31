@@ -1,47 +1,205 @@
 <!doctype html>
 <html lang="vi">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>MeowCloud · Application CI/CD</title>
-  <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-    body { margin: 0; min-height: 100vh; background: #101827; color: #e2e8f0; display: grid; place-items: center; }
-    main { width: min(640px, 92vw); background: #1e293b; border: 1px solid #334155; border-radius: 18px; padding: 30px; }
-    h1 { margin: 0 0 12px; color: #38bdf8; }
-    .sub { color: #94a3b8; }
-    .pill { display: inline-block; border: 1px solid #475569; padding: 7px 12px; border-radius: 99px; font-size: 13px; }
-    button { padding: 12px 16px; border: 0; border-radius: 8px; background: #38bdf8; color: #082f49; cursor: pointer; font-weight: 700; }
-    pre { overflow: auto; min-height: 80px; padding: 18px; border-radius: 10px; background: #020617; color: #4ade80; }
-  </style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MeowCloud · CRUD Console</title>
+<style>
+:root{font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:#e9eff8;background:#0c1220}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 90% -10%,#124052 0,transparent 32%),#0c1220;min-height:100vh}
+button,input,select{font:inherit}button{cursor:pointer}
+.app{display:grid;grid-template-columns:242px minmax(0,1fr);min-height:100vh}
+aside{background:#111b2c;border-right:1px solid #24334a;padding:28px 18px;display:flex;flex-direction:column;gap:19px}
+.brand{display:flex;align-items:center;gap:12px;padding:0 9px}.mark{width:44px;height:44px;display:grid;place-items:center;background:#13a99e;color:#061b22;border-radius:13px;font-size:24px}
+.brand strong{font-size:20px;letter-spacing:-.4px}.brand small{display:block;font-size:10px;letter-spacing:1.7px;color:#8192ac;font-weight:750;margin-top:2px}
+.nav-label{font-size:11px;color:#7489a8;letter-spacing:1.8px;text-transform:uppercase;padding:0 14px;margin-top:20px}
+nav{display:grid;gap:7px}nav button{display:flex;gap:12px;align-items:center;width:100%;padding:13px 15px;border-radius:11px;text-align:left;border:1px solid transparent;color:#acbad0;background:transparent;font-size:14px}
+nav button span{font-size:18px;width:22px}nav button.active{color:#4ae1cd;background:#153a42;border-color:#245b5c;font-weight:700}nav button:hover:not(.active){background:#1a2a3f;color:white}
+.aside-footer{margin-top:auto;border:1px solid #2b3e56;border-radius:14px;padding:15px;background:#152236;font-size:12px}
+.aside-footer .dot{display:inline-block;width:8px;height:8px;background:#34d399;border-radius:50%;margin-right:7px}
+.aside-footer p{color:#8fa1bc;font-size:11px;line-height:1.6;overflow-wrap:anywhere}
+main{min-width:0;width:100%;max-width:1500px;margin:0 auto;padding:34px clamp(18px,3.6vw,58px) 48px}
+header,.panel-head{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.eyebrow{color:#4bddc7;letter-spacing:2px;text-transform:uppercase;font-size:11px;font-weight:800}
+h1{margin:7px 0 8px;font-size:clamp(25px,3vw,36px);letter-spacing:-.7px}h2{font-size:20px;letter-spacing:-.3px;margin:0}
+.muted{color:#94a6bf;font-size:13px}.header-actions,.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{border-radius:10px;border:1px solid #31455e;padding:11px 17px;background:#1a2a40;color:#dce9f5;font-size:13px;font-weight:700}
+.btn:hover{border-color:#4a6d85}.btn.primary{background:#28c7b5;border-color:#28c7b5;color:#05232b}.btn.primary:hover{background:#4de4d2}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.notice{display:flex;align-items:center;gap:16px;border:1px solid #295b5b;background:linear-gradient(110deg,#12333b,#14273b);border-radius:15px;padding:20px;margin:26px 0}
+.notice .round{width:44px;height:44px;display:grid;place-items:center;background:#17494b;border:1px solid #316967;border-radius:13px;font-size:21px;flex:none}
+.notice strong{display:block;font-size:14px;margin-bottom:4px}.notice p{margin:0;color:#a9c4cb;font-size:12px;line-height:1.6}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px;margin:26px 0}
+.metric{background:#141f31;border:1px solid #28384f;padding:19px;border-radius:15px;min-height:122px}
+.metric .label{color:#91a2bb;font-size:12px}.metric .value{font-size:31px;font-weight:770;margin-top:12px;letter-spacing:-1px}.metric .sub{color:#37c8b5;font-size:11px;margin-top:7px}
+.panel{background:#141f31;border:1px solid #2a3a50;border-radius:17px;overflow:hidden}.panel-head{padding:22px 23px;border-bottom:1px solid #29384e}
+.panel-head p{margin:5px 0 0;color:#8fa3ba;font-size:12px}.search{width:min(250px,100%);border:1px solid #354b62;border-radius:10px;padding:10px 13px;background:#0d1829;color:white;font-size:13px}
+.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:730px;text-align:left}
+th{padding:15px 19px;background:#18273b;color:#849ab2;font-size:11px;letter-spacing:.6px;text-transform:uppercase;white-space:nowrap}
+td{padding:16px 19px;border-top:1px solid #243248;font-size:13px;color:#e0e8f2}tbody tr:hover{background:#172a3e}
+.strong{font-weight:700}.tag{border:1px solid #285b55;background:#153b3a;color:#6be6c6;border-radius:99px;padding:5px 9px;font-size:11px;white-space:nowrap}
+.tag.pending{background:#4a341b;border-color:#69502c;color:#ffcc82}.tag.cancelled{background:#4f2637;border-color:#71394c;color:#ffa2ab}
+.row-actions{display:flex;gap:6px}.row-actions button{border:1px solid #33465d;border-radius:8px;color:#b8cce2;background:#1b2c41;padding:7px 9px;font-size:12px}
+.row-actions .delete{color:#ffa7b3}.empty{padding:45px;text-align:center;color:#90a3ba}
+.bottom{display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap;margin-top:19px;font-size:11px;color:#698099}
+.overlay{position:fixed;inset:0;background:#060b14d9;z-index:10;display:grid;place-items:center;padding:20px}.hidden{display:none!important}
+.dialog{width:min(490px,100%);background:#172439;border:1px solid #40526b;border-radius:18px;padding:26px;box-shadow:0 28px 80px #0007;max-height:90vh;overflow:auto}
+.dialog h2{margin-bottom:8px}.dialog p{color:#9db0c7;font-size:13px;line-height:1.6}
+label{display:block;margin:14px 0 5px;font-weight:700;color:#b9c9de;font-size:12px}.field{width:100%;border:1px solid #3c526b;padding:11px 13px;border-radius:9px;color:white;background:#0d1829;outline:0}
+.field:focus,.search:focus{border-color:#30cdba}.dialog-actions{margin-top:24px;display:flex;justify-content:flex-end;gap:8px}
+#toast{position:fixed;right:20px;bottom:20px;z-index:20;padding:14px 20px;border:1px solid #327b71;border-radius:11px;color:#c6fff0;background:#173c3b;font-size:13px}
+@media(max-width:900px){.app{grid-template-columns:1fr}aside{padding:16px;gap:12px;border-right:0;border-bottom:1px solid #253950}.nav-label,.aside-footer{display:none}nav{display:flex;overflow-x:auto}nav button{width:auto;white-space:nowrap;padding:9px 12px}main{padding-top:25px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:450px){.metrics{gap:9px}.metric{padding:13px}.notice{padding:14px}.toolbar{width:100%}}
+</style>
 </head>
 <body>
-  <main>
-    <h1>🐾 MeowCloud Elastic Infrastructure</h1>
-    <p class="sub">Application CI/CD · Docker Registry · Rolling Deployment</p>
-    <p class="pill">Frontend release: <span id="release">Đang tải...</span></p>
-    <p><button id="check">Kiểm tra Backend API</button></p>
-    <pre id="result">Đang kết nối /api/health...</pre>
-  </main>
-  <script>
-    async function fetchJson(path) {
-      const response = await fetch(path, {cache: "no-store"});
-      if (!response.ok) throw new Error(path + ": HTTP " + response.status);
-      return response.json();
-    }
-    async function checkApi() {
-      try {
-        const [health, version] = await Promise.all([fetchJson("/api/health"), fetchJson("/api/version")]);
-        document.getElementById("result").textContent = JSON.stringify({health, version}, null, 2);
-      } catch (error) {
-        document.getElementById("result").textContent = String(error);
-      }
-    }
-    document.getElementById("check").addEventListener("click", checkApi);
-    fetchJson("/version.json").then(v => {
-      document.getElementById("release").textContent = (v.version || "unknown").slice(0, 12);
-    }).catch(() => { document.getElementById("release").textContent = "unavailable"; });
-    checkApi();
-  </script>
+<div class="app">
+<aside>
+  <div class="brand"><div class="mark">🐾</div><div><strong>MeowCloud</strong><small>CONTROL CENTER</small></div></div>
+  <div class="nav-label">Quản lý dữ liệu</div>
+  <nav aria-label="Danh sách bảng">
+    <button data-tab="products" class="active"><span>▣</span> Sản phẩm</button>
+    <button data-tab="categories"><span>▤</span> Danh mục</button>
+    <button data-tab="customers"><span>♙</span> Khách hàng</button>
+    <button data-tab="orders"><span>▧</span> Đơn hàng</button>
+  </nav>
+  <div class="aside-footer"><div><span class="dot"></span><strong>MeowCloud Elastic Infrastructure</strong></div><p>CI/CD · GHCR · Terraform · Ansible · Autoscaling</p><p>Build: <span id="sidebarVersion">Loading...</span></p></div>
+</aside>
+<main>
+<header>
+  <div><div class="eyebrow">Application Deployment / Workflow 05</div><h1>Quản lý cửa hàng</h1><div class="muted">CRUD trên PostgreSQL · 4 bảng dữ liệu · Triển khai qua Docker</div></div>
+  <div class="header-actions"><button class="btn" id="reloadBtn">↻ Làm mới</button><button class="btn" id="signoutBtn">↪ Đổi mã truy cập</button></div>
+</header>
+<section class="notice"><div class="round">⚡</div><div><strong>Ứng dụng CI/CD đang hoạt động</strong><p>Thêm / xem / sửa / xóa dữ liệu ngay trên website. Dữ liệu nằm trong PostgreSQL KVM, không mất khi Backend/Frontend scale-in hay deploy image mới.</p></div></section>
+<section class="metrics">
+  <div class="metric"><div class="label">Sản phẩm</div><div class="value" id="count-products">—</div><div class="sub">Products</div></div>
+  <div class="metric"><div class="label">Danh mục</div><div class="value" id="count-categories">—</div><div class="sub">Categories</div></div>
+  <div class="metric"><div class="label">Khách hàng</div><div class="value" id="count-customers">—</div><div class="sub">Customers</div></div>
+  <div class="metric"><div class="label">Đơn hàng</div><div class="value" id="count-orders">—</div><div class="sub">Orders</div></div>
+</section>
+<section class="panel">
+  <div class="panel-head"><div><h2 id="tableTitle">Sản phẩm</h2><p id="tableSubtitle">Dữ liệu được lưu trong PostgreSQL</p></div>
+    <div class="toolbar"><input id="search" class="search" placeholder="Tìm kiếm..." aria-label="Tìm kiếm dữ liệu"><button class="btn primary" id="addBtn">＋ Thêm mới</button></div>
+  </div>
+  <div class="table-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+  <div class="empty hidden" id="empty">Chưa có dữ liệu. Hãy nhấn <b>Thêm mới</b> để bắt đầu!</div>
+</section>
+<div class="bottom"><span>🐾 MeowCloud Elastic Infrastructure · CRUD Demo</span><span id="status">Đang kết nối backend...</span></div>
+</main>
+</div>
+<div class="overlay" id="authOverlay"><div class="dialog"><div class="eyebrow">Private demo</div><h2>Đăng nhập CRUD Console</h2>
+<p>Nhập mã demo được tạo trên CT120 để xem và chỉnh sửa dữ liệu. Mã chỉ lưu trong phiên trình duyệt, không đóng vào Docker image.</p>
+<form id="authForm"><label for="tokenInput">Demo Access Token</label><input class="field" id="tokenInput" type="password" autocomplete="off" required placeholder="Nhập mã truy cập..."><div class="dialog-actions"><button class="btn primary" type="submit">Mở bảng quản lý</button></div></form>
+</div></div>
+<div class="overlay hidden" id="editOverlay"><div class="dialog"><h2 id="dialogTitle">Thêm mới</h2><p id="dialogDescription">Nhập thông tin bản ghi.</p>
+<form id="recordForm"><div id="fields"></div><div class="dialog-actions"><button type="button" class="btn" id="cancelBtn">Hủy</button><button class="btn primary" id="saveBtn" type="submit">Lưu dữ liệu</button></div></form>
+</div></div>
+<div id="toast" class="hidden" role="status"></div>
+<script>
+'use strict';
+const defs={
+ products:{title:'Sản phẩm',subtitle:'Danh sách hàng hóa và tồn kho',fields:[['sku','Mã SKU','text'],['name','Tên sản phẩm','text'],['category_id','Danh mục','categories'],['price','Đơn giá (VNĐ)','number'],['stock','Tồn kho','integer']],cols:[['sku','SKU'],['name','Tên sản phẩm'],['category_id','Danh mục'],['price','Đơn giá'],['stock','Tồn kho']]},
+ categories:{title:'Danh mục',subtitle:'Nhóm phân loại sản phẩm',fields:[['name','Tên danh mục','text']],cols:[['name','Danh mục'],['created_at','Ngày tạo']]},
+ customers:{title:'Khách hàng',subtitle:'Thông tin khách hàng mẫu phục vụ backup/restore',fields:[['name','Tên khách hàng','text'],['email','Email','email'],['phone','Số điện thoại','text']],cols:[['name','Tên khách hàng'],['email','Email'],['phone','Liên hệ']]},
+ orders:{title:'Đơn hàng',subtitle:'Giao dịch tham chiếu sản phẩm và khách hàng',fields:[['customer_id','Khách hàng','customers'],['product_id','Sản phẩm','products'],['quantity','Số lượng','integer'],['status','Trạng thái','status']],cols:[['customer_id','Khách hàng'],['product_id','Sản phẩm'],['quantity','Số lượng'],['unit_price','Đơn giá'],['status','Trạng thái']]}
+};
+const state={tab:'products',items:{categories:[],products:[],customers:[],orders:[]},editing:null,token:sessionStorage.getItem('meow_demo_token')||''};
+const $=id=>document.getElementById(id);
+let toastTimer;
+function toast(msg){const e=$('toast');e.textContent=msg;e.classList.remove('hidden');clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.classList.add('hidden'),3500);}
+async function api(path,options={}){
+ const r=await fetch('/api/'+path,{cache:'no-store',...options,headers:{'X-Demo-Token':state.token,...(options.body?{'Content-Type':'application/json'}:{}),...(options.headers||{})}});
+ if(r.status===204)return null;
+ let data;try{data=await r.json();}catch{throw Error('Backend trả phản hồi không hợp lệ');}
+ if(!r.ok){if(r.status===401){state.token='';sessionStorage.removeItem('meow_demo_token');$('authOverlay').classList.remove('hidden');}throw Error(data.error||'HTTP '+r.status);}
+ return data;
+}
+function refLabel(table,id){const item=state.items[table].find(x=>x.id===Number(id));return item?(item.name||item.sku||'#'+id):'#'+id;}
+function valueText(key,val){
+ if(val==null||val==='')return '—';
+ if(key==='category_id')return refLabel('categories',val);
+ if(key==='customer_id')return refLabel('customers',val);
+ if(key==='product_id')return refLabel('products',val);
+ if(key==='price'||key==='unit_price')return Number(val).toLocaleString('vi-VN')+' ₫';
+ if(key==='created_at')return new Date(val).toLocaleDateString('vi-VN');
+ if(key==='status')return ({pending:'Chờ xử lý',paid:'Đã thanh toán',cancelled:'Đã hủy'})[val]||val;
+ return String(val);
+}
+function render(){
+ const tab=state.tab,def=defs[tab];$('tableTitle').textContent=def.title;$('tableSubtitle').textContent=def.subtitle;
+ document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+ const head=document.createElement('tr');
+ for(const label of ['ID',...def.cols.map(c=>c[1]),'Thao tác']){const th=document.createElement('th');th.textContent=label;head.append(th);}
+ $('thead').replaceChildren(head);
+ const keyword=$('search').value.trim().toLocaleLowerCase('vi');
+ const list=state.items[tab].filter(row=>JSON.stringify(row).toLocaleLowerCase('vi').includes(keyword)||def.cols.some(c=>valueText(c[0],row[c[0]]).toLocaleLowerCase('vi').includes(keyword)));
+ $('empty').classList.toggle('hidden',list.length>0);
+ const out=document.createDocumentFragment();
+ for(const row of list){
+  const tr=document.createElement('tr'),id=document.createElement('td');id.textContent='#'+row.id;id.className='strong';tr.append(id);
+  for(const [key] of def.cols){const td=document.createElement('td');td.textContent=valueText(key,row[key]);if(key==='status'){const badge=document.createElement('span');badge.className='tag '+row[key];badge.textContent=td.textContent;td.replaceChildren(badge);}tr.append(td);}
+  const td=document.createElement('td'),actions=document.createElement('div');actions.className='row-actions';
+  const edit=document.createElement('button');edit.textContent='✎ Sửa';edit.onclick=()=>showForm(row);
+  const del=document.createElement('button');del.textContent='✕ Xóa';del.className='delete';del.onclick=()=>deleteRecord(row);
+  actions.append(edit,del);td.append(actions);tr.append(td);out.append(tr);
+ }
+ $('tbody').replaceChildren(out);
+}
+async function reload(){
+ if(!state.token){$('authOverlay').classList.remove('hidden');return;}
+ $('status').textContent='Đang đồng bộ dữ liệu...';
+ try{
+  const [categories,products,customers,orders,stats]=await Promise.all([api('categories'),api('products'),api('customers'),api('orders'),api('stats')]);
+  state.items={categories,products,customers,orders};
+  for(const key of Object.keys(stats))$('count-'+key).textContent=stats[key].toLocaleString('vi-VN');
+  $('status').textContent='● PostgreSQL connected · '+new Date().toLocaleTimeString('vi-VN');render();
+ }catch(err){$('status').textContent='● '+err.message;toast(err.message);}
+}
+function showForm(record=null){
+ const def=defs[state.tab];state.editing=record;
+ $('dialogTitle').textContent=(record?'Chỉnh sửa ':'Thêm ')+def.title.toLocaleLowerCase('vi');
+ $('dialogDescription').textContent=record?'Chỉnh sửa bản ghi #'+record.id:'Thêm bản ghi mới vào '+def.title.toLocaleLowerCase('vi');
+ const fragment=document.createDocumentFragment();
+ for(const [key,label,type] of def.fields){
+  const wrapper=document.createElement('div'),lbl=document.createElement('label');lbl.textContent=label;lbl.htmlFor='field-'+key;
+  let field;
+  if(['categories','customers','products','status'].includes(type)){
+   field=document.createElement('select');
+   const options=type==='status'?[['pending','Chờ xử lý'],['paid','Đã thanh toán'],['cancelled','Đã hủy']]:state.items[type].map(item=>[String(item.id),item.name||item.sku]);
+   for(const [v,title] of options){const o=document.createElement('option');o.value=v;o.textContent=title;field.append(o);}
+  }else{
+   field=document.createElement('input');field.type=['integer','number'].includes(type)?'number':type;field.maxLength=255;
+   if(type==='integer'){field.min=key==='stock'?'0':'1';field.step='1';}if(type==='number'){field.min='0';field.step='0.01';}
+  }
+  field.id='field-'+key;field.name=key;field.required=key!=='phone';field.className='field';
+  if(record&&record[key]!=null)field.value=String(record[key]);
+  wrapper.append(lbl,field);fragment.append(wrapper);
+ }
+ $('fields').replaceChildren(fragment);$('editOverlay').classList.remove('hidden');
+}
+async function deleteRecord(record){
+ if(!confirm('Xóa '+defs[state.tab].title.toLocaleLowerCase('vi')+' #'+record.id+'? Dữ liệu sẽ bị xóa khỏi PostgreSQL.'))return;
+ try{await api(state.tab+'/'+record.id,{method:'DELETE'});toast('Đã xóa bản ghi #'+record.id);await reload();}
+ catch(err){toast('Xóa thất bại: '+err.message);}
+}
+$('recordForm').addEventListener('submit',async event=>{
+ event.preventDefault();const body={};
+ for(const [key,,type] of defs[state.tab].fields){const val=$('field-'+key).value;body[key]=type==='integer'||['categories','customers','products'].includes(type)?Number(val):val;}
+ $('saveBtn').disabled=true;
+ try{const old=state.editing;await api(state.tab+(old?'/'+old.id:''),{method:old?'PUT':'POST',body:JSON.stringify(body)});
+ $('editOverlay').classList.add('hidden');toast(old?'Cập nhật thành công':'Đã thêm bản ghi mới');await reload();}
+ catch(err){toast(err.message);}finally{$('saveBtn').disabled=false;}
+});
+$('authForm').addEventListener('submit',async event=>{
+ event.preventDefault();state.token=$('tokenInput').value.trim();
+ try{await api('stats');sessionStorage.setItem('meow_demo_token',state.token);$('authOverlay').classList.add('hidden');$('tokenInput').value='';reload();}
+ catch(err){toast(err.message);}
+});
+$('signoutBtn').onclick=()=>{sessionStorage.removeItem('meow_demo_token');state.token='';$('authOverlay').classList.remove('hidden');};
+$('cancelBtn').onclick=()=>$('editOverlay').classList.add('hidden');
+$('addBtn').onclick=()=>showForm();$('reloadBtn').onclick=reload;$('search').oninput=render;
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;$('search').value='';render();});
+fetch('/version.json',{cache:'no-store'}).then(r=>r.json()).then(d=>{$('sidebarVersion').textContent=(d.version||'unknown').slice(0,12);}).catch(()=>{$('sidebarVersion').textContent='unknown';});
+if(state.token){$('authOverlay').classList.add('hidden');reload();}
+</script>
 </body>
 </html>
