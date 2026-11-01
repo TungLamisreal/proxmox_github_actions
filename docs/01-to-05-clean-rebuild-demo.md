@@ -12,6 +12,18 @@ the 3-node PVE cluster and Ceph are healthy, and capacity is back to BE=3 / FE=3
 Do not run workflow 00 to rebuild Golden Images merely because the application code changed;
 01 reuses the verified 9100/9101/9102 LXC and 9001/9002/9003 DB templates.
 
+
+## Save live data before workflow 02
+
+The pre-v2 PostgreSQL dump from an earlier checkpoint is at
+`/opt/meowcloud-iac/backups/meowcloud_demo_pre_v2_20261031_225608.dump` on CT120.
+Connect WinSCP SFTP to `192.168.150.20:22` as root or an authorized account,
+browse `/opt/meowcloud-iac/backups/`, and copy the dump to a separate Windows disk.
+It is only a *pre-v2* backup; copy a new final dump if later records matter.
+Use `pg_restore -l` to verify the archive is readable, and separately test
+restoring into an isolated scratch database before deleting the real DB KVM disks.
+Never treat a backup inside the same PC as independent disaster recovery.
+
 ## How 01 works after this patch
 
 Run workflow **01 - Provision MeowCloud Infrastructure** with:
@@ -19,7 +31,7 @@ Run workflow **01 - Provision MeowCloud Infrastructure** with:
 - **initial_app_release=baseline** (new default).
 
 `baseline` explicitly provisions pre-baked `meow-backend:latest` and `nginx:alpine`,
-with Ansible's minimal `MeowCloud Elastic Infrastructure` page.
+with the **official `Welcome to nginx!` page** from the preloaded Nginx image; there is no custom HTML bind mount at baseline.
 It **overrides stale `app-release.json` during deployment**, then publishes the validated
 baseline to that manifest after successful VIP and service checks. It leaves
 `app-release-v1.json` / `app-release-v2.json` replay snapshots untouched.
@@ -35,7 +47,7 @@ If intentionally resuming a published live app on existing infrastructure, selec
 
 After workflow 01, verify:
 ```bash
-curl -fsS http://192.168.150.100/ | grep 'MeowCloud Elastic Infrastructure'
+curl -fsS http://192.168.150.100/ | grep 'Welcome to nginx!'
 curl -fsS http://192.168.150.100/api/health | jq
 jq '{backend_image,frontend_image,version}' /opt/meowcloud-iac/state/app-release.json
 jq '{backend_count,frontend_count}' /opt/meowcloud-iac/state/autoscale.tfvars.json
@@ -111,9 +123,9 @@ unattended, alert-driven scaling.
 
 ## Non-goals / reproducibility caveats
 
-- The app release is immutable by GHCR digest, but complete **byte-for-byte image
-  reproducibility** is not guaranteed by upstream mutable tags (`nginx:alpine`,
-  `postgres:15-alpine`, pre-baked `meow-backend:latest`) or external image sources.
+- **IaC repeatability != byte-for-byte reproducibility.** Golden Templates and runtime configuration define the same desired topology when the same code, inputs, provider versions and Golden Images are used. The application is pinned by GHCR digest after deployment, but baseline upstream tags (`nginx:alpine`, `postgres:15-alpine`, pre-baked `meow-backend:latest`) are not globally immutable and rebuilt Golden Images may differ over time.
+- Terraform provider versions are constrained to the versions verified in a passing workflow (bpg/proxmox 0.119.0, local 2.5.3, external 2.4.2). To pin provider **checksums** too, generate `terraform/.terraform.lock.hcl` from a trusted runner via `terraform providers lock -platform=linux_amd64` and commit the lockfile; do not hand-write its hashes.
+- For stronger repeatability, version and checksum all Golden Image archives, Docker image digests and Packer/OS package inputs, test `terraform plan` after re-apply, and keep secrets/Vault/SSH keys outside Git. No guarantee can be made against upstream outages or failed hardware.
 - Golden Images, GitHub Actions secrets, CT120 runtime keys/Vault files, PVE/Ceph and the
   Cloudflare tunnel are external prerequisites. A Terraform destroy does not clean them.
 - A clean rebuild destroys old DB contents; data persistence is demonstrated **between
