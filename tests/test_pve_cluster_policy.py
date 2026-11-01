@@ -30,6 +30,32 @@ class PveClusterPolicyTests(unittest.TestCase):
         self.assertFalse(ha.rule_matches({**rule, "resources": "ct:121,ct:120"}, sid, nodes))
         self.assertFalse(ha.rule_matches({**rule, "type": "resource-affinity"}, sid, nodes))
 
+    def test_resource_requires_no_failback_and_no_rebalance(self):
+        expected = {"state": "started", "failback": 0, "auto-rebalance": 0}
+        self.assertTrue(ha.resource_matches(expected))
+        self.assertFalse(ha.resource_matches({**expected, "failback": 1}))
+        self.assertFalse(ha.resource_matches({**expected, "auto-rebalance": 1}))
+        self.assertFalse(ha.resource_matches({**expected, "state": "stopped"}))
+        self.assertFalse(ha.resource_matches({"state": "started"}))
+
+    def test_apply_refuses_preexisting_wrong_failback(self):
+        sid, name, nodes, _, _ = ha.HA[0]
+        rules = {
+            name: {"rule": name, "type": "node-affinity",
+                   "resources": sid, "nodes": nodes,
+                   "affinity": "positive", "strict": 0}
+        }
+        existing = {
+            sid: {"state": "started", "failback": 1, "auto-rebalance": 0}
+        }
+        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \
+             mock.patch.object(ha, "ha_rules", return_value=rules), \
+             mock.patch.object(ha, "ha_resources", return_value=existing), \
+             mock.patch.object(ha, "remote") as remote:
+            with self.assertRaises(ha.PolicyError):
+                ha.apply_ha()
+            remote.assert_not_called()
+
     def test_apply_refuses_foreign_service_before_any_write(self):
         conflicting = {"ct:121": {"state": "started"}}
         with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \
@@ -62,7 +88,12 @@ class PveClusterPolicyTests(unittest.TestCase):
             calls.append(args)
             if args[:3] == ("pvesh", "create", "/cluster/ha/resources"):
                 sid = args[args.index("--sid") + 1]
-                resources[sid] = {"sid": sid, "state": "started"}
+                self.assertEqual(args[args.index("--failback") + 1], "0")
+                self.assertEqual(args[args.index("--auto-rebalance") + 1], "0")
+                resources[sid] = {
+                    "sid": sid, "state": "started",
+                    "failback": 0, "auto-rebalance": 0
+                }
             elif args[:3] == ("pvesh", "create", "/cluster/ha/rules"):
                 name = args[args.index("--rule") + 1]
                 rules[name] = {
@@ -92,8 +123,8 @@ class PveClusterPolicyTests(unittest.TestCase):
     def test_remove_ha_leaves_ct120_untouched(self):
         resources = {
             "ct:120": {"state": "started"},
-            "ct:121": {"state": "started"},
-            "vm:271": {"state": "started"},
+            "ct:121": {"state": "started", "failback": 0, "auto-rebalance": 0},
+            "vm:271": {"state": "started", "failback": 0, "auto-rebalance": 0},
         }
         rules = {
             name: {"rule": name, "type": "node-affinity",
