@@ -167,11 +167,28 @@ jobs:
           terraform init -input=false
           terraform validate
 
-          terraform apply -auto-approve -input=false \
-            -parallelism=${PARALLEL} \
+          # Plan first. Never let Day-0 implicitly destroy or replace workloads.
+          TFPLAN="$RUNNER_TEMP/meowcloud-day0.tfplan"
+          terraform plan -input=false -parallelism="${PARALLEL}" \
             -var="backend_count=${BACKEND_CNT}" \
             -var="frontend_count=${FRONTEND_CNT}" \
-            -var="db_count=${DB_CNT}"
+            -var="db_count=${DB_CNT}" -out="$TFPLAN"
+          terraform show -json "$TFPLAN" | python3 -c '
+          import json, sys
+          plan = json.load(sys.stdin)
+          prohibited = []
+          for item in plan.get("resource_changes", []):
+              actions = item.get("change", {}).get("actions", [])
+              if "delete" in actions and item.get("address") != "local_file.ansible_inventory":
+                  prohibited.append((item.get("address"), actions))
+          if prohibited:
+              for address, actions in prohibited:
+                  print(f"[BLOCK] Day-0 plan would delete/replace: {address} actions={actions}", file=sys.stderr)
+              sys.exit(1)
+          print("[PASS] Day-0 plan contains no workload delete/replacement.")
+          '
+          terraform apply -input=false -parallelism="${PARALLEL}" "$TFPLAN"
+          rm -f "$TFPLAN"
 
           TF_END=$(date +%s)
           echo "TF_DURATION=$((TF_END - TF_START))" >> $GITHUB_ENV
