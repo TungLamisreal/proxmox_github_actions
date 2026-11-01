@@ -55,6 +55,55 @@ class PveClusterPolicyTests(unittest.TestCase):
             self.assertTrue(any("ct:121" in call for call in calls))
             self.assertTrue(any("vm:271" in call for call in calls))
 
+    def test_guest_startup_contains_only_previously_confirmed_db_values(self):
+        self.assertEqual(ha.DB_GUEST_STARTUP, {
+            271: "order=5,up=60",
+            272: "order=4,up=60",
+        })
+        self.assertNotIn(120, ha.DB_GUEST_STARTUP)
+        self.assertEqual(ha.parse_startup("up=60,order=4"), {"order": 4, "up": 60})
+
+    def test_guest_startup_idempotent_and_does_not_touch_autovm(self):
+        values = {
+            271: {"startup": ""},
+            272: {"startup": ""},
+        }
+        resources = [
+            {"vmid": 271, "type": "qemu", "node": "node2"},
+            {"vmid": 272, "type": "qemu", "node": "node3"},
+            {"vmid": 120, "type": "lxc", "node": "node1"},
+        ]
+
+        def get_pve(*args):
+            if args[1] == "/cluster/resources":
+                return resources
+            vmid = int(args[1].split("/")[-2])
+            return values[vmid]
+
+        def update(*args):
+            vmid = int(args[2].split("/")[-2])
+            self.assertIn(vmid, (271, 272))
+            values[vmid]["startup"] = args[4]
+            return ""
+
+        with mock.patch.object(ha, "check_cluster"), \
+             mock.patch.object(ha, "pvesh_json", side_effect=get_pve), \
+             mock.patch.object(ha, "remote", side_effect=update) as remote:
+            ha.set_guest_startup()
+            self.assertEqual(remote.call_count, 2)
+            ha.set_guest_startup()
+            self.assertEqual(remote.call_count, 2)
+            self.assertEqual(values[271]["startup"], "order=5,up=60")
+            self.assertEqual(values[272]["startup"], "order=4,up=60")
+
+    def test_guest_startup_refuses_missing_vm_without_mutation(self):
+        with mock.patch.object(ha, "check_cluster"), \
+             mock.patch.object(ha, "pvesh_json", return_value=[]), \
+             mock.patch.object(ha, "remote") as remote:
+            with self.assertRaises(ha.PolicyError):
+                ha.set_guest_startup()
+            remote.assert_not_called()
+
     def test_startup_delay_is_idempotently_applied_to_all_pve_nodes(self):
         values = {name: {"startall-onboot-delay": 0} for name in ha.NODES}
         def get_node(*args):
