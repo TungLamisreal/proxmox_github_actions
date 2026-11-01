@@ -25,7 +25,10 @@ def psql(sql, database='postgres', user='postgres'):
     # SSH only sends a fixed command; SQL travels on stdin, not command-line args.
     ssh = [
         'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
-        '-o', 'StrictHostKeyChecking=accept-new', f'root@{HOST}',
+        # Lab DB KVM is intentionally recreated by workflow 02/01. Its SSH host key
+        # changes after destroy; use the same ephemeral-host SSH policy as Ansible.
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null', f'root@{HOST}',
         'docker', 'exec', '-i', 'meow-postgres', 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
         '-A', '-t', '-U', user, '-d', database,
     ]
