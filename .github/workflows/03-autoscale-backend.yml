@@ -34,7 +34,7 @@ on:
       ram_reserve_mb:
         description: "RAM dự phòng tối thiểu cho mỗi Node (MB)"
         required: true
-        default: "2048"
+        default: "1024"
         type: string
 
 # Chỉ cho phép một workflow IaC trong repo thao tác Terraform state tại một thời điểm.
