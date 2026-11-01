@@ -13,6 +13,9 @@ on:
       - ".github/workflows/00-resume-db.yml"
       - "packer/**"
       - "tests/test_packer_golden_build.py"
+      - "tests/test_db_bootstrap_readiness.py"
+      - "scripts/bootstrap_meowcrud.py"
+      - "ansible/playbooks/05-setup-database.yml"
   workflow_dispatch:
 
 permissions:
@@ -41,6 +44,7 @@ jobs:
           set -euo pipefail
           for script in packer/scripts/*.sh; do bash -n "$script"; done
           python3 -m unittest discover -s tests -p "test_packer_golden_build.py" -v
+          python3 -m unittest discover -s tests -p "test_db_bootstrap_readiness.py" -v
 
       - name: PVE HA/startup script unit tests
         shell: bash
