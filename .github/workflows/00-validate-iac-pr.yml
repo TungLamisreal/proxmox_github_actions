@@ -18,6 +18,8 @@ on:
       - "tests/test_db_bootstrap_readiness.py"
       - "scripts/bootstrap_meowcrud.py"
       - "ansible/playbooks/05-setup-database.yml"
+      - "ansible/playbooks/06-setup-observer.yml"
+      - "tests/test_alert_batching.py"
   workflow_dispatch:
 
 permissions:
@@ -48,6 +50,7 @@ jobs:
           python3 -m unittest discover -s tests -p "test_packer_golden_build.py" -v
           python3 -m unittest discover -s tests -p "test_db_bootstrap_readiness.py" -v
           python3 -m unittest discover -s tests -p "test_scale_in_provider_lock.py" -v
+          python3 -m unittest discover -s tests -p "test_alert_batching.py" -v
 
       - name: PVE HA/startup script unit tests
         shell: bash
