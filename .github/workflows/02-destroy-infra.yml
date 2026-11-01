@@ -54,6 +54,9 @@ jobs:
             echo "[STOP] Locked guest(s): $locked. Investigate backup/task before destroy."; exit 1
           fi
 
+      - name: "3b. Unregister MeowCloud HA resources"
+        run: python3 scripts/pve_cluster_policy.py --mode remove-ha
+
       - name: "4. Terraform Destroy"
         working-directory: ./terraform
         env:
