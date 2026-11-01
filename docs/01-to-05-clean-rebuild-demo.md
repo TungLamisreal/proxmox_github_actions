@@ -7,6 +7,12 @@ Workflow 02 destroys *both* database KVM guests and their PostgreSQL data disks,
 Do not run it until a tested off-VM database backup exists. CT120 files survive workflow 02, but a dump
 stored on the same physical host is not a substitute for an independent copy.
 
+**Important live observation:** On 2026-11-01 after cluster reboot, the
+`meowcloud-webhook.service` was **active**, despite an earlier intentional
+stop. Stop it and verify `inactive` before any destructive operation; consider
+disabling auto-start during the rebuild if further reboots are expected, and
+restore intended service policy only after the demo.
+
 Stop `meowcloud-webhook.service` before the recording. Check GitHub Actions has no active 00/01/02/03/04/05/05R run,
 the 3-node PVE cluster and Ceph are healthy, and capacity is back to BE=3 / FE=3.
 Do not run workflow 00 to rebuild Golden Images merely because the application code changed;
@@ -43,7 +49,10 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
   registered after all 01 configuration and service checks pass:
   `python3 scripts/pve_cluster_policy.py --mode apply-ha`. The controller uses
   idempotent **PVE 9.2 node-affinity rules** (`type=node-affinity`,
-  `affinity=positive`, `strict=0`) with preferred home-node priority:
+  `affinity=positive`, `strict=0`) with preferred home-node priority. Each
+  managed HA resource additionally sets **`failback=0`** and
+  **`auto-rebalance=0`** (confirmed supported by live PVE 9.2.21
+  `pvesh usage /cluster/ha/resources -v`), and the policy audits both values:
   - `meow-observer`: node1 preferred (2), node2/node3 allowed (1)
   - `meow-db-primary`: node2 preferred (2), node1/node3 allowed (1)
 - CT120 Auto-VM is **not currently registered with HA Manager** according to
@@ -66,9 +75,10 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
   power-on/recovery test with Ceph and RAM monitoring; do not rely on this
   setting alone to eliminate host memory spikes.
 - PVE 9.2 has **migrated HA groups to HA rules** (`/cluster/ha/groups` returns an
-  error). Rules give positive node preference with `strict=0`, **not** the old
-  `nofailback=1` guarantee. Whether a guest stays on its recovery node when the
-  preferred node returns must be established by a controlled live test.
+  error). The old group-level `nofailback=1` is replaced with **resource-level
+  `failback=0`**, and `auto-rebalance=0` prevents automatic load-based
+  rebalancing. A controlled live failover/return test is still required to
+  validate behavior, quorum/fencing, service RTO and memory impact.
 - Existing HA rules and resources are read first. Conflicting/foreign ownership,
   offline nodes, or lost quorum => the policy script **fails closed**.
   CT120 is outside its managed scope and remains untouched.
@@ -77,7 +87,10 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
   only CT121 and VM271 and removes only their matching, owned HA rules.
   **Guest data and VM disks are not deleted by the HA policy script**;
   workflow 02's subsequent Terraform operation is destructive and
-  still requires independently tested PostgreSQL backups.
+  will destroy PostgreSQL disks; user has copied a demo dump off CT120 but
+  chose to skip isolated restore testing. This is an **explicitly accepted
+  data-recovery limitation**, not a validated restore. The demo must not claim
+  recoverability based solely on `pg_restore -l`.
 - Inspect the runtime without changing it:
   ```bash
   python3 scripts/pve_cluster_policy.py --mode audit
