@@ -19,6 +19,36 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
 01 reuses the verified 9100/9101/9102 LXC and 9001/9002/9003 DB templates.
 
 
+## Full Golden Image rehearsal (workflow 00, one run)
+
+For the **recorded demo**, require a clean start and a single successful 00 workflow
+run on `main`; do not stitch together 00R runs and claim workflow 00 passed.
+
+After 02 has completed and Terraform state is empty:
+1. Verify no active GitHub Actions 00/00R/01/02 or Proxmox clone/backup tasks.
+2. Check `pvesh get /cluster/resources --type vm`: preserve CT120 (runner)
+   and VM9000 (DB seed), and verify all workload CT/VM IDs are gone.
+3. Remove **only** stale Golden Templates `9100,9101,9102` (LXC) and
+   `9001,9002,9003` (QEMU) after checking they are not used as linked-clone
+   parents by surviving guests. Never remove CT120, VM9000 or unrelated guests.
+   Workflow 00 deliberately refuses to overwrite existing templates.
+4. Ensure temporary build CTs 997/998 are absent; investigate any survivor,
+   don't automatically purge it. Keep the Debian 12 source archive on CephFS.
+   Generated MeowCloud `-v2.tar.zst` archives may be overwritten by 00.
+5. Run **00 - Build Golden Images (Packer)** exactly once on `main`.
+   The DB templates are built serially with fail-fast, using bounded APT
+   lock waits and temporarily stopping apt-daily timers **inside build clones**
+   (never deleting dpkg locks or terminating package installs).
+6. Require all stages to pass, including the final acceptance gate checking
+   3 LXC templates (9100–9102), 3 QEMU templates (9001–9003), four generated
+   CephFS role/base archives and preserved seed VM9000.
+
+If any stage fails, mark **00 failed**. Review the error and actual template
+inventory before cleaning up or retrying the **full** 00. Workflow 00R is an
+operational recovery tool, **not** part of the one-shot recorded demonstration.
+CI only checks static/regression contracts; it cannot guarantee that live
+APT, network, PVE, Ceph and Packer will be healthy at recording time.
+
 ## Guest placement, HA Manager, and safe staged startup
 
 - **PVE node startup staggering (30s/30s/90s):** Day-0 workflow 01 executes
