@@ -16,44 +16,120 @@ class PveClusterPolicyTests(unittest.TestCase):
         for _, _, nodes, _, _ in ha.HA:
             self.assertEqual(set(ha.normalize_nodes(nodes)), set(ha.NODES))
 
-    def test_ha_groups_require_nofailback_and_allow_any_survivor(self):
-        _, _, nodes, _, _ = ha.HA[0]
-        group = {"nodes": nodes, "nofailback": 1, "restricted": 0}
-        self.assertTrue(ha.group_matches(group, nodes))
-        self.assertFalse(ha.group_matches({**group, "nofailback": 0}, nodes))
-        self.assertFalse(ha.group_matches({**group, "restricted": 1}, nodes))
-        self.assertFalse(ha.group_matches({**group, "nodes": "node1:2,node2:1"}, nodes))
+    def test_pve9_affinity_rule_has_exact_scope_and_non_strict_preference(self):
+        sid, name, nodes, _, _ = ha.HA[0]
+        rule = {
+            "rule": name, "type": "node-affinity", "resources": sid,
+            "nodes": nodes, "affinity": "positive", "strict": 0
+        }
+        self.assertTrue(ha.rule_matches(rule, sid, nodes))
+        self.assertFalse(ha.rule_matches({**rule, "strict": 1}, sid, nodes))
+        self.assertFalse(ha.rule_matches({**rule, "affinity": "negative"}, sid, nodes))
+        self.assertFalse(ha.rule_matches({**rule, "disable": 1}, sid, nodes))
+        self.assertFalse(ha.rule_matches({**rule, "nodes": "node1:2,node2:1"}, sid, nodes))
+        self.assertFalse(ha.rule_matches({**rule, "resources": "ct:121,ct:120"}, sid, nodes))
+        self.assertFalse(ha.rule_matches({**rule, "type": "resource-affinity"}, sid, nodes))
 
-    def test_apply_refuses_foreign_resource_before_any_write(self):
-        conflicting = {"ct:121": {"group": "custom-user-group", "state": "started"}}
+    def test_apply_refuses_foreign_service_before_any_write(self):
+        conflicting = {"ct:121": {"state": "started"}}
         with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \
-             mock.patch.object(ha, "ha_groups", return_value={}), \
+             mock.patch.object(ha, "ha_rules", return_value={}), \
              mock.patch.object(ha, "ha_resources", return_value=conflicting), \
              mock.patch.object(ha, "remote") as remote:
             with self.assertRaises(ha.PolicyError):
                 ha.apply_ha()
             remote.assert_not_called()
 
-    def test_remove_ha_leaves_user_managed_autovm_untouched(self):
-        resources = {
-            "ct:120": {"group": "user-autovm", "state": "started"},
-            "ct:121": {"group": "meow-observer", "state": "started"},
-            "vm:271": {"group": "meow-db-primary", "state": "started"},
+    def test_apply_refuses_foreign_affinity_rule_before_any_write(self):
+        foreign = {
+            "someone-else": {
+                "type": "node-affinity", "resources": "ct:121",
+                "nodes": "node1,node2", "affinity": "positive"
+            }
         }
-        groups = {
-            "meow-observer": {"group": "meow-observer"},
-            "meow-db-primary": {"group": "meow-db-primary"},
+        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \
+             mock.patch.object(ha, "ha_rules", return_value=foreign), \
+             mock.patch.object(ha, "ha_resources", return_value={}), \
+             mock.patch.object(ha, "remote") as remote:
+            with self.assertRaises(ha.PolicyError):
+                ha.apply_ha()
+            remote.assert_not_called()
+
+    def test_apply_creates_resources_before_pve9_rules_and_is_idempotent(self):
+        rules, resources, calls = {}, {}, []
+
+        def update(*args):
+            calls.append(args)
+            if args[:3] == ("pvesh", "create", "/cluster/ha/resources"):
+                sid = args[args.index("--sid") + 1]
+                resources[sid] = {"sid": sid, "state": "started"}
+            elif args[:3] == ("pvesh", "create", "/cluster/ha/rules"):
+                name = args[args.index("--rule") + 1]
+                rules[name] = {
+                    "rule": name, "type": "node-affinity",
+                    "resources": args[args.index("--resources") + 1],
+                    "nodes": args[args.index("--nodes") + 1],
+                    "affinity": "positive", "strict": 0
+                }
+            else:
+                self.fail(f"Unexpected write: {args}")
+            return ""
+
+        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \
+             mock.patch.object(ha, "ha_rules", side_effect=lambda: dict(rules)), \
+             mock.patch.object(ha, "ha_resources", side_effect=lambda: dict(resources)), \
+             mock.patch.object(ha, "remote", side_effect=update):
+            ha.apply_ha()
+            self.assertEqual(len(calls), 4)
+            self.assertEqual(calls[0][:3], ("pvesh", "create", "/cluster/ha/resources"))
+            self.assertEqual(calls[1][:3], ("pvesh", "create", "/cluster/ha/rules"))
+            self.assertEqual(calls[2][:3], ("pvesh", "create", "/cluster/ha/resources"))
+            self.assertEqual(calls[3][:3], ("pvesh", "create", "/cluster/ha/rules"))
+            ha.apply_ha()
+            self.assertEqual(len(calls), 4)
+            self.assertNotIn("ct:120", resources)
+
+    def test_remove_ha_leaves_ct120_untouched(self):
+        resources = {
+            "ct:120": {"state": "started"},
+            "ct:121": {"state": "started"},
+            "vm:271": {"state": "started"},
+        }
+        rules = {
+            name: {"rule": name, "type": "node-affinity",
+                   "resources": sid, "nodes": nodes,
+                   "affinity": "positive", "strict": 0}
+            for sid, name, nodes, _, _ in ha.HA
         }
         with mock.patch.object(ha, "check_cluster"), \
              mock.patch.object(ha, "ha_resources", return_value=resources), \
-             mock.patch.object(ha, "ha_groups", return_value=groups), \
+             mock.patch.object(ha, "ha_rules", return_value=rules), \
              mock.patch.object(ha, "remote") as remote:
             ha.remove_ha()
             calls = [" ".join(str(v) for v in call.args) for call in remote.call_args_list]
             self.assertEqual(len(calls), 4)
+            self.assertIn("/cluster/ha/rules/meow-observer", calls[0])
+            self.assertIn("/cluster/ha/resources/ct:121", calls[1])
+            self.assertIn("/cluster/ha/rules/meow-db-primary", calls[2])
+            self.assertIn("/cluster/ha/resources/vm:271", calls[3])
             self.assertTrue(all("ct:120" not in call for call in calls))
-            self.assertTrue(any("ct:121" in call for call in calls))
-            self.assertTrue(any("vm:271" in call for call in calls))
+
+    def test_remove_empty_ha_is_a_noop(self):
+        with mock.patch.object(ha, "check_cluster"), \
+             mock.patch.object(ha, "ha_resources", return_value={}), \
+             mock.patch.object(ha, "ha_rules", return_value={}), \
+             mock.patch.object(ha, "remote") as remote:
+            ha.remove_ha()
+            remote.assert_not_called()
+
+    def test_remove_refuses_ambiguous_ownership(self):
+        with mock.patch.object(ha, "check_cluster"), \
+             mock.patch.object(ha, "ha_resources", return_value={"vm:271": {"state": "started"}}), \
+             mock.patch.object(ha, "ha_rules", return_value={}), \
+             mock.patch.object(ha, "remote") as remote:
+            with self.assertRaises(ha.PolicyError):
+                ha.remove_ha()
+            remote.assert_not_called()
 
     def test_guest_startup_contains_only_previously_confirmed_db_values(self):
         self.assertEqual(ha.DB_GUEST_STARTUP, {
