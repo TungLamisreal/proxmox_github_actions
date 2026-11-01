@@ -153,9 +153,11 @@ jobs:
           # Đếm số lượng cấu hình LXC Backend (VMID 151+) hiện có trên toàn cụm
           ACTUAL_BE_COUNT=$($SSH_CMD "ls -1 /etc/pve/nodes/*/lxc/ | grep -E '^15[1-9]\.conf$' | wc -l" || echo "$BACKEND_CNT")
 
+          # Never silently increase declared day-0 capacity based on leftovers.
+          # Clean replay must be deterministic; drift needs explicit remediation.
           if [ "$ACTUAL_BE_COUNT" -gt "$BACKEND_CNT" ]; then
-            echo "⚠️ Phát hiện AI đã Scale-out cụm Backend lên $ACTUAL_BE_COUNT nodes. Ghi đè cấu hình Terraform để không xóa máy của AI!"
-            BACKEND_CNT=$ACTUAL_BE_COUNT
+            echo "::error::Actual Backend LXC count ($ACTUAL_BE_COUNT) exceeds requested ($BACKEND_CNT). Scale-in or reconcile before running 01."
+            exit 1
           fi
 
           echo "BASELINE_BACKEND_CNT=$BACKEND_CNT" >> "$GITHUB_ENV"
