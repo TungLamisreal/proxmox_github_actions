@@ -11,6 +11,9 @@ resource "proxmox_virtual_environment_container" "tunnels" {
   vm_id        = 131 + count.index
   unprivileged = true
   started      = true
+  # Let the Proxmox node stagger booting non-HA guests.
+  # HA-managed Observer is started by PVE HA Manager instead.
+  start_on_boot = true
 
   initialization {
     hostname = "tunnel-${count.index + 1}"
