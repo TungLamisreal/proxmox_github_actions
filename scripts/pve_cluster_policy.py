@@ -14,7 +14,8 @@ import sys
 
 PVE_HOST = "192.168.150.49"
 NODES = ("node1", "node2", "node3")
-DELAY = 60
+# Approved node-specific boot delays; preserve current PVE startup staggering.
+BOOT_DELAYS = {"node1": 30, "node2": 30, "node3": 90}
 # Proxmox HA groups, for PVE versions that support group nofailback.
 HA = (
     ("ct:121", "meow-observer", "node1:2,node2:1,node3:1", "lxc", 121),
@@ -108,13 +109,14 @@ def set_startup_delay():
     for name in NODES:
         endpoint = f"/nodes/{name}/config"
         current = pvesh_json("get", endpoint)
+        delay = BOOT_DELAYS[name]
         setting = str(current.get("startall-onboot-delay", "0"))
-        if setting != str(DELAY):
-            remote("pvesh", "set", endpoint, "--startall-onboot-delay", str(DELAY))
+        if setting != str(delay):
+            remote("pvesh", "set", endpoint, "--startall-onboot-delay", str(delay))
         actual = pvesh_json("get", endpoint)
-        if str(actual.get("startall-onboot-delay", "0")) != str(DELAY):
+        if str(actual.get("startall-onboot-delay", "0")) != str(delay):
             raise PolicyError(f"Startup delay not persisted on {name}")
-        print(f"[PASS] {name}: startall-onboot-delay={DELAY}s")
+        print(f"[PASS] {name}: startall-onboot-delay={delay}s")
 
 
 def apply_ha():
