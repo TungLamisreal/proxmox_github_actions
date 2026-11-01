@@ -178,7 +178,7 @@ jobs:
         if: steps.select_lifo.outputs.skip_scale_in == 'false'
         working-directory: /opt/meowcloud-iac/terraform
         run: |
-          terraform init -input=false
+          terraform init -input=false -lockfile=readonly
           terraform state list | grep -q '^proxmox_virtual_environment_container\.' || {
             echo "::error::Terraform compute state missing; refusing scale-in."
             exit 1
