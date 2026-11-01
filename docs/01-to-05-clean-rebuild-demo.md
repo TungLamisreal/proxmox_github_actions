@@ -22,6 +22,23 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
   reasserts the desired value on every replay.
 - The LXC guest definitions include `start_on_boot=true` for regular host
   startup. Terraform 01 still uses `tf_parallelism=1` to serialize provisioning.
+- **Per-guest startup settings captured from the running lab (2026-11-01):**
+  - CT120: `onboot=1, startup=order=1,up=60` — user-managed Auto-VM;
+    kept intact by the PR and not reconfigured.
+  - DB-02 VM272: `onboot=1, startup=order=4,up=60`.
+  - DB-01 VM271: `onboot=1, startup=order=5,up=60`.
+  - Observer CT121, Tunnels CT131–133, LBs CT141–142, BE CT151–153,
+    FE CT171–173: `onboot=1`, no per-guest startup value found.
+- Day-0 workflow 01 reasserts `startup` on **VM271 and VM272 only** using
+  `python3 scripts/pve_cluster_policy.py --mode set-guest-startup`, after
+  Terraform creates them and before HA registration. The command only updates
+  the guest configuration metadata, **does not restart a guest**, and checks the
+  stored value. It discovers each VM's actual PVE node. CT120 is not modified.
+- **These startup orders are not global across the 3-node cluster.**
+  PVE host auto-start evaluates order locally; Proxmox HA Manager has its own
+  startup/recovery sequencing and can ignore `order=5,up=60` for VM271. This
+  policy also does not serialize Terraform provisioning across multiple runners.
+
 - **PVE HA Manager:** Only **Observer CT121** and **DB Primary VM271** are
   registered after all 01 configuration and service checks pass:
   `python3 scripts/pve_cluster_policy.py --mode apply-ha`. The controller uses
