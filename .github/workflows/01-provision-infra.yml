@@ -27,6 +27,14 @@ on:
         required: true
         default: "1"
         type: string
+      initial_app_release:
+        description: "Day-0 application: baseline (clean demo) or pinned (resume a published release)"
+        required: true
+        default: "baseline"
+        type: choice
+        options:
+          - baseline
+          - pinned
 
 concurrency:
   group: meowcloud-iac-state
@@ -51,6 +59,8 @@ jobs:
     name: "Deploy from Golden Images & Benchmark"
     runs-on: self-hosted
     timeout-minutes: 45
+    env:
+      INITIAL_APP_RELEASE: ${{ inputs.initial_app_release }}
 
     steps:
       - name: "1. Checkout Repository"
@@ -58,6 +68,11 @@ jobs:
 
       - name: "2. Pre-flight Check (State Dir, SSH Key, Vault & Golden Images)"
         run: |
+          set -euo pipefail
+          case "$INITIAL_APP_RELEASE" in
+            baseline|pinned) echo "Day-0 app mode: $INITIAL_APP_RELEASE" ;;
+            *) echo "::error::Invalid initial_app_release"; exit 1 ;;
+          esac
           echo "=== [1] Kiểm tra thư mục Terraform State & Khóa SSH ==="
           sudo mkdir -p /opt/meowcloud-iac/state
           sudo chown -R $(whoami):$(whoami) /opt/meowcloud-iac
@@ -159,6 +174,15 @@ jobs:
           TF_END=$(date +%s)
           echo "TF_DURATION=$((TF_END - TF_START))" >> $GITHUB_ENV
 
+      - name: "3b. Publish fresh Terraform-generated runtime inventory"
+        run: |
+          set -euo pipefail
+          test -s ./ansible/inventory.ini || {
+            echo "::error::Terraform generated no ansible/inventory.ini"; exit 1;
+          }
+          install -m 0644 ./ansible/inventory.ini /opt/meowcloud-iac/ansible/inventory.ini
+          echo "Published current day-0 inventory for workflows 03/04/05."
+
       - name: "4. Wait for All LXC/KVM Nodes SSH Readiness"
         working-directory: ./ansible
         run: |
@@ -178,6 +202,13 @@ jobs:
 
           ansible-playbook playbooks/05-setup-database.yml
 
+      - name: "5b. Idempotently bootstrap isolated CRUD role/database on new DB primary"
+        run: |
+          set -euo pipefail
+          # Reuses protected CT120 credentials when present; creates role/database
+          # on a newly provisioned DB VM without app tables or migrations.
+          python3 scripts/bootstrap_meowcrud.py --confirm CREATE_MEOWCLOUD_DEMO_DB
+
       - name: "6. [Tier 2] Configure Backend API Elastic Pool (03-setup-backend.yml)"
         working-directory: ./ansible
         run: |
@@ -187,7 +218,12 @@ jobs:
           export LANG="C.UTF-8"
           export LC_ALL="C.UTF-8"
 
-          ansible-playbook playbooks/03-setup-backend.yml
+          if [ "$INITIAL_APP_RELEASE" = "baseline" ]; then
+            # Explicit override: stale app-release.json must NOT resurrect v2 after destroy.
+            ansible-playbook playbooks/03-setup-backend.yml -e meow_backend_image=meow-backend:latest
+          else
+            ansible-playbook playbooks/03-setup-backend.yml
+          fi
 
       - name: "7. [Tier 3] Configure Web Frontend Elastic Pool (04-setup-frontend.yml)"
         working-directory: ./ansible
@@ -198,7 +234,11 @@ jobs:
           export LANG="C.UTF-8"
           export LC_ALL="C.UTF-8"
 
-          ansible-playbook playbooks/04-setup-frontend.yml
+          if [ "$INITIAL_APP_RELEASE" = "baseline" ]; then
+            ansible-playbook playbooks/04-setup-frontend.yml -e meow_frontend_image=nginx:alpine
+          else
+            ansible-playbook playbooks/04-setup-frontend.yml
+          fi
 
       - name: "8. [Tier 4] Configure HA Load Balancers & Keepalived VIP (02-setup-lb.yml)"
         working-directory: ./ansible
@@ -253,7 +293,14 @@ jobs:
 
           echo "=== [3] Service isolation check ==="
           ansible-playbook playbooks/07-service-isolation.yml
-          echo "=== [4] Baseline autoscale state ==="
+          echo "=== [4] Publish validated initial app release ==="
+          if [ "$INITIAL_APP_RELEASE" = "baseline" ]; then
+            # Leave versioned v1/v2 snapshots untouched for later 05R replay.
+            python3 ../scripts/demo_release.py publish --target baseline --confirm PUBLISH-VERIFIED-RELEASE
+          else
+            echo "Preserving previously published app-release.json (pinned mode)."
+          fi
+          echo "=== [5] Baseline autoscale state ==="
           mkdir -p /opt/meowcloud-iac/state
           jq -n --argjson be "$BASELINE_BACKEND_CNT" --argjson fe "$BASELINE_FRONTEND_CNT" \
             '{backend_count:$be, frontend_count:$fe, backend_node_map:{}, frontend_node_map:{}}' \
