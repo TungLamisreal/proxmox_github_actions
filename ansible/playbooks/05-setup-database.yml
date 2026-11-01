@@ -100,3 +100,32 @@
         port: 5432
         delay: 2
         timeout: 60
+
+    # TCP port 5432 may be listening while postgres:15-alpine is still
+    # initializing the cluster. A real SQL round-trip is the readiness gate
+    # for the following CRUD bootstrap step in workflow 01.
+    - name: Wait until PostgreSQL can execute SELECT 1
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - meow-postgres
+          - psql
+          - -X
+          - -A
+          - -t
+          - -v
+          - ON_ERROR_STOP=1
+          - -U
+          - postgres
+          - -d
+          - postgres
+          - -c
+          - "SELECT 1;"
+      register: postgres_sql_ready
+      changed_when: false
+      until:
+        - postgres_sql_ready.rc == 0
+        - postgres_sql_ready.stdout | trim == '1'
+      retries: 45
+      delay: 2

@@ -86,15 +86,22 @@ jobs:
           sudo mkdir -p /opt/meowcloud-iac/state
           sudo chown -R $(whoami):$(whoami) /opt/meowcloud-iac
 
-          mkdir -p ~/.ssh
+          # Keep ONE canonical runner identity for Terraform, Ansible, PVE SSH
+          # and bootstrap_meowcrud.py. Do not depend on the shell's HOME.
+          SSH_KEY_DIR="/home/github-runner/.ssh"
+          SSH_KEY_PATH="$SSH_KEY_DIR/id_ed25519"
+          install -d -m 0700 "$SSH_KEY_DIR"
           if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-            chmod 600 ~/.ssh/id_ed25519
-            ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub
-          elif [ ! -f "/home/github-runner/.ssh/id_ed25519" ]; then
-            echo "ERROR: Không tìm thấy SSH Private Key!"
+            printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > "$SSH_KEY_PATH"
+            chmod 600 "$SSH_KEY_PATH"
+          elif [ ! -s "$SSH_KEY_PATH" ]; then
+            echo "::error::Missing canonical runner SSH key at $SSH_KEY_PATH"
             exit 1
           fi
+          test -r "$SSH_KEY_PATH"
+          ssh-keygen -y -f "$SSH_KEY_PATH" > "$SSH_KEY_PATH.pub"
+          chmod 644 "$SSH_KEY_PATH.pub"
+          echo "[PASS] Canonical runner SSH identity and public key available"
 
           echo "=== [2] Kiểm tra mật khẩu giải mã Ansible Vault ==="
           if [ -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" ]; then
