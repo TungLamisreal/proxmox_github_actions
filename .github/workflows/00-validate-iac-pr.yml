@@ -9,8 +9,10 @@ on:
       - ".github/workflows/01-provision-infra.yml"
       - ".github/workflows/02-destroy-infra.yml"
       - ".github/workflows/00-validate-iac-pr.yml"
+      - ".github/workflows/00-build-golden-images.yml"
       - ".github/workflows/00-resume-db.yml"
-      - "packer/scripts/99-cleanup-sanitize.sh"
+      - "packer/**"
+      - "tests/test_packer_golden_build.py"
   workflow_dispatch:
 
 permissions:
@@ -37,7 +39,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash -n packer/scripts/99-cleanup-sanitize.sh
+          for script in packer/scripts/*.sh; do bash -n "$script"; done
+          python3 -m unittest discover -s tests -p "test_packer_golden_build.py" -v
 
       - name: PVE HA/startup script unit tests
         shell: bash
