@@ -512,16 +512,22 @@ jobs:
             for ((i=OLD_FE_COUNT+1; i<=NEW_FE_COUNT; i++)); do
               FE_IP="192.168.150.$((170 + i))"
               echo "Kiểm tra trực tiếp Frontend mới fe-$i ($FE_IP:80)..."
+              # Write HTML first: grep -q on a pipe can close early, causing curl exit 23 under pipefail.
+              FE_HTML="$(mktemp "$RUNNER_TEMP/scaleout-frontend-${i}.XXXXXX")"
               curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
-                "http://${FE_IP}/" | grep -Fq "$FRONTEND_MARKER"
+                --output "$FE_HTML" "http://${FE_IP}/"
+              grep -Fq "$FRONTEND_MARKER" "$FE_HTML"
+              rm -f "$FE_HTML"
               echo "Frontend fe-$i ($FE_IP) phản hồi HTTP 200 OK."
             done
           fi
 
           echo "=== Layer 1B & Layer 2: Kiểm tra phân phối lưu lượng qua VIP Load Balancer (192.168.150.100) ==="
+          VIP_HTML="$(mktemp "$RUNNER_TEMP/scaleout-vip-frontend.XXXXXX")"
           curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
-            http://192.168.150.100/ >/dev/null
-          curl --fail --silent --show-error http://192.168.150.100/ | grep -Fq "$FRONTEND_MARKER"
+            --output "$VIP_HTML" http://192.168.150.100/
+          grep -Fq "$FRONTEND_MARKER" "$VIP_HTML"
+          rm -f "$VIP_HTML"
           echo "Frontend Web UI qua VIP .100 OK."
 
           if (( ACTUAL_ADD_BE > 0 )); then
