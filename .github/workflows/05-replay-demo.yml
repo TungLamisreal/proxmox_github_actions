@@ -132,10 +132,11 @@ jobs:
           set -euo pipefail
           curl -fsS --retry 5 --retry-delay 2             http://192.168.150.100/api/health | jq -e '.status == "UP"'
           HTML="$(curl -fsS --retry 5 --retry-delay 2 http://192.168.150.100/)"
-          [[ "$HTML" == *"MeowCloud Elastic Infrastructure"* ]]
           if [[ "$REPLAY_TARGET" == "baseline" ]]; then
-            echo "PASS: baseline MeowCloud HTML and Backend health"
+            [[ "$HTML" == *"Welcome to nginx!"* ]]
+            echo "PASS: official Nginx baseline page and Backend health"
           else
+            [[ "$HTML" == *"MeowCloud Elastic Infrastructure"* ]]
             EDITION="crud-$REPLAY_TARGET"
             curl -fsS --retry 5 --retry-delay 2               http://192.168.150.100/version.json |
               jq -e --arg version "$RELEASE_VERSION" --arg edition "$EDITION"                 '.version == $version and .app_edition == $edition'
