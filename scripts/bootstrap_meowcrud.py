@@ -24,7 +24,8 @@ ROLE = 'meowcrud'
 def psql(sql, database='postgres', user='postgres'):
     # SSH only sends a fixed command; SQL travels on stdin, not command-line args.
     ssh = [
-        'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+        'ssh', '-i', '/home/github-runner/.ssh/id_ed25519', '-o', 'IdentitiesOnly=yes',
+        '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
         # Lab DB KVM is intentionally recreated by workflow 02/01. Its SSH host key
         # changes after destroy; use the same ephemeral-host SSH policy as Ansible.
         '-o', 'StrictHostKeyChecking=no',
