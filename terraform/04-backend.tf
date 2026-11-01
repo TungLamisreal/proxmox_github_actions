@@ -16,6 +16,9 @@ resource "proxmox_virtual_environment_container" "backend" {
   vm_id        = 151 + count.index
   unprivileged = true
   started      = true
+  # Let the Proxmox node stagger booting non-HA guests.
+  # HA-managed Observer is started by PVE HA Manager instead.
+  start_on_boot = true
 
   # --- LINKED CLONE TỪ GOLDEN TEMPLATE 9100 TRÊN CEPH RBD ---
   # Đã xóa datastore_id để fix lỗi HTTP 500
