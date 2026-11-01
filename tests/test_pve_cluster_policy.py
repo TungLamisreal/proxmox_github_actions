@@ -62,7 +62,7 @@ class PveClusterPolicyTests(unittest.TestCase):
             return values[node]
         def update(*args):
             node = args[2].split("/")[2]
-            values[node]["startall-onboot-delay"] = 60
+            values[node]["startall-onboot-delay"] = ha.BOOT_DELAYS[node]
             return ""
         with mock.patch.object(ha, "check_cluster"), \
              mock.patch.object(ha, "pvesh_json", side_effect=get_node), \
@@ -71,7 +71,7 @@ class PveClusterPolicyTests(unittest.TestCase):
             self.assertEqual(remote.call_count, len(ha.NODES))
             ha.set_startup_delay()
             self.assertEqual(remote.call_count, len(ha.NODES))
-        self.assertTrue(all(n["startall-onboot-delay"] == 60 for n in values.values()))
+        self.assertEqual({name: values[name]["startall-onboot-delay"] for name in ha.NODES}, ha.BOOT_DELAYS)
 
 
 if __name__ == "__main__":
