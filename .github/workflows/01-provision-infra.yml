@@ -284,7 +284,11 @@ jobs:
           ansible all -m shell -a "echo -n 'Host: $(hostname) | IP: $(hostname -I | awk \"{print \$1}\") | Machine-ID: ' && cat /etc/machine-id"
 
           echo "=== [1b] Verify MeowCloud Frontend content instead of Nginx default page ==="
-          curl -fsS http://192.168.150.100/ | grep -q 'MeowCloud Elastic Infrastructure'
+          if [ "$INITIAL_APP_RELEASE" = "baseline" ]; then
+            curl -fsS http://192.168.150.100/ | grep -q 'Welcome to nginx!'
+          else
+            curl -fsS http://192.168.150.100/ | grep -q 'MeowCloud Elastic Infrastructure'
+          fi
 
           echo "=== [2] Kiểm tra phản hồi từ Keepalived VIP (192.168.150.100) ==="
           curl -f -s http://192.168.150.100/lb-status
