@@ -14,6 +14,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 
 STATE = pathlib.Path('/opt/meowcloud-iac/state/meowcrud.json')
 HOST = '192.168.150.71'
@@ -41,6 +42,24 @@ def psql(sql, database='postgres', user='postgres'):
     return result.stdout.strip()
 
 
+
+def wait_for_sql_ready(attempts=45, interval=2):
+    """Retry only a read-only SELECT; never replay CREATE ROLE/CREATE DATABASE."""
+    for attempt in range(attempts):
+        try:
+            if psql('SELECT 1;') == '1':
+                print(f'PASS: DB primary SQL ready (attempt {attempt + 1}).')
+                return
+        except RuntimeError as exc:
+            # psql exit 2 means connection failure (e.g., PostgreSQL still
+            # initializing). Authentication and other errors must fail fast.
+            if 'rc=2' not in str(exc):
+                raise
+        if attempt + 1 < attempts:
+            time.sleep(interval)
+    raise RuntimeError('DB primary did not accept SQL within the retry budget. '
+                       'Inspect the meow-postgres container and its logs.')
+
 def persist(data):
     # No credentials in repo, GitHub logs or shell command-line arguments.
     STATE.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +84,7 @@ def main():
     args = parser.parse_args()
     if args.confirm != 'CREATE_MEOWCLOUD_DEMO_DB':
         parser.error('Explicit --confirm CREATE_MEOWCLOUD_DEMO_DB required')
+    wait_for_sql_ready()
     if STATE.exists():
         cfg = json.loads(STATE.read_text())
         if not all(cfg.get(x) for x in ('db_host', 'db_name', 'db_user', 'db_password', 'demo_token')):
