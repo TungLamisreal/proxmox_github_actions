@@ -266,4 +266,47 @@ jobs:
             fi
           done
           packer init db-kvm.pkr.hcl
-          packer build -parallel-builds=1 db-kvm.pkr.hcl
+          packer validate db-kvm.pkr.hcl
+
+          # Each invocation builds exactly one template; fail immediately if it
+          # fails instead of continuing to the next node and leaving a confusing
+          # mix of successful and failed DB images.
+          for target in node1 node2 node3; do
+            case "$target" in
+              node1) vmid=9001 ;;
+              node2) vmid=9002 ;;
+              node3) vmid=9003 ;;
+            esac
+            echo "=== [DB] Building $target / VMID $vmid ==="
+            packer build -parallel-builds=1 \
+              -only="proxmox-clone.db_${target}" db-kvm.pkr.hcl
+
+            # Before starting the next node, verify the new image really
+            # exists as a stopped QEMU template on its expected PVE node.
+            actual_cfg="$($SSH_CMD "pvesh get /nodes/${target}/qemu/${vmid}/config --output-format json")"
+            printf '%s\n' "$actual_cfg" | jq -e '((.template // 0) | tostring) == "1"' >/dev/null
+            echo "[PASS] $target: DB golden template $vmid"
+          done
+
+      - name: "4. Post-build acceptance: all six golden templates and CephFS archives"
+        run: |
+          set -euo pipefail
+          SSH_CMD="ssh -o BatchMode=yes -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
+          resources="$($SSH_CMD 'pvesh get /cluster/resources --type vm --output-format json')"
+
+          for spec in "9100:lxc:node1" "9101:lxc:node2" "9102:lxc:node3" \
+                      "9001:qemu:node1" "9002:qemu:node2" "9003:qemu:node3"; do
+            IFS=: read -r id kind node <<< "$spec"
+            printf '%s\n' "$resources" | jq -e \
+              --argjson id "$id" --arg kind "$kind" --arg node "$node" \
+              'any(.[]; .vmid == $id and .type == $kind and .node == $node and ((.template // 0) | tostring) == "1")' >/dev/null
+            echo "[PASS] Golden template $id on $node"
+          done
+
+          for role in base lb observer tunnel; do
+            $SSH_CMD "test -s /mnt/pve/shared-fs/template/cache/meowcloud-lxc-${role}-debian12-v2.tar.zst"
+            echo "[PASS] CephFS archive $role"
+          done
+          $SSH_CMD 'qm config 9000 >/dev/null'
+          echo "[PASS] DB seed 9000 preserved"
+          echo "=== WORKFLOW 00 BUILD ACCEPTANCE: PASS ==="
