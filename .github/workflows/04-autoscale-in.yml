@@ -64,6 +64,13 @@ jobs:
           mkdir -p /opt/meowcloud-iac/packer/scripts
           cp -rf packer/scripts/* /opt/meowcloud-iac/packer/scripts/
 
+      - name: "Preflight Terraform provider lock before scale-in"
+        working-directory: /opt/meowcloud-iac/terraform
+        run: |
+          set -euo pipefail
+          terraform init -upgrade -input=false
+          terraform validate -no-color
+
       - name: Backup Elastic Pool State & Select LIFO Instance
         id: select_lifo
         working-directory: /opt/meowcloud-iac
@@ -171,7 +178,7 @@ jobs:
         if: steps.select_lifo.outputs.skip_scale_in == 'false'
         working-directory: /opt/meowcloud-iac/terraform
         run: |
-          terraform init -input=false
+          terraform init -input=false -lockfile=readonly
           terraform state list | grep -q '^proxmox_virtual_environment_container\.' || {
             echo "::error::Terraform compute state missing; refusing scale-in."
             exit 1
