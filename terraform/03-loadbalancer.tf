@@ -11,6 +11,9 @@ resource "proxmox_virtual_environment_container" "loadbalancer" {
   vm_id        = 141 + count.index
   unprivileged = true
   started      = true
+  # Let the Proxmox node stagger booting non-HA guests.
+  # HA-managed Observer is started by PVE HA Manager instead.
+  start_on_boot = true
 
   initialization {
     hostname = count.index == 0 ? "lb-master" : "lb-backup"
