@@ -8,6 +8,8 @@ on:
       - "tests/test_pve_cluster_policy.py"
       - ".github/workflows/01-provision-infra.yml"
       - ".github/workflows/02-destroy-infra.yml"
+      - ".github/workflows/04-autoscale-in.yml"
+      - "tests/test_scale_in_provider_lock.py"
       - ".github/workflows/00-validate-iac-pr.yml"
       - ".github/workflows/00-build-golden-images.yml"
       - ".github/workflows/00-resume-db.yml"
@@ -45,6 +47,7 @@ jobs:
           for script in packer/scripts/*.sh; do bash -n "$script"; done
           python3 -m unittest discover -s tests -p "test_packer_golden_build.py" -v
           python3 -m unittest discover -s tests -p "test_db_bootstrap_readiness.py" -v
+          python3 -m unittest discover -s tests -p "test_scale_in_provider_lock.py" -v
 
       - name: PVE HA/startup script unit tests
         shell: bash
