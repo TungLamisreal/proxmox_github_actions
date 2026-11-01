@@ -9,6 +9,8 @@ on:
       - ".github/workflows/01-provision-infra.yml"
       - ".github/workflows/02-destroy-infra.yml"
       - ".github/workflows/00-validate-iac-pr.yml"
+      - ".github/workflows/00-resume-db.yml"
+      - "packer/scripts/99-cleanup-sanitize.sh"
   workflow_dispatch:
 
 permissions:
@@ -31,6 +33,12 @@ jobs:
           terraform fmt -check -diff
           terraform init -backend=false -input=false
           terraform validate -no-color
+      - name: Packer cleanup shell syntax (offline)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n packer/scripts/99-cleanup-sanitize.sh
+
       - name: PVE HA/startup script unit tests
         shell: bash
         run: |
