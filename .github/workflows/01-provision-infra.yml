@@ -63,6 +63,15 @@ jobs:
       INITIAL_APP_RELEASE: ${{ inputs.initial_app_release }}
 
     steps:
+      - name: "0. Abort if autoscale webhook is active"
+        run: |
+          set -euo pipefail
+          if systemctl is-active --quiet meowcloud-webhook.service; then
+            echo "::error::Autoscale webhook is ACTIVE. Stop it on CT120 before 01/02."
+            exit 1
+          fi
+          echo "[PASS] Autoscale webhook is not active"
+
       - name: "1. Checkout Repository"
         uses: actions/checkout@v4
 
