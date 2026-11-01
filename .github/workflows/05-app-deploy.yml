@@ -67,7 +67,7 @@ jobs:
           done
           [[ "$frontend_ready" == "true" ]] || { echo "::error::Frontend did not become ready"; exit 1; }
           curl -fsS http://127.0.0.1:18086/version.json |
-            jq -e --arg sha "$GITHUB_SHA" '.version == $sha and .app_edition == "crud-v2"'
+            jq -e --arg sha "$GITHUB_SHA" '.version == $sha and (.app_edition == "crud-v1" or .app_edition == "crud-v2")'
 
   build:
     if: github.event_name != 'pull_request'
@@ -319,8 +319,16 @@ jobs:
           esac
           curl -fsS --retry 5 http://192.168.150.100/api/version |
             jq -e --arg ed "$EDITION" --arg sha "$GITHUB_SHA"               '.app_edition == $ed and .version == $sha'
-          python3 scripts/demo_release.py checkpoint --target "$TARGET"
-          echo "Saved pinned release snapshot: app-release-$TARGET.json"
+          # Replay v1 is intentionally pinned to the original proven-good commit.
+          # A new Git push of the historical v1 source gets a NEW commit SHA;
+          # keep the original v1 snapshot intact instead of failing after
+          # a successful live deployment or silently weakening its trust gate.
+          if [ "$TARGET" = v1 ] && [ "$GITHUB_SHA" != "cd32cd5031cc37096fc64d0507d9328ae2329f32" ]; then
+            echo "::notice::CRUD v1 demo release deployed. Preserving original pinned v1 replay snapshot."
+          else
+            python3 scripts/demo_release.py checkpoint --target "$TARGET"
+            echo "Saved pinned release snapshot: app-release-$TARGET.json"
+          fi
 
       - name: Roll back to last committed app release if rollout or smoke fails
         if: ${{ failure() && steps.rollout.outcome != 'skipped' && steps.publish.outcome != 'success' }}
