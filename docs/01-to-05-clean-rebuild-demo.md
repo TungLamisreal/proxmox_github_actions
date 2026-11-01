@@ -42,10 +42,15 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
 - **PVE HA Manager:** Only **Observer CT121** and **DB Primary VM271** are
   registered after all 01 configuration and service checks pass:
   `python3 scripts/pve_cluster_policy.py --mode apply-ha`. The controller uses
-  idempotent HA groups with `nofailback=1`, `restricted=0`, home-node priority:
+  idempotent **PVE 9.2 node-affinity rules** (`type=node-affinity`,
+  `affinity=positive`, `strict=0`) with preferred home-node priority:
   - `meow-observer`: node1 preferred (2), node2/node3 allowed (1)
   - `meow-db-primary`: node2 preferred (2), node1/node3 allowed (1)
-- CT120 Auto-VM is **already user-managed** and is never changed by this script.
+- CT120 Auto-VM is **not currently registered with HA Manager** according to
+  the live 2026-11-01 inspection (`/cluster/ha/resources` returned `[]`).
+  It still has `onboot=1` and an existing startup order; neither guarantees HA.
+  This script never adds, removes or edits CT120. If HA for CT120 is needed,
+  configure and test it separately with explicit approval.
   Tunnel CT131-133 and Nginx LB CT141-142 retain distinct initial placements by
   Terraform (no HA registration). BE CT151+ and FE CT171+ remain replaceable
   stateless cattle and are **not** Proxmox HA services. DB2 VM272 is **not**
@@ -56,17 +61,20 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
   relocates them. Database IP filter follows the VM's current node.
 - **IMPORTANT: PVE `startall-onboot-delay` governs ordinary PVE host
   auto-start; HA-managed guests are scheduled by the HA Manager separately.**
-  It does **not** guarantee a cluster-wide one-minute gap, nor that ct:120,
-  ct:121 and vm:271 (all HA-managed) start sequentially. Do a controlled
+  It does **not** guarantee a cluster-wide one-minute gap, nor that ct:121 and
+  vm:271 (HA-managed after 01) start sequentially with CT120 (currently ordinary onboot). Do a controlled
   power-on/recovery test with Ceph and RAM monitoring; do not rely on this
   setting alone to eliminate host memory spikes.
-- Existing PVE/HA groups are read first. Unexpected HA resources, policy
-  mismatch, a node offline, or lost quorum => the policy script **fails closed**.
-  PVE versions lacking the requested HA group options require an explicit
-  compatibility review; do not bypass safety guards.
+- PVE 9.2 has **migrated HA groups to HA rules** (`/cluster/ha/groups` returns an
+  error). Rules give positive node preference with `strict=0`, **not** the old
+  `nofailback=1` guarantee. Whether a guest stays on its recovery node when the
+  preferred node returns must be established by a controlled live test.
+- Existing HA rules and resources are read first. Conflicting/foreign ownership,
+  offline nodes, or lost quorum => the policy script **fails closed**.
+  CT120 is outside its managed scope and remains untouched.
 - Before Terraform destroy, workflow 02 runs
   `python3 scripts/pve_cluster_policy.py --mode remove-ha`, which unregisters
-  only CT121 and VM271 and removes only its two owned groups.
+  only CT121 and VM271 and removes only their matching, owned HA rules.
   **Guest data and VM disks are not deleted by the HA policy script**;
   workflow 02's subsequent Terraform operation is destructive and
   still requires independently tested PostgreSQL backups.
@@ -75,6 +83,7 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
   python3 scripts/pve_cluster_policy.py --mode audit
   ssh root@192.168.150.49 'ha-manager status'
   ssh root@192.168.150.49 'pvesh get /cluster/ha/resources --output-format json'
+  ssh root@192.168.150.49 'pvesh get /cluster/ha/rules --output-format json'
   ```
 
 ## Save live data before workflow 02
