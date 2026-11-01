@@ -23,7 +23,8 @@ DB_GUEST_STARTUP = {
     272: "order=4,up=60",  # DB-02 (not HA-managed)
 }
 # PVE 9.2: HA node-affinity rules replace the removed HA groups API.
-# Positive, non-strict rules with priority preference; no nofailback promise.
+# Positive non-strict rules set node priority; failback=0 and auto-rebalance=0
+# on each HA service prevent automatic return/rebalancing (PVE 9.2 API).
 HA = (
     ("ct:121", "meow-observer", "node1:2,node2:1,node3:1", "lxc", 121),
     ("vm:271", "meow-db-primary", "node2:2,node1:1,node3:1", "qemu", 271),
@@ -137,6 +138,17 @@ def rule_matches(rule, sid, desired_nodes):
     )
 
 
+def resource_matches(resource):
+    # Missing PVE fields have documented default=1 (unsafe for this policy).
+    # Require explicit booleans off, including when evaluating existing HA.
+    return (
+        str(resource.get("failback", 1)).lower() in ("0", "false")
+        and str(resource.get("auto-rebalance", 1)).lower() in ("0", "false")
+        and resource.get("state", "started") == "started"
+        and resource.get("group") in (None, "")
+    )
+
+
 def validate_owned_rules(rules, resources):
     """Refuse ambiguous ownership or third-party affinity before any writes."""
     for sid, name, nodes, _, _ in HA:
@@ -148,10 +160,10 @@ def validate_owned_rules(rules, resources):
                 raise PolicyError(f"External HA rule {other_name} already targets {sid}")
         current_resource = resources.get(sid)
         if current_resource is not None:
-            if current_resource.get("state", "started") != "started":
-                raise PolicyError(f"HA service {sid} is not started")
-            if current_resource.get("group") not in (None, ""):
-                raise PolicyError(f"Legacy HA group still attached to {sid}")
+            if not resource_matches(current_resource):
+                raise PolicyError(
+                    f"HA service {sid} has incompatible state or failback/rebalance policy"
+                )
             if current_rule is None:
                 raise PolicyError(
                     f"HA service {sid} exists without owned rule {name}; "
@@ -232,6 +244,7 @@ def apply_ha():
         if sid not in resources:
             remote("pvesh", "create", "/cluster/ha/resources",
                    "--sid", sid, "--state", "started",
+                   "--failback", "0", "--auto-rebalance", "0",
                    "--max_restart", "1", "--max_relocate", "1")
             print(f"[CREATE] HA service {sid}")
         else:
@@ -248,11 +261,11 @@ def apply_ha():
     final_rules = ha_rules()
     final_resources = ha_resources()
     for sid, name, nodes, _, _ in HA:
-        if sid not in final_resources or final_resources[sid].get("state", "started") != "started":
-            raise PolicyError(f"HA service verification failed: {sid}")
+        if sid not in final_resources or not resource_matches(final_resources[sid]):
+            raise PolicyError(f"HA service policy verification failed: {sid}")
         if name not in final_rules or not rule_matches(final_rules[name], sid, nodes):
             raise PolicyError(f"HA rule verification failed: {name}")
-        print(f"[PASS] {sid}: HA rule={name} (preferred placement; failback not guaranteed)")
+        print(f"[PASS] {sid}: HA rule={name}; failback=0; auto-rebalance=0")
     print("[PASS] CT120 untouched")
 
 
