@@ -16,6 +16,12 @@ PVE_HOST = "192.168.150.49"
 NODES = ("node1", "node2", "node3")
 # Approved node-specific boot delays; preserve current PVE startup staggering.
 BOOT_DELAYS = {"node1": 30, "node2": 30, "node3": 90}
+# Guest-level Start/Shutdown Order captured from live Proxmox configuration.
+# CT120 (order=1,up=60) is independently user-managed; NEVER edit that guest.
+DB_GUEST_STARTUP = {
+    271: "order=5,up=60",  # DB-01 Primary (HA-managed after Day-0)
+    272: "order=4,up=60",  # DB-02 (not HA-managed)
+}
 # Proxmox HA groups, for PVE versions that support group nofailback.
 HA = (
     ("ct:121", "meow-observer", "node1:2,node2:1,node3:1", "lxc", 121),
@@ -119,6 +125,49 @@ def set_startup_delay():
         print(f"[PASS] {name}: startall-onboot-delay={delay}s")
 
 
+def parse_startup(value):
+    """Normalize Proxmox startup string without relying on option ordering."""
+    if value is None or value == "":
+        return {}
+    if not isinstance(value, str):
+        raise PolicyError("Unexpected PVE startup config type")
+    result = {}
+    for part in value.split(","):
+        if "=" not in part:
+            raise PolicyError(f"Unrecognized guest startup entry: {part!r}")
+        key, val = [piece.strip() for piece in part.split("=", 1)]
+        if key in result or key not in ("order", "up", "down") or not val.isdigit():
+            raise PolicyError(f"Invalid guest startup entry: {part!r}")
+        result[key] = int(val)
+    return result
+
+
+def set_guest_startup():
+    """Restore only the observed startup policies for the two DB VMs.
+
+    This is config metadata (no start/stop/reboot). A fresh Terraform create
+    does not necessarily restore manually set Proxmox startup values.
+    """
+    check_cluster()
+    resources = pvesh_json("get", "/cluster/resources", "--type", "vm")
+    for vmid, desired in DB_GUEST_STARTUP.items():
+        matches = [r for r in resources
+                   if r.get("vmid") == vmid and r.get("type") == "qemu"]
+        if len(matches) != 1 or matches[0].get("node") not in NODES:
+            raise PolicyError(f"Expected exactly one DB QEMU VM {vmid} on known node")
+        node = matches[0]["node"]
+        endpoint = f"/nodes/{node}/qemu/{vmid}/config"
+        current = pvesh_json("get", endpoint)
+        expected = parse_startup(desired)
+        if parse_startup(current.get("startup")) != expected:
+            remote("pvesh", "set", endpoint, "--startup", desired)
+        actual = pvesh_json("get", endpoint)
+        if parse_startup(actual.get("startup")) != expected:
+            raise PolicyError(f"Guest startup policy not persisted for VM {vmid}")
+        print(f"[PASS] DB VM {vmid} on {node}: startup={desired}")
+    print("[PASS] CT120 startup policy left untouched")
+
+
 def apply_ha():
     check_cluster()
     check_guests()
@@ -199,12 +248,13 @@ def audit():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("audit", "set-startup-delay", "apply-ha", "remove-ha"),
+    parser.add_argument("--mode", choices=("audit", "set-startup-delay", "set-guest-startup", "apply-ha", "remove-ha"),
                         required=True)
     args = parser.parse_args()
     try:
         {
             "audit": audit, "set-startup-delay": set_startup_delay,
+            "set-guest-startup": set_guest_startup,
             "apply-ha": apply_ha, "remove-ha": remove_ha,
         }[args.mode]()
     except (PolicyError, subprocess.TimeoutExpired) as exc:
