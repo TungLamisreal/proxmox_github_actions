@@ -133,6 +133,10 @@ build {
     inline = [
       "set -e",
       "chmod +x /tmp/packer_scripts_kvm/*.sh",
+      # Stop future apt-daily activations within disposable build clones.
+      # An apt job already active is NOT killed; each apt-get waits on the dpkg lock.
+      "echo '=== Image build: stop apt-daily timers, do not interrupt running apt jobs ==='",
+      "systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true",
       "LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/packer_scripts_kvm/01-base-packages.sh",
       "LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/packer_scripts_kvm/02-docker-install.sh",
       "LC_ALL=C.UTF-8 LANG=C.UTF-8 /tmp/packer_scripts_kvm/11-preload-db-image.sh",

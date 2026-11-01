@@ -4,8 +4,16 @@ export DEBIAN_FRONTEND=noninteractive
 
 echo "=== [4/4] Bắt đầu dọn dẹp và làm sạch (Sanitize) Khuôn mẫu ==="
 
-apt-get autoremove -y -qq
-apt-get clean
+# Golden DB clones may still be running cloud-init/apt-daily APT jobs.
+# Wait for the dpkg frontend lock instead of deleting locks or killing apt.
+# Debian 12 APT honors DPkg::Lock::Timeout (seconds) for lock contention.
+echo "[SANITIZE] Preventing new apt-daily timer activations (running apt jobs are left intact)..."
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+fi
+echo "[SANITIZE] Waiting for package-manager lock (up to 600s)..."
+apt-get -o DPkg::Lock::Timeout=600 autoremove -y -qq
+apt-get -o DPkg::Lock::Timeout=600 clean
 rm -rf /var/lib/apt/lists/*
 rm -rf /var/cache/apt/archives/*
 rm -f /var/lib/apt/periodic/update-success-stamp

@@ -5,10 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: "Choose one DB image to build"
+        description: "Choose missing DB image to rebuild (including node1 after failed 00)"
         required: true
         type: choice
         options:
+          - node1
           - node2
           - node3
 
@@ -39,6 +40,7 @@ jobs:
           set -euo pipefail
 
           case "$TARGET" in
+            node1) VMID=9001; PREVIOUS=9000 ;;
             node2) VMID=9002; PREVIOUS=9001 ;;
             node3) VMID=9003; PREVIOUS=9002 ;;
             *) echo "Invalid target"; exit 1 ;;
@@ -101,6 +103,7 @@ jobs:
           set -euo pipefail
 
           case "$TARGET" in
+            node1) VMID=9001 ;;
             node2) VMID=9002 ;;
             node3) VMID=9003 ;;
             *) exit 1 ;;

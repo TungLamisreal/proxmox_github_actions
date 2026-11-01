@@ -9,6 +9,10 @@ on:
       - ".github/workflows/01-provision-infra.yml"
       - ".github/workflows/02-destroy-infra.yml"
       - ".github/workflows/00-validate-iac-pr.yml"
+      - ".github/workflows/00-build-golden-images.yml"
+      - ".github/workflows/00-resume-db.yml"
+      - "packer/**"
+      - "tests/test_packer_golden_build.py"
   workflow_dispatch:
 
 permissions:
@@ -31,6 +35,13 @@ jobs:
           terraform fmt -check -diff
           terraform init -backend=false -input=false
           terraform validate -no-color
+      - name: Packer cleanup shell syntax (offline)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in packer/scripts/*.sh; do bash -n "$script"; done
+          python3 -m unittest discover -s tests -p "test_packer_golden_build.py" -v
+
       - name: PVE HA/startup script unit tests
         shell: bash
         run: |
