@@ -32,3 +32,6 @@ __pycache__/
 
 terraform/tfplan_scale_in
 terraform/tfplan_scale_in.json
+
+# Commit the Terraform dependency lockfile for repeatable provider resolution.
+!terraform/.terraform.lock.hcl

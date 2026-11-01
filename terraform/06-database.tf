@@ -18,6 +18,11 @@ resource "proxmox_virtual_environment_vm" "db" {
   on_boot = true
   started = true
 
+  # HA may relocate DB-01; never force it back by Terraform during 01/03/04.
+  lifecycle {
+    ignore_changes = [node_name, clone]
+  }
+
   # Bật QEMU Guest Agent phục vụ đóng băng I/O (fsfreeze) khi PBS sao lưu
   agent {
     enabled = true
@@ -135,7 +140,7 @@ resource "proxmox_virtual_environment_firewall_rules" "db_fw_rules" {
 
 resource "proxmox_virtual_environment_firewall_ipset" "db_ipfilter_net0" {
   count     = var.db_count
-  node_name = var.pve_nodes[(count.index + 1) % length(var.pve_nodes)]
+  node_name = proxmox_virtual_environment_vm.db[count.index].node_name
   vm_id     = 271 + count.index
   name      = "ipfilter-net0"
   comment   = "CR-MEOWCLOUD-DB-001: Allowed guest IPv4 for net0"

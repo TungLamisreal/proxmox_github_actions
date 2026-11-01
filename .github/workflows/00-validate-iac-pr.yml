@@ -1,0 +1,39 @@
+name: "00 - Validate MeowCloud IaC & PVE HA Policy (PR only)"
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - "scripts/pve_cluster_policy.py"
+      - "tests/test_pve_cluster_policy.py"
+      - ".github/workflows/01-provision-infra.yml"
+      - ".github/workflows/02-destroy-infra.yml"
+      - ".github/workflows/00-validate-iac-pr.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    name: "Terraform schema + offline HA safety tests (no PVE access)"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: Terraform syntax and provider schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd terraform
+          terraform fmt -check -diff
+          terraform init -backend=false -input=false
+          terraform validate -no-color
+      - name: PVE HA/startup script unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/pve_cluster_policy.py
+          python3 -m unittest discover -s tests -p 'test_pve_cluster_policy.py' -v

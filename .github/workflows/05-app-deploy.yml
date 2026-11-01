@@ -67,7 +67,57 @@ jobs:
           done
           [[ "$frontend_ready" == "true" ]] || { echo "::error::Frontend did not become ready"; exit 1; }
           curl -fsS http://127.0.0.1:18086/version.json |
-            jq -e --arg sha "$GITHUB_SHA" '.version == $sha and .app_edition == "crud-v2"'
+            jq -e --arg sha "$GITHUB_SHA" '.version == $sha and (.app_edition == "crud-v1" or .app_edition == "crud-v2")'
+
+  validate-historical-v1:
+    name: "PR compatibility: rebuild known-good CRUD v1 and test PostgreSQL"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore historical v1 app source without resetting main or workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git restore --source=cd32cd5031cc37096fc64d0507d9328ae2329f32 -- apps/backend apps/frontend
+          grep -q "EDITION = 'crud-v1'" apps/backend/app.py
+      - name: Validate v1 code contracts and browser JS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_app_release.py' -v
+          python3 -m unittest discover -s tests -p 'test_crud_app.py' -v
+          python3 - <<'PY'
+          from pathlib import Path
+          html = Path('apps/frontend/index.html').read_text()
+          Path('/tmp/meowcloud-v1-check.js').write_text(html.split('<script>', 1)[1].split('</script>', 1)[0])
+          PY
+          node --check /tmp/meowcloud-v1-check.js
+      - name: Build v1 images from historic apps source
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --build-arg "APP_VERSION=$GITHUB_SHA" -t meow-backend:ci-v1 ./apps/backend
+          docker build --build-arg "APP_VERSION=$GITHUB_SHA" -t meow-frontend:ci-v1 ./apps/frontend
+      - name: Validate v1 CRUD and Alembic against disposable PostgreSQL
+        run: bash tests/smoke_crud.sh meow-backend:ci-v1 "$GITHUB_SHA"
+      - name: Confirm frontend v1 carries the build SHA and edition
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name meow-fe-ci-v1 -p 127.0.0.1:18086:80 meow-frontend:ci-v1
+          trap 'docker rm -f meow-fe-ci-v1 >/dev/null 2>&1 || true' EXIT
+          ok=false
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:18086/version.json 2>/dev/null |
+              jq -e --arg sha "$GITHUB_SHA" '.version == $sha and .app_edition == "crud-v1"' >/dev/null 2>&1; then
+              ok=true; break
+            fi
+            sleep 1
+          done
+          [[ "$ok" == true ]] || { echo "::error::v1 frontend version check failed"; exit 1; }
 
   build:
     if: github.event_name != 'pull_request'
@@ -319,8 +369,16 @@ jobs:
           esac
           curl -fsS --retry 5 http://192.168.150.100/api/version |
             jq -e --arg ed "$EDITION" --arg sha "$GITHUB_SHA"               '.app_edition == $ed and .version == $sha'
-          python3 scripts/demo_release.py checkpoint --target "$TARGET"
-          echo "Saved pinned release snapshot: app-release-$TARGET.json"
+          # Replay v1 is intentionally pinned to the original proven-good commit.
+          # A new Git push of the historical v1 source gets a NEW commit SHA;
+          # keep the original v1 snapshot intact instead of failing after
+          # a successful live deployment or silently weakening its trust gate.
+          if [ "$TARGET" = v1 ] && [ "$GITHUB_SHA" != "cd32cd5031cc37096fc64d0507d9328ae2329f32" ]; then
+            echo "::notice::CRUD v1 demo release deployed. Preserving original pinned v1 replay snapshot."
+          else
+            python3 scripts/demo_release.py checkpoint --target "$TARGET"
+            echo "Saved pinned release snapshot: app-release-$TARGET.json"
+          fi
 
       - name: Roll back to last committed app release if rollout or smoke fails
         if: ${{ failure() && steps.rollout.outcome != 'skipped' && steps.publish.outcome != 'success' }}
