@@ -8,6 +8,9 @@ resource "proxmox_virtual_environment_container" "observer" {
   vm_id        = 121
   unprivileged = true
   started      = true
+  # Let the Proxmox node stagger booting non-HA guests.
+  # HA-managed Observer is started by PVE HA Manager instead.
+  start_on_boot = true
 
   initialization {
     hostname = "observer"
@@ -42,6 +45,11 @@ resource "proxmox_virtual_environment_container" "observer" {
 
   features {
     nesting = true
+  }
+
+  # Observer can be HA-restarted on another node; do not force node1 on reapply.
+  lifecycle {
+    ignore_changes = [node_name]
   }
 }
 
