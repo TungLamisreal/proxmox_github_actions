@@ -14,7 +14,7 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 32768
 VERSION = os.getenv('APP_VERSION', 'dev')
-EDITION = 'crud-v1'
+EDITION = 'crud-v2'
 DB_HOST = os.getenv('DB_HOST', '')
 DB_NAME = os.getenv('DB_NAME', '')
 DB_USER = os.getenv('DB_USER', '')
@@ -136,6 +136,30 @@ def stats():
                         '(SELECT count(*) FROM customers) AS customers, '
                         '(SELECT count(*) FROM orders) AS orders')
             return jsonify(dict(cur.fetchone()))
+
+
+@app.get('/reports/low-stock')
+@require_demo_token
+def low_stock_report():
+    """V2 inventory insight with no changes to the existing database schema."""
+    raw = request.args.get('threshold', '5')
+    if not raw.isascii() or not raw.isdecimal() or len(raw) > 4:
+        raise ValueError('Threshold must be an integer in range 0 to 1000')
+    threshold = int(raw)
+    if threshold > 1000:
+        raise ValueError('Threshold must be an integer in range 0 to 1000')
+    with closing(db_connection()) as conn, conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('SELECT count(*) AS total FROM products WHERE stock <= %s', (threshold,))
+            total = cur.fetchone()['total']
+            cur.execute(
+                'SELECT p.id, p.sku, p.name, p.price, p.stock, c.name AS category_name '
+                'FROM products p JOIN categories c ON c.id = p.category_id '
+                'WHERE p.stock <= %s ORDER BY p.stock ASC, p.id DESC LIMIT 100',
+                (threshold,),
+            )
+            return jsonify(threshold=threshold, total=total,
+                           items=[dict(row) for row in cur.fetchall()])
 
 
 @app.get('/<table>')
