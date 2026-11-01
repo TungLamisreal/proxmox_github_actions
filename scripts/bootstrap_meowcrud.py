@@ -53,7 +53,7 @@ def wait_for_sql_ready(attempts=45, interval=2):
         except RuntimeError as exc:
             # psql exit 2 means connection failure (e.g., PostgreSQL still
             # initializing). Authentication and other errors must fail fast.
-            if 'rc=2' not in str(exc):
+            if '(rc=2)' not in str(exc):
                 raise
         if attempt + 1 < attempts:
             time.sleep(interval)
