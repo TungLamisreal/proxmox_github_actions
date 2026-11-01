@@ -15,7 +15,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="MeowCloud Auto-Scale Node Selector")
     parser.add_argument("--add-be", type=int, default=0, help="Số lượng Backend muốn tăng thêm")
     parser.add_argument("--add-fe", type=int, default=0, help="Số lượng Frontend muốn tăng thêm")
-    parser.add_argument("--ram-reserve-mb", type=int, default=1280, help="RAM dự phòng bắt buộc (MB) cho mỗi Node")
+    parser.add_argument("--ram-reserve-mb", type=int, default=1024, help="RAM dự phòng bắt buộc (MB) cho mỗi Node")
     parser.add_argument("--dry-run", action="store_true", help="Chỉ in ra kế hoạch phân bổ, không ghi đè file state")
     return parser.parse_args()
 
