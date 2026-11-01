@@ -15,10 +15,9 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
 
 ## Guest placement, HA Manager, and safe staged startup
 
-- **PVE node startup staggering:** Day-0 workflow 01 executes
+- **PVE node startup staggering (30s/30s/90s):** Day-0 workflow 01 executes
   `python3 scripts/pve_cluster_policy.py --mode set-startup-delay` **before Terraform creates guests**.
-  It writes `startall-onboot-delay=60` via the PVE node configuration API to
-  node1, node2, node3 and verifies the value on each. The setting is stored on
+  It writes `startall-onboot-delay=30` for node1/node2 and `90` for node3 via the PVE node configuration API and verifies the value on each. The setting is stored on
   PVE nodes, **not on the guest**, so workflow 02 does not delete it; 01
   reasserts the desired value on every replay.
 - The LXC guest definitions include `start_on_boot=true` for regular host
@@ -38,7 +37,7 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
   live migration. `ignore_changes = [node_name]` protects Observer placement,
   and `ignore_changes = [node_name, clone]` protects DB placement when HA
   relocates them. Database IP filter follows the VM's current node.
-- **IMPORTANT: PVE `startall-onboot-delay=60` governs ordinary PVE host
+- **IMPORTANT: PVE `startall-onboot-delay` governs ordinary PVE host
   auto-start; HA-managed guests are scheduled by the HA Manager separately.**
   It does **not** guarantee a cluster-wide one-minute gap, nor that ct:120,
   ct:121 and vm:271 (all HA-managed) start sequentially. Do a controlled
