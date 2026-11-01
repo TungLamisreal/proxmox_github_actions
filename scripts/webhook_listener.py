@@ -125,7 +125,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 "scale_target": "both",
                 "add_backend_count": str(add_be),
                 "add_frontend_count": str(add_fe),
-                "ram_reserve_mb": "2048"
+                "ram_reserve_mb": "1024"
             }
             print(f"[!] QUÁ TẢI CPU (BATCH): Gửi lệnh Scale-Out +{add_fe} FE, +{add_be} BE...", flush=True)
             if self.dispatch_github(WORKFLOW_SCALE_OUT, inputs):
