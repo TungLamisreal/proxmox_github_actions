@@ -2,7 +2,7 @@
 """MeowCloud day-0 PVE node boot staggering and narrowly scoped HA policy.
 
 Managed HA resources: ct:121 observer, vm:271 database primary only.
-Never manages ct:120 (the separately user-managed Auto-VM), tunnels, LBs,
+Never manages ct:120 (the separately configured Auto-VM), tunnels, LBs,
 backends, frontends, or vm:272. Uses PVE's cluster API via trusted SSH.
 All mutating operations are explicitly requested by workflow 01 or 02.
 """
@@ -22,7 +22,8 @@ DB_GUEST_STARTUP = {
     271: "order=5,up=60",  # DB-01 Primary (HA-managed after Day-0)
     272: "order=4,up=60",  # DB-02 (not HA-managed)
 }
-# Proxmox HA groups, for PVE versions that support group nofailback.
+# PVE 9.2: HA node-affinity rules replace the removed HA groups API.
+# Positive, non-strict rules with priority preference; no nofailback promise.
 HA = (
     ("ct:121", "meow-observer", "node1:2,node2:1,node3:1", "lxc", 121),
     ("vm:271", "meow-db-primary", "node2:2,node1:1,node3:1", "qemu", 271),
@@ -87,8 +88,9 @@ def check_guests():
         print(f"[PASS] Guest {sid} exists on {matched[0].get('node')}")
 
 
-def ha_groups():
-    return by_key(pvesh_json("get", "/cluster/ha/groups"), "group")
+def ha_rules():
+    # PVE 9.2 removed /cluster/ha/groups; rules are now first-class objects.
+    return by_key(pvesh_json("get", "/cluster/ha/rules"), "rule")
 
 
 def ha_resources():
@@ -97,17 +99,66 @@ def ha_resources():
 
 def normalize_nodes(value):
     if not isinstance(value, str):
-        raise PolicyError(f"Unexpected HA group nodes: {value!r}")
+        raise PolicyError(f"Unexpected HA rule nodes: {value!r}")
     parts = [part.strip() for part in value.split(",") if part.strip()]
-    return {p.split(":")[0]: p.split(":")[1] if ":" in p else "1" for p in parts}
+    result = {}
+    for part in parts:
+        fields = part.split(":")
+        if len(fields) > 2 or not fields[0] or (len(fields) == 2 and not fields[1].isdigit()):
+            raise PolicyError(f"Invalid node affinity entry: {part!r}")
+        if fields[0] in result:
+            raise PolicyError(f"Duplicate affinity node: {fields[0]}")
+        result[fields[0]] = fields[1] if len(fields) == 2 else "1"
+    return result
 
 
-def group_matches(group, desired_nodes):
+def rule_resources(rule):
+    value = rule.get("resources", "")
+    if isinstance(value, str):
+        return set(part.strip() for part in value.split(",") if part.strip())
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return set(value)
+    raise PolicyError(f"Unexpected HA rule resources: {value!r}")
+
+
+def disabled(value):
+    return str(value).lower() in ("1", "true", "yes")
+
+
+def rule_matches(rule, sid, desired_nodes):
+    # On PVE 9, strict=0 is placement preference, NOT failback suppression.
     return (
-        normalize_nodes(group.get("nodes", "")) == normalize_nodes(desired_nodes)
-        and str(group.get("nofailback", "0")).lower() in ("1", "true")
-        and str(group.get("restricted", "0")).lower() in ("0", "false")
+        rule.get("type") == "node-affinity"
+        and rule.get("affinity", "positive") == "positive"
+        and not disabled(rule.get("strict", 0))
+        and not disabled(rule.get("disable", 0))
+        and rule_resources(rule) == {sid}
+        and normalize_nodes(rule.get("nodes", "")) == normalize_nodes(desired_nodes)
     )
+
+
+def validate_owned_rules(rules, resources):
+    """Refuse ambiguous ownership or third-party affinity before any writes."""
+    for sid, name, nodes, _, _ in HA:
+        current_rule = rules.get(name)
+        if current_rule is not None and not rule_matches(current_rule, sid, nodes):
+            raise PolicyError(f"Conflicting existing HA rule {name}: {current_rule}")
+        for other_name, rule in rules.items():
+            if other_name != name and sid in rule_resources(rule):
+                raise PolicyError(f"External HA rule {other_name} already targets {sid}")
+        current_resource = resources.get(sid)
+        if current_resource is not None:
+            if current_resource.get("state", "started") != "started":
+                raise PolicyError(f"HA service {sid} is not started")
+            if current_resource.get("group") not in (None, ""):
+                raise PolicyError(f"Legacy HA group still attached to {sid}")
+            if current_rule is None:
+                raise PolicyError(
+                    f"HA service {sid} exists without owned rule {name}; "
+                    "refusing to claim or delete externally managed service"
+                )
+        elif current_rule is not None:
+            raise PolicyError(f"Rule {name} exists but service {sid} is missing")
 
 
 def set_startup_delay():
@@ -171,66 +222,56 @@ def set_guest_startup():
 def apply_ha():
     check_cluster()
     check_guests()
-    groups = ha_groups()
+    rules = ha_rules()
     resources = ha_resources()
+    validate_owned_rules(rules, resources)
 
-    # Fail before any mutation if a resource or named group is controlled by
-    # someone else, or if this PVE release lacks the required HA group policy.
-    for sid, group, nodes, _, _ in HA:
-        existing = resources.get(sid)
-        if existing and (existing.get("group") != group or
-                         existing.get("state", "started") != "started"):
-            raise PolicyError(f"Refusing to change externally managed HA resource {sid}: {existing}")
-        if group in groups and not group_matches(groups[group], nodes):
-            raise PolicyError(f"Refusing to change conflicting HA group {group}: {groups[group]}")
-
-    for sid, group, nodes, _, _ in HA:
-        if group not in groups:
-            remote("pvesh", "create", "/cluster/ha/groups", "--group", group,
-                   "--nodes", nodes, "--nofailback", "1", "--restricted", "0")
-            print(f"[CREATE] HA group {group}")
+    # PVE 9 node-affinity rules refer to HA-registered service IDs.
+    # Create resources before the corresponding rules.
+    for sid, name, nodes, _, _ in HA:
         if sid not in resources:
             remote("pvesh", "create", "/cluster/ha/resources",
-                   "--sid", sid, "--group", group, "--state", "started",
+                   "--sid", sid, "--state", "started",
                    "--max_restart", "1", "--max_relocate", "1")
             print(f"[CREATE] HA service {sid}")
         else:
             print(f"[KEEP] HA service {sid}")
+        if name not in rules:
+            remote("pvesh", "create", "/cluster/ha/rules",
+                   "--rule", name, "--type", "node-affinity",
+                   "--resources", sid, "--nodes", nodes,
+                   "--affinity", "positive", "--strict", "0")
+            print(f"[CREATE] HA node-affinity rule {name}")
+        else:
+            print(f"[KEEP] HA node-affinity rule {name}")
 
-    final_groups = ha_groups()
+    final_rules = ha_rules()
     final_resources = ha_resources()
-    for sid, group, nodes, _, _ in HA:
-        if group not in final_groups or not group_matches(final_groups[group], nodes):
-            raise PolicyError(f"HA group verification failed: {group}")
-        if final_resources.get(sid, {}).get("group") != group:
-            raise PolicyError(f"HA resource verification failed: {sid}")
-        print(f"[PASS] {sid}: HA group={group}, nofailback=1")
+    for sid, name, nodes, _, _ in HA:
+        if sid not in final_resources or final_resources[sid].get("state", "started") != "started":
+            raise PolicyError(f"HA service verification failed: {sid}")
+        if name not in final_rules or not rule_matches(final_rules[name], sid, nodes):
+            raise PolicyError(f"HA rule verification failed: {name}")
+        print(f"[PASS] {sid}: HA rule={name} (preferred placement; failback not guaranteed)")
+    print("[PASS] CT120 untouched")
 
 
 def remove_ha():
     check_cluster()
     resources = ha_resources()
-    groups = ha_groups()
-    # Preflight first: do not interfere with manually configured HA resources.
-    for sid, group, _, _, _ in HA:
-        existing = resources.get(sid)
-        if existing and existing.get("group") != group:
-            raise PolicyError(f"Refusing to remove HA service {sid} in a foreign group")
-    # Check whether any other service uses our groups before changing anything.
-    for sid, item in resources.items():
-        if item.get("group") in {row[1] for row in HA} and sid not in {row[0] for row in HA}:
-            raise PolicyError(f"Foreign HA service {sid} uses a MeowCloud HA group")
+    rules = ha_rules()
+    validate_owned_rules(rules, resources)
 
-    for sid, _, _, _, _ in HA:
+    # Remove rule references first, then only the services that the matching
+    # owned rules proved belong to this controller. Empty state is a no-op.
+    for sid, name, _, _, _ in HA:
+        if name in rules:
+            remote("pvesh", "delete", f"/cluster/ha/rules/{name}")
+            print(f"[REMOVE] HA rule {name}")
         if sid in resources:
             remote("pvesh", "delete", f"/cluster/ha/resources/{sid}")
             print(f"[REMOVE] HA service {sid} (guest remains)")
-    for _, group, _, _, _ in HA:
-        if group in groups:
-            remote("pvesh", "delete", f"/cluster/ha/groups/{group}")
-            print(f"[REMOVE] HA group {group}")
-    # Crucially never touch ct:120.
-    print("[PASS] Removed only ct:121/vm:271 HA registrations; ct:120 untouched")
+    print("[PASS] Removed only owned ct:121/vm:271 HA policy; ct:120 untouched")
 
 
 def audit():
@@ -239,11 +280,11 @@ def audit():
         node = pvesh_json("get", f"/nodes/{name}/config")
         print(f"[READ] {name} startup delay={node.get('startall-onboot-delay', 0)}")
     resources = ha_resources()
-    groups = ha_groups()
-    for sid, group, nodes, _, _ in HA:
+    rules = ha_rules()
+    for sid, name, _, _, _ in HA:
         print(f"[READ] {sid}: {resources.get(sid, 'not registered')}")
-        print(f"[READ] {group}: {groups.get(group, 'missing')}")
-    print(f"[READ] ct:120 user-managed: {'registered' if 'ct:120' in resources else 'not registered'}")
+        print(f"[READ] HA rule {name}: {rules.get(name, 'missing')}")
+    print(f"[READ] ct:120: {'registered' if 'ct:120' in resources else 'not registered'} (not managed by script)")
 
 
 def main():
