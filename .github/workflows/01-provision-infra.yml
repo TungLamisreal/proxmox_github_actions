@@ -135,7 +135,7 @@ jobs:
           done
           echo "OK: Đầy đủ tất cả Golden Images (Base LXC, Docker LXC 9100, KVM DB)!"
 
-      - name: "2b. Enforce safe 60-second PVE per-node boot staggering"
+      - name: "2b. Enforce desired 30s/30s/90s PVE per-node boot staggering"
         run: |
           set -euo pipefail
           python3 scripts/pve_cluster_policy.py --mode set-startup-delay
@@ -344,6 +344,11 @@ jobs:
           echo "| **1. Terraform Provisioning (Clone Golden Images + Firewall)** | **${TF_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
           echo "| **2. Ansible Service Configuration (6 Tiers + Wait SSH)** | **${ANS_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
           echo "| **Tổng thời gian hoàn tất (End-to-End)** | **${TOTAL_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
+
+      - name: "11b. Restore DB VM-specific startup order without changing CT120"
+        run: |
+          set -euo pipefail
+          python3 scripts/pve_cluster_policy.py --mode set-guest-startup
 
       - name: "12. Register HA Manager for Observer CT121 + DB Primary VM271 only"
         run: |
