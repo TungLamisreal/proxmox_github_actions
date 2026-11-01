@@ -487,6 +487,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Confirm the expected page from the published desired app release.
+          # The day-0 baseline serves the official Nginx welcome page; CI/CD
+          # releases serve the MeowCloud application.
+          FRONTEND_IMAGE="$(jq -er .frontend_image /opt/meowcloud-iac/state/app-release.json)"
+          if [[ "$FRONTEND_IMAGE" == "nginx:alpine" ]]; then
+            FRONTEND_MARKER="Welcome to nginx!"
+          else
+            FRONTEND_MARKER="MeowCloud Elastic Infrastructure"
+          fi
+
           echo "=== Layer 1A: Kiểm tra trực tiếp từng Guest vừa được tạo mới ==="
           if (( ACTUAL_ADD_BE > 0 )); then
             for ((i=OLD_BE_COUNT+1; i<=NEW_BE_COUNT; i++)); do
@@ -503,7 +513,7 @@ jobs:
               FE_IP="192.168.150.$((170 + i))"
               echo "Kiểm tra trực tiếp Frontend mới fe-$i ($FE_IP:80)..."
               curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
-                "http://${FE_IP}/" | grep -q 'MeowCloud Elastic Infrastructure'
+                "http://${FE_IP}/" | grep -Fq "$FRONTEND_MARKER"
               echo "Frontend fe-$i ($FE_IP) phản hồi HTTP 200 OK."
             done
           fi
@@ -511,7 +521,7 @@ jobs:
           echo "=== Layer 1B & Layer 2: Kiểm tra phân phối lưu lượng qua VIP Load Balancer (192.168.150.100) ==="
           curl --fail --silent --show-error --connect-timeout 5 --retry 5 --retry-delay 2 \
             http://192.168.150.100/ >/dev/null
-          curl --fail --silent --show-error http://192.168.150.100/ | grep -q 'MeowCloud Elastic Infrastructure'
+          curl --fail --silent --show-error http://192.168.150.100/ | grep -Fq "$FRONTEND_MARKER"
           echo "Frontend Web UI qua VIP .100 OK."
 
           if (( ACTUAL_ADD_BE > 0 )); then
