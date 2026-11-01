@@ -13,6 +13,54 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
 01 reuses the verified 9100/9101/9102 LXC and 9001/9002/9003 DB templates.
 
 
+## Guest placement, HA Manager, and safe staged startup
+
+- **PVE node startup staggering:** Day-0 workflow 01 executes
+  `python3 scripts/pve_cluster_policy.py --mode set-startup-delay` **before Terraform creates guests**.
+  It writes `startall-onboot-delay=60` via the PVE node configuration API to
+  node1, node2, node3 and verifies the value on each. The setting is stored on
+  PVE nodes, **not on the guest**, so workflow 02 does not delete it; 01
+  reasserts the desired value on every replay.
+- The LXC guest definitions include `start_on_boot=true` for regular host
+  startup. Terraform 01 still uses `tf_parallelism=1` to serialize provisioning.
+- **PVE HA Manager:** Only **Observer CT121** and **DB Primary VM271** are
+  registered after all 01 configuration and service checks pass:
+  `python3 scripts/pve_cluster_policy.py --mode apply-ha`. The controller uses
+  idempotent HA groups with `nofailback=1`, `restricted=0`, home-node priority:
+  - `meow-observer`: node1 preferred (2), node2/node3 allowed (1)
+  - `meow-db-primary`: node2 preferred (2), node1/node3 allowed (1)
+- CT120 Auto-VM is **already user-managed** and is never changed by this script.
+  Tunnel CT131-133 and Nginx LB CT141-142 retain distinct initial placements by
+  Terraform (no HA registration). BE CT151+ and FE CT171+ remain replaceable
+  stateless cattle and are **not** Proxmox HA services. DB2 VM272 is **not**
+  configured for PostgreSQL streaming replication/promotion; do not claim DB HA.
+- VM/CT HA recovery is **restart after safe fencing/quorum**, not uninterrupted
+  live migration. `ignore_changes = [node_name]` protects Observer placement,
+  and `ignore_changes = [node_name, clone]` protects DB placement when HA
+  relocates them. Database IP filter follows the VM's current node.
+- **IMPORTANT: PVE `startall-onboot-delay=60` governs ordinary PVE host
+  auto-start; HA-managed guests are scheduled by the HA Manager separately.**
+  It does **not** guarantee a cluster-wide one-minute gap, nor that ct:120,
+  ct:121 and vm:271 (all HA-managed) start sequentially. Do a controlled
+  power-on/recovery test with Ceph and RAM monitoring; do not rely on this
+  setting alone to eliminate host memory spikes.
+- Existing PVE/HA groups are read first. Unexpected HA resources, policy
+  mismatch, a node offline, or lost quorum => the policy script **fails closed**.
+  PVE versions lacking the requested HA group options require an explicit
+  compatibility review; do not bypass safety guards.
+- Before Terraform destroy, workflow 02 runs
+  `python3 scripts/pve_cluster_policy.py --mode remove-ha`, which unregisters
+  only CT121 and VM271 and removes only its two owned groups.
+  **Guest data and VM disks are not deleted by the HA policy script**;
+  workflow 02's subsequent Terraform operation is destructive and
+  still requires independently tested PostgreSQL backups.
+- Inspect the runtime without changing it:
+  ```bash
+  python3 scripts/pve_cluster_policy.py --mode audit
+  ssh root@192.168.150.49 'ha-manager status'
+  ssh root@192.168.150.49 'pvesh get /cluster/ha/resources --output-format json'
+  ```
+
 ## Save live data before workflow 02
 
 The pre-v2 PostgreSQL dump from an earlier checkpoint is at
