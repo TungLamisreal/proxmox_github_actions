@@ -1,0 +1,144 @@
+---
+# Invoked serially: DB01 must pass /primary before DB02 changes ownership.
+- name: Confirm DB07 operator authorization and exact image name
+  ansible.builtin.assert:
+    that:
+      - pg_takeover_approved | default(false) | bool
+      - patroni_image | default('') is match('^meowcloud-patroni:pg15-[0-9a-f]{12}$')
+      - pg_target_role in ['primary', 'replica']
+    fail_msg: "Missing controlled lab takeover authorization."
+
+- name: Confirm expected staged configuration and PGDATA still exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /opt/meowcloud-patroni/patroni.yml
+    - /opt/meowcloud-patroni/tls/patroni-client-key.pem
+    - /opt/pgdata/data/PG_VERSION
+  register: staged_files
+
+- name: Refuse takeover when credentials or PGDATA are missing
+  ansible.builtin.assert:
+    that:
+      - staged_files.results | selectattr('stat.isreg', 'defined') | list | length == 3
+      - staged_files.results | selectattr('stat.isreg', 'equalto', true) | list | length == 3
+
+- name: Read legacy PostgreSQL container running state without mutations
+  ansible.builtin.command:
+    argv: [docker, inspect, --format, "{{ '{{' }}.State.Running{{ '}}' }}", meow-postgres]
+  register: old_running
+  changed_when: false
+  failed_when: false
+
+- name: Check whether Patroni already exists after an interrupted attempt
+  ansible.builtin.command:
+    argv: [docker, inspect, --format, "{{ '{{' }}.State.Running{{ '}}' }}|{{ '{{' }}.Config.Image{{ '}}' }}", meow-patroni]
+  register: patroni_inspect
+  changed_when: false
+  failed_when: false
+
+- name: Refuse competing PostgreSQL lifecycle owners or wrong restored image
+  ansible.builtin.assert:
+    that:
+      - old_running.rc == 0
+      - old_running.stdout | trim in ['true', 'false']
+      - >-
+        patroni_inspect.rc != 0 or
+        (patroni_inspect.stdout.split('|') | length == 2 and
+         patroni_inspect.stdout.split('|')[1] == patroni_image)
+      - not (old_running.stdout | trim == 'true' and patroni_inspect.rc == 0 and patroni_inspect.stdout.startswith('true|'))
+    fail_msg: "Refusing dual PostgreSQL or unrecognized Patroni container. Inspect before retry."
+
+- name: Write persistent DB07 ownership marker before disabling legacy Docker
+  ansible.builtin.copy:
+    dest: /opt/meowcloud-patroni/takeover.lock
+    content: "DB07 Patroni owns PostgreSQL lifecycle on {{ inventory_hostname }}; do not run Workflow01 DB05\n"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Remove legacy Docker automatic restart policy BEFORE stopping PostgreSQL
+  ansible.builtin.command:
+    argv: [docker, update, --restart=no, meow-postgres]
+  when: old_running.stdout | trim == 'true'
+  changed_when: true
+
+- name: Stop legacy PostgreSQL only on this database VM
+  ansible.builtin.command:
+    argv: [docker, stop, --time=60, meow-postgres]
+  when: old_running.stdout | trim == 'true'
+  changed_when: true
+
+- name: Require legacy PostgreSQL to be fully stopped before mounting same PGDATA
+  ansible.builtin.command:
+    argv: [docker, inspect, --format, "{{ '{{' }}.State.Running{{ '}}' }}", meow-postgres]
+  register: old_final
+  changed_when: false
+  failed_when: old_final.rc != 0 or old_final.stdout | trim != 'false'
+
+- name: Create only the missing Patroni container with exclusive PGDATA access
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - -d
+      - --name
+      - meow-patroni
+      - --network
+      - host
+      - --restart
+      - always
+      - --user
+      - '70:70'
+      - -v
+      - /opt/pgdata/data:/var/lib/postgresql/data
+      - -v
+      - /opt/meowcloud-patroni:/etc/meowcloud:ro
+      - "{{ patroni_image }}"
+  when: patroni_inspect.rc != 0
+  changed_when: true
+
+- name: Resume DB07 Patroni after a partial attempt without touching PGDATA
+  ansible.builtin.command:
+    argv: [docker, start, meow-patroni]
+  when: patroni_inspect.rc == 0 and patroni_inspect.stdout.startswith('false|')
+  changed_when: true
+
+- name: Wait for Patroni to acknowledge the expected leader or replica role
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:8008/{{ pg_target_role }}"
+    status_code: 200
+    return_content: false
+    timeout: 4
+  register: role_ready
+  retries: 36
+  delay: 5
+  until: role_ready.status | default(0) == 200
+
+- name: Verify PostgreSQL server process is actually usable via the Patroni container
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -u
+      - postgres
+      - meow-patroni
+      - psql
+      - -XAt
+      - -v
+      - ON_ERROR_STOP=1
+      - -U
+      - postgres
+      - -d
+      - postgres
+      - -c
+      - "SELECT pg_is_in_recovery();"
+  register: role_sql
+  changed_when: false
+  failed_when: >-
+    role_sql.rc != 0 or
+    role_sql.stdout | trim != ('f' if pg_target_role == 'primary' else 't')
+
+- name: Report DB07 lifecycle ownership; do not automatically resurrect old PostgreSQL
+  ansible.builtin.debug:
+    msg: "PASS: {{ inventory_hostname }} now runs Patroni as {{ pg_target_role }}, legacy Docker stopped; ownership marker persisted."
