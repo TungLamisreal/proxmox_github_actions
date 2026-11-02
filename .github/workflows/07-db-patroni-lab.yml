@@ -1,0 +1,164 @@
+name: "07 - PostgreSQL Patroni HA Lab (Takeover, Health, Writer Proxy)"
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "prepare=stage; takeover=adopt DB01 then DB02; health=read-only; proxy=writer LB"
+        type: choice
+        options: [prepare, takeover, health, proxy]
+        default: prepare
+        required: true
+      confirmation:
+        description: "takeover: TAKEOVER_PATRONI_LAB; proxy: ENABLE_DB_WRITER_PROXY"
+        type: string
+        default: ""
+        required: false
+
+permissions:
+  contents: read
+
+# Block Day-0 (workflow 01) from recreating meow-postgres mid-handover.
+concurrency:
+  group: meowcloud-iac-state
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: "01 • Verify inventory, etcd 3/3 and explicit approval"
+    runs-on: self-hosted
+    timeout-minutes: 12
+    env:
+      HOME: /home/github-runner
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+      MODE: ${{ inputs.mode }}
+      CONFIRM: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require deliberate confirmation before any live state changes
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            prepare|health) test -z "$CONFIRM" ;;
+            takeover) test "$CONFIRM" = "TAKEOVER_PATRONI_LAB" ;;
+            proxy) test "$CONFIRM" = "ENABLE_DB_WRITER_PROXY" ;;
+            *) echo "::error::Unsupported DB07 mode"; exit 1 ;;
+          esac
+          test -s "$INVENTORY"
+          test -s /home/github-runner/.ssh/id_ed25519
+          test -s /home/github-runner/.vault_pass
+          python3 scripts/db07_patroni_preflight.py --inventory "$INVENTORY" --validate-inventory-only
+          for pb in 18-prepare-patroni-lab 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy; do
+            /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" "ansible/playbooks/$pb.yml"
+          done
+
+      - name: Prove live DCS voter separation and mTLS consensus before any takeover
+        run: |
+          set -euo pipefail
+          python3 scripts/db06_pve_placement.py
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/16-verify-etcd-quorum.yml
+
+  prepare:
+    name: "02 • Build, transfer and stage Patroni PostgreSQL 15 image + mTLS"
+    needs: gate
+    if: ${{ inputs.mode == 'prepare' || inputs.mode == 'takeover' }}
+    runs-on: self-hosted
+    timeout-minutes: 35
+    env:
+      HOME: /home/github-runner
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+      REPL_SECRET: ${{ secrets.POSTGRES_REPLICATION_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned-per-commit Patroni image and send it to both DB VMs
+        run: |
+          set -euo pipefail
+          image="meowcloud-patroni:pg15-${GITHUB_SHA:0:12}"
+          docker build --file docker/db-patroni/Dockerfile --tag "$image" .
+          for ip in 192.168.150.71 192.168.150.72; do
+            docker save "$image" | ssh -T -i /home/github-runner/.ssh/id_ed25519 \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$ip" docker load
+            ssh -T -n -i /home/github-runner/.ssh/id_ed25519 \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$ip" "docker image inspect '$image' >/dev/null"
+            echo "PASS: $ip imported image $image"
+          done
+      - name: Stage non-root configuration and protected TLS client key; DO NOT stop PostgreSQL
+        run: |
+          set -euo pipefail
+          image="meowcloud-patroni:pg15-${GITHUB_SHA:0:12}"
+          vars_file="$(mktemp)"
+          chmod 0600 "$vars_file"
+          trap 'rm -f "$vars_file"' EXIT
+          python3 scripts/db06_secret_vars.py "$vars_file"
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/18-prepare-patroni-lab.yml \
+            -e "@$vars_file" -e pg_prepare_patroni=true \
+            -e "patroni_image=$image"
+
+  takeover:
+    name: "03 • Replace standalone Docker with Patroni, DB01 before DB02"
+    needs: [gate, prepare]
+    if: ${{ inputs.mode == 'takeover' && needs.prepare.result == 'success' }}
+    runs-on: self-hosted
+    timeout-minutes: 28
+    env:
+      HOME: /home/github-runner
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+    steps:
+      - uses: actions/checkout@v4
+      - name: Adopt existing PGDATA under Patroni; never start competing old PostgreSQL
+        run: |
+          set -euo pipefail
+          image="meowcloud-patroni:pg15-${GITHUB_SHA:0:12}"
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/19-takeover-patroni-lab.yml \
+            -e pg_takeover_approved=true -e "patroni_image=$image"
+      - name: Verify unique leader, streaming replica, PGDATA lineage and rewind hint
+        run: |
+          set -euo pipefail
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/20-verify-patroni-lab.yml
+
+  health:
+    name: "04 • Read-only Patroni post-takeover health (any primary)"
+    needs: gate
+    if: ${{ inputs.mode == 'health' || inputs.mode == 'proxy' }}
+    runs-on: self-hosted
+    timeout-minutes: 10
+    env:
+      HOME: /home/github-runner
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require one writable leader and one streaming standby
+        run: |
+          set -euo pipefail
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/20-verify-patroni-lab.yml
+
+  proxy:
+    name: "05 • Configure writer HAProxy 5432 on LB01 and LB02"
+    needs: [gate, health]
+    if: ${{ inputs.mode == 'proxy' && needs.health.result == 'success' }}
+    runs-on: self-hosted
+    timeout-minutes: 20
+    env:
+      HOME: /home/github-runner
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check LB-to-Patroni health connectivity and install only HAProxy
+        run: |
+          set -euo pipefail
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/21-configure-db-writer-proxy.yml \
+            -e pg_enable_writer_proxy=true
