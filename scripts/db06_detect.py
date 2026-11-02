@@ -11,7 +11,7 @@ import subprocess
 from typing import NamedTuple
 
 
-SUPPORTED_MODES = ("full", "verify", "ha-readiness", "dcs-bootstrap", "dcs-health", "patroni-stage")
+SUPPORTED_MODES = ("full", "verify", "ha-readiness", "dcs-bootstrap", "dcs-health", "patroni-preflight", "patroni-stage")
 
 
 class Snapshot(NamedTuple):

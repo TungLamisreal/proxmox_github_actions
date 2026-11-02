@@ -21,6 +21,10 @@ on:
       - "scripts/db06_etcd_pki.py"
       - "scripts/db06_pve_placement.py"
       - "tests/test_db06_etcd.py"
+      - "scripts/db07_patroni_preflight.py"
+      - "tests/test_db07_patroni_preflight.py"
+      - "docker/db-patroni/Dockerfile"
+      - "docs/09-patroni-handover-preflight.md"
       - "docs/08-etcd-dcs-runbook.md"
       - "ansible/templates/patroni.yml.j2"
       - "ansible/templates/haproxy-db.cfg.j2"
@@ -75,5 +79,19 @@ jobs:
           python3 -m unittest discover -s tests -p test_db_replication_guardrails.py -v
           python3 -m unittest discover -s tests -p test_db06_detect.py -v
           python3 -m unittest discover -s tests -p test_db06_etcd.py -v
-          python3 -m py_compile scripts/db06_detect.py scripts/db06_secret_vars.py scripts/db06_etcd_pki.py scripts/db06_pve_placement.py
+          python3 -m unittest discover -s tests -p test_db07_patroni_preflight.py -v
+          python3 -m py_compile scripts/db06_detect.py scripts/db06_secret_vars.py scripts/db06_etcd_pki.py scripts/db06_pve_placement.py scripts/db07_patroni_preflight.py
+
+      - name: Build Patroni + PostgreSQL 15 compatibility image (no deployment)
+        run: |
+          set -euo pipefail
+          docker build --file docker/db-patroni/Dockerfile --tag meowcloud-patroni-ci:pg15 .
+          docker run --rm --entrypoint /bin/sh meowcloud-patroni-ci:pg15 -ec '
+            test "$(id -u)" = "70"
+            /opt/patroni-venv/bin/patroni --version
+            /usr/local/bin/postgres --version | grep -E "PostgreSQL.*15[.]"
+            /usr/local/bin/pg_rewind --version | grep -E "pg_rewind.*15[.]"
+            /opt/patroni-venv/bin/python3 -c "import patroni, psycopg2; print(\"PASS: Patroni and psycopg2 importable\")"
+          '
+
 
