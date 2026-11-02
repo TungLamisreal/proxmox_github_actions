@@ -1,0 +1,66 @@
+---
+# Lab-safe SQL backup of the source (all DBs and global roles).
+# Does not stop PostgreSQL and never deletes/overwrites an existing backup.
+- name: Persist a logical backup of DB01 before replication changes
+  hosts: db-01
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require a named restore point and explicit operator opt-in
+      ansible.builtin.assert:
+        that:
+          - db_role == 'primary'
+          - pg_backup_reference | default('') is match('^[A-Za-z0-9._-]{6,64}$')
+          - pg_allow_backup | default(false) | bool
+
+    - name: Assert persistent DB01 volume is mounted
+      ansible.builtin.command:
+        argv: [findmnt, -n, -o, TARGET, --target, /opt/pgdata]
+      register: db_backup_mount
+      changed_when: false
+      failed_when: db_backup_mount.rc != 0 or db_backup_mount.stdout | trim != '/opt/pgdata'
+
+    - name: Protect backup directory (root-only on persistent disk)
+      ansible.builtin.file:
+        path: /opt/pgdata/backups
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Dump all databases and global roles without partial backup artifacts
+      ansible.builtin.shell: |
+        set -euo pipefail
+        destination="/opt/pgdata/backups/pre-replication-{{ pg_backup_reference }}.sql"
+        if test -e "$destination"; then
+          test -s "$destination"
+          exit 0
+        fi
+        umask 077
+        staging="$(mktemp /opt/pgdata/backups/.pre-replication.XXXXXXXX.sql)"
+        trap 'rm -f "$staging"' EXIT
+        docker exec -u postgres meow-postgres pg_dumpall -U postgres > "$staging"
+        test -s "$staging"
+        mv -- "$staging" "$destination"
+      args:
+        executable: /bin/bash
+        creates: "/opt/pgdata/backups/pre-replication-{{ pg_backup_reference }}.sql"
+      register: db_backup
+      changed_when: db_backup.changed
+
+    - name: Confirm resulting SQL backup is nonempty
+      ansible.builtin.stat:
+        path: "/opt/pgdata/backups/pre-replication-{{ pg_backup_reference }}.sql"
+      register: sql_backup_stat
+
+    - name: Fail unless SQL backup is present on persistent storage
+      ansible.builtin.assert:
+        that:
+          - sql_backup_stat.stat.isreg | default(false)
+          - sql_backup_stat.stat.size | default(0) | int > 0
+        fail_msg: "Do not prepare replication without a valid nonempty SQL backup."
+
+    - name: Report restore point identifier (not secret content)
+      ansible.builtin.debug:
+        msg: "DB01 SQL backup: /opt/pgdata/backups/pre-replication-{{ pg_backup_reference }}.sql"
+
