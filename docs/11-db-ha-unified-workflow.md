@@ -1,0 +1,95 @@
+# MeowCloud Unified Database HA — Workflow 06
+
+**Current source of truth:** `.github/workflows/06-db-streaming-replication.yml`.
+The former `07-db-patroni-lab.yml` has been **removed**. All PostgreSQL
+replication, etcd quorum, Patroni takeover, writer HAProxy, health and manual
+diagnosis are now jobs in one manually dispatched Workflow 06.
+
+## Fresh deployment / live demo sequence
+
+1. **00** — build golden images when needed.
+2. **01** — provision exactly two KVM databases, three separate etcd voters,
+   existing backend/frontend/LB/Observer and initial isolated `meowcrud`
+   database. Day-0 SQL bootstrap uses DB01 `192.168.150.71` *only to create*
+   the role and database before Patroni exists. The application's
+   `/opt/meowcloud-iac/state/meowcrud.json` now contains `db_host:
+   192.168.150.100` and port `5432`; a Day-0 baseline app may report
+   DB unavailable until the following workflow is complete.
+3. **06** — select `bootstrap-ha`, enter exact confirmation
+   `BOOTSTRAP_MEOWCLOUD_DB_HA`. This is a **one-time operation**:
+   DB-only snapshot → streaming replication if missing → verify identical
+   physical lineage → etcd three voters and mTLS → HTTP /v3 gateway check
+   → stage Patroni PG15 image/config/TLS → exclusive PGDATA takeover
+   DB01 then DB02 → single-Primary/streaming-Replica verification
+   → validate localhost replication HBA → install writer HAProxy
+   on LB01 (.61) and LB02 (.62), port 5432 → check from Backend01 to
+   `192.168.150.100:5432` → atomically publish VIP in credential state
+   → rolling reconcile Backend Docker environments → verify all backends.
+4. **05** — build/deploy CRUD frontend/backend and apply Alembic migrations
+   through `192.168.150.100:5432`. The migration and rollout preflights
+   refuse a direct `.71` source state.
+5. **03 / 04** — autoscale out/in only after the configured writer VIP and
+   live Patroni single-writer streaming checks pass. New backends inherit
+   `DB_HOST=192.168.150.100`.
+
+**Do not run workflow 06 `bootstrap-ha` again after the first Patroni
+takeover**. The preflight explicitly refuses a `takeover.lock` or any
+existing `meow-patroni` container on either DB guest *before* legacy
+Postgres or DCS are changed.
+
+## Already-running cluster: migration without reinstall
+
+Run Workflow 06 `health` (blank confirmation). This checks
+3/3 etcd gRPC plus Patroni-compatible HTTPS JSON gateway, actual SQL and REST
+roles on DB01/02 (either can be Primary), replication stream and data
+lineage, effective HBA and Backend01 TCP access to writer VIP.
+
+If `meowcrud.json` still has `db_host=192.168.150.71`, run Workflow 06
+`adopt-vip` with confirmation `ACTIVATE_DB_WRITER_VIP`. That operation
+checks Patroni and writer proxy first, updates only CT120's protected
+credential state, rolls out existing Backend Docker env one at a time,
+and verifies that every Backend points to `.100`. It **does not stop,
+reinstall, rebuild, reinitialize or promote either database**.
+
+Run Workflow 06 `diagnose` (empty confirmation) whenever a failure occurs.
+It is independently callable even if the etcd readiness check fails.
+It logs bounded, redacted Docker/SQL/Patroni REST status with **no write**.
+
+Maintenance modes `gateway-repair` and `resume` require distinct explicit
+confirmations. They are *not* regular health checks and should not run on
+the recovered live demo without a specific incident and reviewed runbook.
+`gateway-repair` may restart etcd voters one at a time. `resume` is only
+for an interrupted first-time takeover and assumes the historical DB01
+first-Primary handover stage, not a DB01 that rejoined as Replica.
+
+## Critical regression guardrails
+
+- Patroni 4.0.6 initially failed `waiting on etcd` with HTTP 404
+  `/v3`. Native `etcdctl endpoint health` alone was insufficient; the
+  workflow verifies the TLS JSON gateway with 3-member responses.
+- PostgreSQL `host all all 127.0.0.1/32` does **not** grant the special
+  replication database. Canonical Patroni config includes physical
+  replication HBA for `127.0.0.1/32` and `::1/128`. The health job
+  audits live `pg_hba_file_rules` and fails on drift; it does **not**
+  overwrite an already-running Patroni config.
+- Existing `meow-postgres` containers must stay stopped with restart=no;
+  `meow-patroni` owns PGDATA and Docker restart=always.
+- Proxmox HA and Ceph MON quorum are different: a stopped/fenced VM
+  may trigger failover, while a concurrent Ceph outage can cause RBD
+  errors/aborted ext4 journals. Confirm `ceph -s`, PGs
+  `active+clean`, and no recent storage I/O errors before demonstrating
+  node failure.
+- HAProxy chooses a writer with Patroni `/primary` HTTP checks, not a
+  fixed DB01 hostname. The application never targets the current leader
+  directly.
+- **No assumed zero-RPO:** asynchronous physical streaming may lose recent
+  unreplicated transactions. Measure RTO/RPO in live tests.
+
+## Note on CI vs live validation
+
+Pull request CI checks YAML, Ansible syntax, image compatibility, safe DAG
+and state transitions using disposable test inputs. These checks **do not**
+reach live Proxmox, stop VM271, test genuine Patroni election under outage,
+or prove the current DB guest HBA is fixed. After merging, run Workflow 06
+`health` and `diagnose` against the working lab first. Existing live
+Patroni must remain installed throughout.
