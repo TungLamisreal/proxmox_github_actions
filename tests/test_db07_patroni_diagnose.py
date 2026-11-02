@@ -55,7 +55,7 @@ class PatroniDiagnosticsTests(unittest.TestCase):
         argv = runner.call_args.args[0]
         self.assertEqual(argv[:5], ["ssh", "-T", "-n", "-i", mod.KEY])
         self.assertIn("IdentitiesOnly=yes", argv)
-        self.assertIn("StrictHostKeyChecking=yes", argv)
+        self.assertIn("StrictHostKeyChecking=accept-new", argv)
         self.assertIn("UserKnownHostsFile=/home/github-runner/.ssh/known_hosts", argv)
         self.assertNotIn("StrictHostKeyChecking=no", argv)
         self.assertEqual(argv[-2], "root@192.168.150.71")
@@ -175,8 +175,8 @@ class PatroniDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("docker restart", src)
 
     def test_diagnose_mode_is_decoupled_from_failing_etcd_gate(self):
-        workflow = (ROOT / ".github/workflows/07-db-patroni-lab.yml").read_text()
-        self.assertIn("options: [prepare, takeover, health, proxy, diagnose, gateway-repair, resume]", workflow)
+        workflow = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
+        self.assertIn("options: [bootstrap-ha, health, diagnose, adopt-vip, gateway-repair, resume]", workflow)
         self.assertIn("inputs.mode != 'diagnose'", workflow)
         self.assertIn("inputs.mode == 'diagnose'", workflow)
         self.assertIn("if: ${{ failure() }}", workflow)
