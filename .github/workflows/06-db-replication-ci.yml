@@ -29,6 +29,8 @@ on:
       - "tests/test_db07_gateway_repair.py"
       - "ansible/playbooks/22-enable-etcd-gateway.yml"
       - "ansible/playbooks/23-resume-patroni-lab.yml"
+      - "ansible/playbooks/24-guard-patroni-reentry.yml"
+      - "ansible/playbooks/25-verify-patroni-local-hba.yml"
       - "ansible/templates/meowcloud-etcd.yml.j2"
       - "ansible/tasks/db07-activate-one.yml"
       - "ansible/playbooks/18-prepare-patroni-lab.yml"
@@ -81,6 +83,8 @@ jobs:
               "ansible/playbooks/21-configure-db-writer-proxy.yml",
               "ansible/playbooks/22-enable-etcd-gateway.yml",
               "ansible/playbooks/23-resume-patroni-lab.yml",
+              "ansible/playbooks/24-guard-patroni-reentry.yml",
+              "ansible/playbooks/25-verify-patroni-local-hba.yml",
               "ansible/tasks/db07-activate-one.yml",
               ".github/workflows/07-db-patroni-lab.yml",
               "ansible/group_vars/databases/replication.yml",
@@ -97,7 +101,7 @@ jobs:
       # it is YAML-parsed here and syntax-checked on CT120 with a Vault key by Workflow07.
       - name: Validate DCS + takeover Ansible task/module syntax before merging
         run: |
-          for playbook in 15-bootstrap-etcd-quorum 16-verify-etcd-quorum 17-diagnose-etcd 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy 22-enable-etcd-gateway 23-resume-patroni-lab; do
+          for playbook in 15-bootstrap-etcd-quorum 16-verify-etcd-quorum 17-diagnose-etcd 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy 22-enable-etcd-gateway 23-resume-patroni-lab 24-guard-patroni-reentry 25-verify-patroni-local-hba; do
             ansible-playbook --syntax-check -i ansible/inventory.ini "ansible/playbooks/$playbook.yml"
           done
       - name: Run DB replication safety contract unit tests
