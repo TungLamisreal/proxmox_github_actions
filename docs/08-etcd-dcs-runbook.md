@@ -33,7 +33,7 @@ The DCS run verifies TLS quorum after installing services. Without the firewall 
 
 ## Persistent PKI
 
-The Actions job creates a dedicated PKI at `/opt/meowcloud-iac/state/db-ha-etcd-pki` **on CT120**, not inside the Git checkout. The directory and private keys have restrictive permissions. The CA private key is **never copied to guests or GitHub**. Each etcd voter has a unique, IP-SAN server/peer certificate; the separate Patroni client certificate is staged for future controlled takeover.
+The Actions job creates a dedicated PKI at `/home/github-runner/.local/state/meowcloud/db-ha-etcd-pki` **on CT120**, not inside the Git checkout. The directory and private keys have restrictive permissions. The CA private key is **never copied to guests or GitHub**. Each etcd voter has a unique, IP-SAN server/peer certificate; the separate Patroni client certificate is staged for future controlled takeover.
 
 On reruns, the tool validates certificate signatures, expiration and key matching and **never silently rotates** existing certificates. Back up CT120's PKI to a separate protected location: losing the CA key complicates future certificates and recovery.
 
