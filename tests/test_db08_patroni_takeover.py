@@ -53,12 +53,13 @@ class DB08TakeoverContracts(unittest.TestCase):
         template = source("ansible/templates/patroni.yml.j2")
         for name, host in (("db-01", "192.168.150.71"), ("db-02", "192.168.150.72")):
             with self.subTest(name=name):
-                data = Environment(undefined=StrictUndefined).from_string(template).render(
+                env = Environment(undefined=StrictUndefined)
+                env.filters["to_json"] = __import__("json").dumps
+                data = env.from_string(template).render(
                     inventory_hostname=name, ansible_host=host,
                     vault_postgres_password='abc:\"#! foo',
                     vault_postgres_replication_password="sample-repl-secret",
                     pg_replication_user="meow_replication",
-                    to_json=lambda value: __import__("json").dumps(value),
                 )
                 parsed = yaml.safe_load(data)
                 self.assertEqual(parsed["postgresql"]["data_dir"],
