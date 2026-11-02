@@ -1,0 +1,134 @@
+---
+# DB07 lab: image, PKI and configuration staging only, never stop PostgreSQL.
+- name: Prepare a PG15 Patroni container without touching the live database
+  hosts: databases
+  become: true
+  gather_facts: false
+  serial: 1
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/databases/replication.yml"
+    - "{{ playbook_dir }}/../group_vars/databases/vault.yml"
+  vars:
+    pg_runtime: /opt/meowcloud-patroni
+  pre_tasks:
+    - name: Require exact topology and explicit non-mutating stage approval
+      ansible.builtin.assert:
+        that:
+          - pg_prepare_patroni | default(false) | bool
+          - patroni_image | default('') is match('^meowcloud-patroni:pg15-[0-9a-f]{12}$')
+          - groups['databases'] | length == 2
+          - inventory_hostname in ['db-01', 'db-02']
+          - ansible_host == ('192.168.150.71' if inventory_hostname == 'db-01' else '192.168.150.72')
+          - vault_postgres_password is defined
+          - vault_postgres_replication_password is defined
+          - vault_postgres_replication_password | length >= 16
+        fail_msg: "DB07 prep requires fixed two-DB topology, packaged image and Vault secrets."
+      no_log: true
+
+    - name: Verify etcd is DB06-managed
+      ansible.builtin.stat:
+        path: /var/lib/meowcloud-etcd/.meowcloud-db06-owned
+      register: owned_dcs
+
+    - name: Verify PGDATA is on a persistent mounted disk
+      ansible.builtin.command:
+        argv: [findmnt, -n, -o, TARGET, --target, /opt/pgdata]
+      register: persistent_mount
+      changed_when: false
+
+    - name: Verify existing PostgreSQL data directory marker
+      ansible.builtin.stat:
+        path: /opt/pgdata/data/PG_VERSION
+      register: existing_pg_version
+
+    - name: Check approved image is present on each database VM
+      ansible.builtin.command:
+        argv: [docker, image, inspect, "{{ patroni_image }}"]
+      register: image_exists
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Refuse missing etcd, empty PGDATA or image
+      ansible.builtin.assert:
+        that:
+          - owned_dcs.stat.isreg | default(false)
+          - persistent_mount.stdout | trim == '/opt/pgdata'
+          - existing_pg_version.stat.isreg | default(false)
+          - image_exists.rc == 0
+        fail_msg: "Missing DB06 DCS marker, persistent PGDATA, or imported Patroni image."
+  tasks:
+    - name: Create per-DB private Patroni and TLS directories for uid 70
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: '70'
+        group: '70'
+        mode: '0700'
+      loop:
+        - "{{ pg_runtime }}"
+        - "{{ pg_runtime }}/tls"
+
+    - name: Check existing DB06 TLS materials before copying
+      ansible.builtin.stat:
+        path: "/etc/meowcloud/tls/{{ item }}"
+      loop:
+        - ca.pem
+        - patroni-client.pem
+        - patroni-client-key.pem
+      register: tls_inputs
+
+    - name: Require three TLS files to be regular files
+      ansible.builtin.assert:
+        that:
+          - tls_inputs.results | selectattr('stat.isreg', 'defined') | list | length == 3
+          - tls_inputs.results | selectattr('stat.isreg', 'equalto', true) | list | length == 3
+        fail_msg: "Run DCS bootstrap first; DB07 will not generate replacement certificates."
+
+    - name: Copy dedicated client certificates to uid70-readable private directory
+      ansible.builtin.copy:
+        src: "/etc/meowcloud/tls/{{ item }}"
+        dest: "{{ pg_runtime }}/tls/{{ item }}"
+        remote_src: true
+        owner: '70'
+        group: '70'
+        mode: '0600'
+      loop:
+        - ca.pem
+        - patroni-client.pem
+        - patroni-client-key.pem
+      no_log: true
+
+    - name: Render Patroni configuration for existing PostgreSQL 15 cluster
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/patroni.yml.j2"
+        dest: "{{ pg_runtime }}/patroni.yml"
+        owner: '70'
+        group: '70'
+        mode: '0600'
+        backup: false
+      no_log: true
+
+    - name: Verify non-root image can read credentials and parse YAML without PGDATA
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - none
+          - --user
+          - '70:70'
+          - -v
+          - "{{ pg_runtime }}:/etc/meowcloud:ro"
+          - --entrypoint
+          - /bin/sh
+          - "{{ patroni_image }}"
+          - -ec
+          - "test -r /etc/meowcloud/patroni.yml && test -r /etc/meowcloud/tls/patroni-client-key.pem && /opt/patroni-venv/bin/python3 -c 'import yaml; c=yaml.safe_load(open(\"/etc/meowcloud/patroni.yml\")); assert c[\"postgresql\"][\"data_dir\"] == \"/var/lib/postgresql/data\"'"
+      changed_when: false
+      no_log: true
+
+    - name: Report staged status without starting or stopping any PostgreSQL
+      ansible.builtin.debug:
+        msg: "DB07 prepared {{ inventory_hostname }}; image={{ patroni_image }}, PGDATA remains untouched; no takeover yet."

@@ -9,6 +9,22 @@
     pg_device: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
 
   tasks:
+    # Prevent Workflow 01 reruns from resurrecting standalone meow-postgres
+    # after DB07 has transferred PGDATA ownership to Patroni.
+    - name: Detect DB07 PostgreSQL lifecycle ownership marker
+      ansible.builtin.stat:
+        path: /opt/meowcloud-patroni/takeover.lock
+      register: db07_takeover_marker
+
+    - name: Refuse Day-0 standalone Docker management after Patroni takeover
+      ansible.builtin.assert:
+        that:
+          - not db07_takeover_marker.stat.exists
+        fail_msg: >-
+          DB07 Patroni takeover is active/in-progress. Workflow 01 must not
+          recreate meow-postgres or change its restart policy. Use DB07 health
+          or a deliberate destroy/reprovision before returning to Day-0.
+
     # =========================================================================
     # Quản lý Filesystem & Mount an toàn, Idempotent
     # =========================================================================

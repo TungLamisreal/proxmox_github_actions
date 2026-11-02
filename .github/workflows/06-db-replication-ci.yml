@@ -23,6 +23,16 @@ on:
       - "tests/test_db06_etcd.py"
       - "scripts/db07_patroni_preflight.py"
       - "tests/test_db07_patroni_preflight.py"
+      - "tests/test_db08_patroni_takeover.py"
+      - "ansible/tasks/db07-activate-one.yml"
+      - "ansible/playbooks/18-prepare-patroni-lab.yml"
+      - "ansible/playbooks/19-takeover-patroni-lab.yml"
+      - "ansible/playbooks/20-verify-patroni-lab.yml"
+      - "ansible/playbooks/21-configure-db-writer-proxy.yml"
+      - "ansible/templates/haproxy-db-standalone.cfg.j2"
+      - "ansible/playbooks/05-setup-database.yml"
+      - ".github/workflows/07-db-patroni-lab.yml"
+      - "docs/10-patroni-lab-takeover-runbook.md"
       - "docker/db-patroni/Dockerfile"
       - "docs/09-patroni-handover-preflight.md"
       - "docs/08-etcd-dcs-runbook.md"
@@ -59,6 +69,12 @@ jobs:
               "ansible/playbooks/15-bootstrap-etcd-quorum.yml",
               "ansible/playbooks/16-verify-etcd-quorum.yml",
               "ansible/playbooks/17-diagnose-etcd.yml",
+              "ansible/playbooks/18-prepare-patroni-lab.yml",
+              "ansible/playbooks/19-takeover-patroni-lab.yml",
+              "ansible/playbooks/20-verify-patroni-lab.yml",
+              "ansible/playbooks/21-configure-db-writer-proxy.yml",
+              "ansible/tasks/db07-activate-one.yml",
+              ".github/workflows/07-db-patroni-lab.yml",
               "ansible/group_vars/databases/replication.yml",
               ".github/workflows/06-db-streaming-replication.yml",
               ".github/workflows/06-db-replication-ci.yml",
@@ -69,9 +85,11 @@ jobs:
                   raise SystemExit(f"Invalid YAML root: {p}")
               print(f"OK: {p}")
           PY
-      - name: Validate DCS Ansible task/module syntax before merging
+      # 18-prepare loads encrypted vault.yml, which GitHub-hosted CI cannot decrypt;
+      # it is YAML-parsed here and syntax-checked on CT120 with a Vault key by Workflow07.
+      - name: Validate DCS + takeover Ansible task/module syntax before merging
         run: |
-          for playbook in 15-bootstrap-etcd-quorum 16-verify-etcd-quorum 17-diagnose-etcd; do
+          for playbook in 15-bootstrap-etcd-quorum 16-verify-etcd-quorum 17-diagnose-etcd 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy; do
             ansible-playbook --syntax-check -i ansible/inventory.ini "ansible/playbooks/$playbook.yml"
           done
       - name: Run DB replication safety contract unit tests
@@ -80,6 +98,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_db06_detect.py -v
           python3 -m unittest discover -s tests -p test_db06_etcd.py -v
           python3 -m unittest discover -s tests -p test_db07_patroni_preflight.py -v
+          python3 -m unittest discover -s tests -p test_db08_patroni_takeover.py -v
           python3 -m py_compile scripts/db06_detect.py scripts/db06_secret_vars.py scripts/db06_etcd_pki.py scripts/db06_pve_placement.py scripts/db07_patroni_preflight.py
 
       - name: Build Patroni + PostgreSQL 15 compatibility image (no deployment)

@@ -1,0 +1,40 @@
+---
+# DB07 lab: intentional one-time replacement of legacy Docker PostgreSQL with
+# Patroni Docker on the *same* persistent PGDATA; DB01 first, then DB02.
+# Never auto-roll back a former primary after a DCS lock may have been issued.
+- name: Adopt existing DB01 primary under Patroni and prove DCS leadership
+  hosts: db-01
+  become: true
+  gather_facts: false
+  vars:
+    pg_target_role: primary
+  tasks:
+    - name: Take over DB01 only; leave DB02 serving as the legacy standby
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/db07-activate-one.yml"
+
+- name: Require DB01 still holds the sole primary lease before changing DB02
+  hosts: db-02
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Probe DB01 Patroni primary API from the prospective standby
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8008/primary
+        timeout: 5
+        status_code: 200
+        return_content: false
+      delegate_to: db-01
+      register: primary_before_standby
+      retries: 6
+      delay: 3
+      until: primary_before_standby.status | default(0) == 200
+
+- name: Adopt existing DB02 standby; never promote independently during adoption
+  hosts: db-02
+  become: true
+  gather_facts: false
+  vars:
+    pg_target_role: replica
+  tasks:
+    - name: Take over DB02 only after DB01 has an established DCS primary lease
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/db07-activate-one.yml"

@@ -1,0 +1,27 @@
+# DB07 lab HAProxy writer-only TCP 5432. Nginx+Keepalived retain HTTP VIP.
+global
+    log stdout format raw local0
+    maxconn 1024
+    daemon
+
+defaults
+    log global
+    mode tcp
+    option tcplog
+    timeout connect 5s
+    timeout client 60s
+    timeout server 60s
+
+frontend meowcloud_postgres_writer
+    bind 0.0.0.0:5432
+    mode tcp
+    default_backend meowcloud_postgres_primary
+
+backend meowcloud_postgres_primary
+    mode tcp
+    balance first
+    option httpchk GET /primary
+    http-check expect status 200
+    default-server inter 2s fall 2 rise 2
+    server db01 192.168.150.71:5432 check port 8008
+    server db02 192.168.150.72:5432 check port 8008
