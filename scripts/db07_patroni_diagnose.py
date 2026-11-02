@@ -4,6 +4,7 @@
 Never alter PGDATA, DCS, containers, firewall or config. Do not print
 environment, config contents, private keys or unredacted PostgreSQL URLs.
 """
+import json
 import re
 import shlex
 import subprocess
@@ -31,6 +32,72 @@ RELEVANT = re.compile(
     r"listening|authentication|bind|data_dir|connection|configuration|"
     r"pg_hba|wal_log_hints|no such|restarting|exited|address already in use"
 )
+
+
+# Execute on DB guest loopback only. Read just selected fields; never dump a
+# Patroni REST document, its environment, credentials or cluster configuration.
+PATRONI_REST_PROBE = """import json
+from urllib import request, error
+base = 'http://127.0.0.1:8008'
+result = {}
+def fetch(path):
+    try:
+        with request.urlopen(base + path, timeout=3) as response:
+            return response.status, response.read(32768)
+    except error.HTTPError as exc:
+        # Patroni may respond HTTP 503 with a safe-to-parse JSON status body.
+        # The body is NEVER printed raw; only fixed allowlisted keys survive.
+        return exc.code, exc.read(32768)
+    except (error.URLError, TimeoutError, OSError):
+        return 0, b''
+for endpoint in ('/primary', '/replica', '/', '/cluster'):
+    status, raw = fetch(endpoint)
+    result[endpoint + '_http'] = status
+    if status not in (200, 503) or not raw:
+        continue
+    try:
+        doc = json.loads(raw)
+    except (ValueError, UnicodeError):
+        continue
+    if endpoint == '/' and isinstance(doc, dict):
+        result['local'] = {
+            key: doc[key] for key in ('state', 'role', 'pending_restart')
+            if key in doc and isinstance(doc[key], (str, int, bool))
+        }
+    if endpoint == '/cluster' and isinstance(doc, dict):
+        members = doc.get('members', [])
+        if isinstance(members, list):
+            result['members'] = [
+                {k: member[k] for k in ('name', 'role', 'state')
+                 if k in member and isinstance(member[k], str)}
+                for member in members[:10] if isinstance(member, dict)
+            ]
+print(json.dumps(result, sort_keys=True, separators=(',', ':')))
+"""
+
+
+def interpret_patroni_rest(payload):
+    """Explain 503 without conflating a reachable API with an elected writer."""
+    try:
+        status = json.loads(payload)
+    except (ValueError, TypeError):
+        return "REST probe unavailable; inspect Docker status and Patroni logs"
+    if not isinstance(status, dict):
+        return "REST probe returned invalid status"
+    primary = status.get("/primary_http")
+    replica = status.get("/replica_http")
+    local = status.get("local", {})
+    role = local.get("role", "unknown") if isinstance(local, dict) else "unknown"
+    state = local.get("state", "unknown") if isinstance(local, dict) else "unknown"
+    if primary == 200:
+        return "Patroni reports PRIMARY; verify SQL and DCS before DB02 resume"
+    if replica == 200:
+        return "Patroni reports REPLICA; DB01 must not be assumed the primary"
+    if primary == 503:
+        return f"Patroni API responds, but is NOT PRIMARY (role={role}, state={state}); inspect logs and DCS lease"
+    if primary == 0:
+        return "Patroni API not reachable on DB loopback; inspect service/port and logs"
+    return f"Patroni primary status={primary}; inspect local role={role}, state={state}"
 
 
 def redact(text):
@@ -75,6 +142,13 @@ def main():
                 "{{.State.Status}}|{{.State.ExitCode}}|{{.RestartCount}}|{{.Config.Image}}",
                 "meow-patroni",
             ]),
+            ("Patroni REST local role and cluster", [
+                "python3", "-c", PATRONI_REST_PROBE,
+            ]),
+            ("PostgreSQL TCP readiness inside the Patroni container", [
+                "docker", "exec", "-u", "postgres", "meow-patroni",
+                "pg_isready", "-h", "127.0.0.1", "-p", "5432",
+            ]),
             ("persistent PG_VERSION", ["cat", "/opt/pgdata/data/PG_VERSION"]),
             ("PGDATA and staged TLS directory ownership", [
                 "stat", "-c", "%u:%g %a %n",
@@ -92,6 +166,8 @@ def main():
             if title == "Patroni recent logs":
                 result = patroni_log_excerpt(result)
             print(f"--- {title} ---\n{result}", flush=True)
+            if title == "Patroni REST local role and cluster":
+                print("PATRONI INTERPRETATION: " + interpret_patroni_rest(result), flush=True)
     print("DIAGNOSTICS COMPLETE: no containers, services, DCS, PGDATA or files were changed.")
 
 
