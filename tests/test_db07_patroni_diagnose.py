@@ -55,6 +55,9 @@ class PatroniDiagnosticsTests(unittest.TestCase):
         argv = runner.call_args.args[0]
         self.assertEqual(argv[:5], ["ssh", "-T", "-n", "-i", mod.KEY])
         self.assertIn("IdentitiesOnly=yes", argv)
+        self.assertIn("StrictHostKeyChecking=yes", argv)
+        self.assertIn("UserKnownHostsFile=/home/github-runner/.ssh/known_hosts", argv)
+        self.assertNotIn("StrictHostKeyChecking=no", argv)
         self.assertEqual(argv[-2], "root@192.168.150.71")
         self.assertIn("docker logs --tail 140 meow-patroni", argv[-1])
 
@@ -164,6 +167,8 @@ class PatroniDiagnosticsTests(unittest.TestCase):
         src = getsource(mod.main)
         self.assertIn("PATRONI_REST_PROBE", src)
         self.assertIn("pg_isready", src)
+        self.assertIn("pg_is_in_recovery()", src)
+        self.assertIn("pg_stat_wal_receiver", src)
         self.assertIn("PATRONI INTERPRETATION", src)
         self.assertNotIn("pg_ctl", src)
         self.assertNotIn("pg_promote", src)
