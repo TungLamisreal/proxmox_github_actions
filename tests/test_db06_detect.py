@@ -48,7 +48,6 @@ class DB06StateMachine(unittest.TestCase):
                 module.remote_sql("192.168.150.71", "SELECT private_value;")
 
     def test_existing_healthy_pair_skips_bootstrap(self):
-
         for mode in module.SUPPORTED_MODES:
             with self.subTest(mode=mode):
                 self.assertFalse(detect(self.primary, self.replica, mode, False))
@@ -72,7 +71,7 @@ class DB06StateMachine(unittest.TestCase):
         # Exercise the actual preflight CLI path, not only the helper.
         with tempfile.TemporaryDirectory() as folder:
             inventory = Path(folder) / "inventory.ini"
-            inventory.write_text("[databases]\\ndb-01\\ndb-02\\n")
+            inventory.write_text("[databases]\ndb-01\ndb-02\n")
             for mode in ("dcs-bootstrap", "dcs-health"):
                 with self.subTest(mode=mode):
                     output = Path(folder) / (mode + ".out")
