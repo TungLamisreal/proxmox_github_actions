@@ -1,6 +1,39 @@
 ---
-# Explicitly gated DCS-only changes: no PostgreSQL containers, PGDATA,
-# Patroni service, or backend endpoint is touched by this playbook.
+# Block partial cluster installs: ensure every voter has Debian package metadata
+# BEFORE any host changes its etcd installation, units or data directory.
+- name: Preflight etcd APT availability on all three voters
+  hosts: db-01:db-02:monitoring
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Refresh apt package indexes on every voter before installing
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 0
+        lock_timeout: 180
+        update_cache_retries: 3
+        update_cache_retry_max_delay: 12
+
+    - name: Verify etcd server AND client packages are resolvable
+      ansible.builtin.command:
+        argv: [apt-cache, show, "{{ item }}"]
+      loop:
+        - etcd-server
+        - etcd-client
+      register: etcd_apt_candidates
+      failed_when: false
+      changed_when: false
+
+    - name: Fail as one group if any voter cannot install required etcd packages
+      ansible.builtin.assert:
+        that:
+          - etcd_apt_candidates.results | selectattr('rc', 'equalto', 0) | list | length == 2
+        fail_msg: >-
+          Missing etcd-server/etcd-client from the refreshed APT metadata on
+          {{ inventory_hostname }}. Check Debian APT sources (bookworm main)
+          and network before retrying; no DB or existing etcd data was removed.
+
 - name: Bootstrap MeowCloud three-voter etcd mTLS cluster
   hosts: db-01:db-02:monitoring
   become: true
@@ -47,19 +80,6 @@
             (ansible_facts.services.get('meowcloud-etcd.service', {}).get('state', 'stopped') != 'running')
             or (etcd_marker.stat.isreg | default(false))
         fail_msg: "Unmanaged etcd installation detected. Inspect before altering services."
-
-    - name: Check etcd Debian packages are available
-      ansible.builtin.command:
-        argv: [apt-cache, policy, etcd-server]
-      register: etcd_package_info
-      changed_when: false
-
-    - name: Require a candidate Debian etcd package
-      ansible.builtin.assert:
-        that:
-          - "'Candidate: (none)' not in etcd_package_info.stdout"
-          - "'Candidate:' in etcd_package_info.stdout"
-        fail_msg: "etcd-server missing from APT sources; fix package mirroring, not the databases."
 
   tasks:
     - name: Install Debian etcd-server and etcd-client without touching PostgreSQL
