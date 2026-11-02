@@ -248,6 +248,9 @@ jobs:
           # Reuses protected CT120 credentials when present; creates role/database
           # on a newly provisioned DB VM without app tables or migrations.
           python3 scripts/bootstrap_meowcrud.py --confirm CREATE_MEOWCLOUD_DEMO_DB
+          # App state now points at writer VIP .100; :5432 becomes available
+          # only after the unified 06 DB HA pipeline deploys HAProxy.
+          python3 scripts/db_ha_vip.py --check
 
       - name: "6. [Tier 2] Configure Backend API Elastic Pool (03-setup-backend.yml)"
         working-directory: ./ansible
@@ -360,6 +363,9 @@ jobs:
           echo "| **1. Terraform Provisioning (Clone Golden Images + Firewall)** | **${TF_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
           echo "| **2. Ansible Service Configuration (6 Tiers + Wait SSH)** | **${ANS_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
           echo "| **Tổng thời gian hoàn tất (End-to-End)** | **${TOTAL_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "NEXT: Run Workflow 06 \\`bootstrap-ha\\` (PostgreSQL replication → etcd → Patroni → writer VIP), then Workflow 05/03/04." >> "$GITHUB_STEP_SUMMARY"
+          echo "The Day-0 Backend DB endpoint is .100 and may report DB DOWN until Workflow 06 completes." >> "$GITHUB_STEP_SUMMARY"
 
       - name: "11b. Restore DB VM-specific startup order without changing CT120"
         run: |
