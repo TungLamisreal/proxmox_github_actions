@@ -79,6 +79,11 @@
         path: "{{ pg_stage_dir }}"
       register: stage_exists
 
+    - name: Detect any prior failed cutover directory
+      ansible.builtin.stat:
+        path: "{{ pg_failed_dir }}"
+      register: failed_data_saved
+
     - name: Verify existing standby without reseeding if already in recovery
       when: db02_recovery.stdout | trim == 't'
       block:
@@ -109,6 +114,7 @@
             that:
               - not old_data_saved.stat.exists
               - not stage_exists.stat.exists
+              - not failed_data_saved.stat.exists
             fail_msg: >-
               Old DB02 backup/staging path already exists; stop and inspect it,
               do not overwrite or automatically reinitialize existing data.
