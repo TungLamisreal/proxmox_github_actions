@@ -211,6 +211,54 @@ as a **new** startup blocker and inspect the actual Patroni log; don't
 reboot DB01, bypass role checking or recreate PostgreSQL volumes to
 make a workflow appear green.
 
+## After a green gateway-repair but DB01 /primary returns 503
+
+Workflow07 run
+[41452992169](https://github.com/TungLamisreal/proxmox_github_actions/actions/runs/41452992169)
+**successfully** rolled three etcd gateway configurations and verified every
+`POST /v3/cluster/member/list` via mTLS using the real Patroni certificates
+from both DB VMs, plus 3/3 native gRPC quorum. Therefore, re-running
+`gateway-repair` or resetting etcd is not a sensible fix for a **later**
+DB01 `GET http://127.0.0.1:8008/primary => 503`.
+
+HTTP **503** here proves that Patroni REST is responding but **does not**
+establish that PostgreSQL is down, that data are lost, or that DB01 has the
+leader lease. It may be a replica, a node that cannot open PostgreSQL, a
+node waiting for leadership or a node with another DCS/PG issue. The
+previous HTTP 404 fault was solved in the gateway, but there is no
+corresponding positive PostgreSQL leadership check yet.
+
+### Resume after an orderly lab shutdown
+
+1. Start the Proxmox nodes and verify physical PVE quorum/Ceph health,
+   then DB01 `.71`, DB02 `.72` and Observer `.21`, and CT120 runner.
+   If a VM was managed by PVE HA it may boot automatically; **check**
+   before starting it manually.
+2. Confirm only the DB07-managed `meow-patroni` container can use
+   DB01's PGDATA. Its old `meow-postgres` must remain stopped,
+   `restart=no`. Do not remove or reinitialize PGDATA.
+3. From Workflow07 on updated `main`, run **`mode=diagnose`** with
+   blank confirmation. It collects a *read-only*, allowlisted snapshot:
+   DB01/DB02 Patroni `/primary`, `/replica`, `/` and `/cluster`
+   (only role/state/member names), `pg_isready` from the Patroni
+   container, Docker lifecycle, ownership of PGDATA and TLS, and
+   bounded redacted Patroni logs. No API secrets or full cluster
+   configuration are output. The interpretation distinguishes a
+   `503` from a dead HTTP service.
+4. Based on the **current** PostgreSQL startup error and cluster role,
+   address the specific blocker. Never assume gateway repair
+   promotes PostgreSQL by itself; do not force a promotion based
+   solely on `GET /primary = 503`.
+5. Only once DB01 `/primary` is HTTP 200 and SQL confirms
+   `pg_is_in_recovery() = false` should Workflow07
+   `mode=resume` transition DB02. The resume playbook already
+   rejects a non-primary DB01. Afterward run `mode=health`.
+
+Do not re-run Workflow 00, 01, 06 bootstrap, or the old destructive
+`takeover` in a partially adopted DB01/legacy DB02 configuration.
+An orderly shutdown preserves the data/configuration but does **not**
+complete the Patroni transition. A fresh diagnostic after boot is needed.
+
 ## Final lab demonstration (NOT automated in this PR)
 
 Once health, writer proxy and application VIP migration are confirmed:
