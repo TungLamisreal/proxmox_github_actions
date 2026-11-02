@@ -45,13 +45,15 @@ def fetch(path):
         with request.urlopen(base + path, timeout=3) as response:
             return response.status, response.read(32768)
     except error.HTTPError as exc:
-        return exc.code, b''
+        # Patroni may respond HTTP 503 with a safe-to-parse JSON status body.
+        # The body is NEVER printed raw; only fixed allowlisted keys survive.
+        return exc.code, exc.read(32768)
     except (error.URLError, TimeoutError, OSError):
         return 0, b''
 for endpoint in ('/primary', '/replica', '/', '/cluster'):
     status, raw = fetch(endpoint)
     result[endpoint + '_http'] = status
-    if status != 200 or not raw:
+    if status not in (200, 503) or not raw:
         continue
     try:
         doc = json.loads(raw)
