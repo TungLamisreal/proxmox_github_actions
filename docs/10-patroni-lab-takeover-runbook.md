@@ -275,3 +275,78 @@ Once health, writer proxy and application VIP migration are confirmed:
 
 **No DB01 power-off drill is safe before application DB_HOST is switched
 to the VIP and health shows a single Patroni leader.**
+
+## Nov 3, 2026: adopted Patroni is now the live DB owner — non-destructive Workflow07
+
+**Current observed topology:** DB01 VM271 (192.168.150.71) and DB02 VM272
+(192.168.150.72) run Patroni on existing Ceph RBD PGDATA; the primary can
+be **either node** after failover. etcd voters are DB01, DB02 and Observer
+(192.168.150.21). LB01 (.61) and LB02 (.62) expose a writer-only HAProxy
+on TCP 5432 behind the Keepalived VIP 192.168.150.100. The application
+backend has already been switched to the VIP in the live environment.
+The legacy `meow-postgres` is stopped with Docker restart=no. These
+facts are observations of the lab, **not** a guarantee that every future
+configuration/release artifact is synchronized.
+
+**Never run `prepare` or `takeover` on this adopted cluster.** The
+Workflow07 gate now inspects both database VMs and refuses either mode if
+`takeover.lock` or `meow-patroni` exists — before it transfers any Docker
+image or stages `patroni.yml`. This is deliberately stricter than the
+historical one-time handover. Do not delete the marker to bypass the gate.
+
+**Use one GitHub Actions workflow with separate sequential jobs:**
+
+- `health` (now the default, empty confirmation): gate inventory and
+  etcd native gRPC **plus** HTTPS JSON /v3 gateway (3 voters), Patroni
+  SQL/REST single-writer and streaming verification (DB01/DB02 roles can
+  reverse), live `pg_hba_file_rules` loopback-replication audit on both DBs,
+  and end-to-end `/api/db-health` through the application VIP.
+- `diagnose` (empty confirmation): **independent of a failing etcd gate**.
+  Collects a bounded, redacted snapshot of both DB guests' Docker
+  lifecycle, Patroni REST role, SQL recovery/streaming, TLS file ownership
+  and recent errors. This is the manual diagnostic button and performs
+  no restarts, promotions or writes.
+- Other one-time modes are intentionally opt-in and remain guarded:
+  `prepare`, `takeover`, `resume`, `gateway-repair`, `proxy`. These
+  are not routine HA health checks. `gateway-repair` can restart etcd
+  voters sequentially; `proxy` can reload HAProxy. Avoid both during a
+  healthy demo unless a reviewed change specifically requires them.
+- On any failed non-diagnostic job, `failure-diagnostic` gathers the same
+  read-only failure context without requiring successful etcd health.
+  A failed diagnostic is not permission to restart a former leader.
+
+**Previous incidents permanently reflected in the source:**
+
+1. Patroni 4.0.6 was stuck `waiting on etcd` with HTTP 404 on `/v3`:
+   native `etcdctl` health alone is insufficient; validate the HTTPS
+   JSON gateway and valid 3-member response as well.
+2. PostgreSQL physical replication via loopback was rejected by HBA:
+   `host all all 127.0.0.1/32` does *not* cover `replication`. The
+   canonical template now explicitly includes
+   `host replication meow_replication 127.0.0.1/32 scram-sha-256`
+   and `host replication meow_replication ::1/128 scram-sha-256`.
+   A **read-only live HBA check** catches drift without re-rendering the
+   running Patroni config.
+3. DB02 was promoted when DB01 was stopped. Health gates must accept
+   DB02 as writer, require exactly one SQL writer and streaming standby,
+   and never restart `meow-postgres` or write the existing PGDATA.
+4. DB01 VM stop/cancel exposed Ceph quorum/RBD I/O loss. Proxmox HA
+   quorum and Ceph MON quorum are independent; check `ceph -s` and guest
+   health before another planned demo failover. Ceph HEALTH_OK does not
+   repair an ext4 journal aborted during the storage outage.
+5. Runner SSH host keys must be verified and enrolled in
+   `/home/github-runner/.ssh/known_hosts` **against fingerprints seen on
+   the actual DB consoles**. Do not disable SSH host-key checks to force
+   `diagnose` or image staging to succeed.
+
+**Important outstanding deployment regression:** the historical
+`.github/workflows/05-app-deploy.yml`, `ansible/playbooks/09-migrate-crud.yml`
+and bootstrap release helpers still contain assumptions about the old
+fixed writer `192.168.150.71`. A future full app rollout must first
+reconcile those paths with the live `192.168.150.100:5432` writer
+endpoint. Workflow07 health does not deploy the application or rewrite
+application runtime state.
+
+Do not treat static PR CI or a green Docker image build as a live
+failover test. Test Workflow07 `health` and `diagnose` on the running
+lab, without intentionally shutting down DB VMs during CI.
