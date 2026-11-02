@@ -11,7 +11,7 @@ import subprocess
 from typing import NamedTuple
 
 
-SUPPORTED_MODES = ("full", "verify", "ha-readiness", "dcs-bootstrap", "dcs-health", "patroni-preflight", "patroni-stage")
+SUPPORTED_MODES = ("full", "verify", "ha-readiness", "dcs-bootstrap", "dcs-health", "patroni-preflight", "patroni-stage", "bootstrap-ha")
 
 
 class Snapshot(NamedTuple):
@@ -40,7 +40,7 @@ def detect(primary: Snapshot, standby: Snapshot, mode: str, confirmed: bool) -> 
         raise ValueError("DB02 recovery state is unknown")
     if primary.system_id == standby.system_id:
         raise ValueError("Both hosts appear writable in one PostgreSQL lineage: split-brain risk")
-    if mode != "full":
+    if mode not in ("full", "bootstrap-ha"):
         raise ValueError("Streaming is not set up; verify cannot prepare a primary")
     if not confirmed:
         raise ValueError("New standby initialization requires APPLY_DB_REPLICATION")
@@ -100,7 +100,7 @@ def main():
         parser.error("Runtime inventory not found")
     a = snapshot("192.168.150.71")
     b = snapshot("192.168.150.72")
-    bootstrap = detect(a, b, args.mode, args.confirmation == "APPLY_DB_REPLICATION")
+    bootstrap = detect(a, b, args.mode, args.confirmation == ("BOOTSTRAP_MEOWCLOUD_DB_HA" if args.mode == "bootstrap-ha" else "APPLY_DB_REPLICATION"))
     with open(args.output, "a", encoding="utf8") as output:
         output.write(f"bootstrap_required={str(bootstrap).lower()}\n")
         output.write(f"backup_reference={args.backup_reference}\n")
