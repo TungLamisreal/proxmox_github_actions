@@ -1,0 +1,59 @@
+---
+# Read only. Validates actual pg_hba_file_rules, not only staged YAML.
+# Required for localhost replication/rewind after either DB is promoted.
+- name: Audit live PostgreSQL replication localhost HBA on both Patroni guests
+  hosts: databases
+  become: true
+  gather_facts: false
+  vars:
+    replication_role: meow_replication
+  tasks:
+    - name: Query parsed HBA rules inside current Patroni PostgreSQL
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -u
+          - postgres
+          - meow-patroni
+          - psql
+          - -XAt
+          - -F
+          - "|"
+          - -v
+          - ON_ERROR_STOP=1
+          - -U
+          - postgres
+          - -d
+          - postgres
+          - -c
+          - >-
+            SELECT
+              count(*) FILTER (
+                WHERE type = 'host'
+                  AND address = '127.0.0.1'
+                  AND auth_method = 'scram-sha-256'
+                  AND 'replication' = ANY(database)
+                  AND '{{ replication_role }}' = ANY(user_name)),
+              count(*) FILTER (
+                WHERE type = 'host'
+                  AND address = '::1'
+                  AND auth_method = 'scram-sha-256'
+                  AND 'replication' = ANY(database)
+                  AND '{{ replication_role }}' = ANY(user_name)),
+              count(*) FILTER (WHERE error IS NOT NULL)
+            FROM pg_hba_file_rules;
+      register: local_hba
+      changed_when: false
+
+    - name: Reject missing loopback replication entries or invalid HBA
+      ansible.builtin.assert:
+        that:
+          - local_hba.stdout.split('|') | length == 3
+          - local_hba.stdout.split('|')[0] | int >= 1
+          - local_hba.stdout.split('|')[1] | int >= 1
+          - local_hba.stdout.split('|')[2] | int == 0
+        fail_msg: >-
+          Local replication HBA is missing/invalid. Do NOT reset the current
+          Patroni installation. Inspect pg_hba_file_rules and reconcile the
+          live config in a separate reviewed maintenance step.
