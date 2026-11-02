@@ -24,7 +24,7 @@ class DB06StateMachine(unittest.TestCase):
     def test_ssh_remote_psql_field_separator_is_shell_quoted(self):
         # ssh does not preserve argv boundaries past the remote hostname.
         # A bare -F | becomes a shell pipeline; quote before sending.
-        result = subprocess.CompletedProcess([], 0, "f|1000|1|0\\n", "")
+        result = subprocess.CompletedProcess([], 0, "f|1000|1|0", "")
         with patch.object(module.subprocess, "run", return_value=result) as runner:
             self.assertEqual(module.remote_sql("192.168.150.71", "SELECT 1;"), "f|1000|1|0")
         command = runner.call_args.args[0]
