@@ -24,6 +24,8 @@ on:
       - "scripts/db07_patroni_preflight.py"
       - "tests/test_db07_patroni_preflight.py"
       - "tests/test_db08_patroni_takeover.py"
+      - "scripts/db07_patroni_diagnose.py"
+      - "tests/test_db07_patroni_diagnose.py"
       - "ansible/tasks/db07-activate-one.yml"
       - "ansible/playbooks/18-prepare-patroni-lab.yml"
       - "ansible/playbooks/19-takeover-patroni-lab.yml"
@@ -99,6 +101,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_db06_etcd.py -v
           python3 -m unittest discover -s tests -p test_db07_patroni_preflight.py -v
           python3 -m unittest discover -s tests -p test_db08_patroni_takeover.py -v
+          python3 -m unittest discover -s tests -p test_db07_patroni_diagnose.py -v
           python3 -m py_compile scripts/db06_detect.py scripts/db06_secret_vars.py scripts/db06_etcd_pki.py scripts/db06_pve_placement.py scripts/db07_patroni_preflight.py
 
       - name: Build Patroni + PostgreSQL 15 compatibility image (no deployment)
