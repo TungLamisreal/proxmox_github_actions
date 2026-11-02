@@ -54,7 +54,7 @@ automatically run it and does not change the current secrets permissions.
 
 The candidate `docker/db-patroni/Dockerfile` extends the same official
 `postgres:15-alpine` image lineage used by the two existing DB containers,
-adds a private Python environment with **pinned Patroni and psycopg2**, and
+adds a private Python environment with **pinned Patroni** and Alpine's own ABI-matched `py3-psycopg2`, and
 runs as UID 70 (`postgres`). PR CI builds this image and smoke-tests its
 PostgreSQL major version, `pg_rewind`, Patroni Python import and non-root UID.
 
