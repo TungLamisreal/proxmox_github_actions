@@ -1,6 +1,6 @@
 """Read-only Patroni diagnostic safeguards; no live database access."""
 from contextlib import redirect_stdout
-from io import StringIO
+from io import BytesIO, StringIO
 import json
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -135,6 +135,29 @@ class PatroniDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("do-not-print", output.getvalue())
         self.assertNotIn("postgresql://", output.getvalue())
         self.assertNotIn("private_key", output.getvalue())
+
+    def test_remote_patroni_503_json_body_keeps_only_allowlisted_status(self):
+        def fake_urlopen(url, timeout):
+            payload = json.dumps({
+                "role": "uninitialized", "state": "stopped",
+                "secret": "password-for-logs", "conn_url": "postgres://admin:hide-me@db",
+                "pending_restart": False,
+            }).encode()
+            if url.endswith("/"):
+                raise error.HTTPError(url, 503, "Unavailable", {}, BytesIO(payload))
+            raise error.HTTPError(url, 503, "Unavailable", {}, BytesIO(b"{}"))
+
+        output = StringIO()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen), redirect_stdout(output):
+            exec(compile(mod.PATRONI_REST_PROBE, "<rest-503>", "exec"),
+                 {"__name__": "__main__"})
+        data = json.loads(output.getvalue())
+        self.assertEqual(data["/_http"], 503)
+        self.assertEqual(data["local"], {
+            "role": "uninitialized", "state": "stopped", "pending_restart": False
+        })
+        self.assertNotIn("hide-me", output.getvalue())
+        self.assertNotIn("password-for-logs", output.getvalue())
 
     def test_diagnostic_checks_sql_readiness_without_role_changes(self):
         from inspect import getsource
