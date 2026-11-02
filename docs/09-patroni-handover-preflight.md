@@ -72,6 +72,64 @@ is implemented. Do not loosen keys globally. Also ensure the Patroni REST API
 port 8008 is restricted to the two LBs and the monitoring/automation endpoints
 as necessary, never exposed publicly.
 
+
+## Rebuild-from-00 reliability: SSH and inventory contracts
+
+Run #41440184167 showed Workflow 06 jobs 01/05/06/09 **passed** (PostgreSQL
+streaming, DCS 3/3 quorum) while job 10 failed in less than a second on DB01
+SSH transport rc=255. DB07 had used `StrictHostKeyChecking=accept-new` but
+DB06, Terraform's inventory and Workflow 01 use
+`StrictHostKeyChecking=no` with `UserKnownHostsFile=/dev/null`. Guest SSH
+fingerprints can change when VM271/VM272 are recreated from the golden images.
+Because the original job logged only rc=255, a stale saved fingerprint is the
+leading explanation, **not a confirmed root cause**.
+
+Fix: DB07 uses the **same explicit** `github-runner` ed25519 key and the
+same OpenSSH lab options as the successful DB06 read-only audit, and quotes
+remote commands as a single shell-safe argument. It classifies common SSH
+errors without exposing arbitrary stderr. The validation checks the *actual
+Terraform-published* `/opt/meowcloud-iac/ansible/inventory.ini` for DB01,
+DB02, LB01, LB02 and Observer before connecting. A CLI option
+`--validate-inventory-only` permits a no-SSH inventory check directly
+after Workflow 01 and is tested by CI. A test simulates the entire remote
+read-only audit with rebaked guest identities.
+
+The LB 5432 check now uses Python to inspect kernel `/proc/net/tcp*` for
+TCP_LISTEN instead of assuming `ss` or `netstat` is available in a freshly
+built LXC. Job 10 also writes explicit `READINESS: BLOCKED` lines to the
+GitHub run summary.
+
+**Security caveat:** Ignoring host-key verification is confined to this
+currently isolated, trusted lab and mirrors its existing runner configuration.
+It is not suitable for production. Before production use, have Workflow 00/01
+securely collect and pin per-guest SSH host fingerprints on provisioning, then
+use strict host-key checking. Do not distribute or log private keys.
+
+### Controlled clean rebuild order
+
+1. Workflow **00**: validate/build golden DB/LXC templates only. This alone
+   neither creates streaming replication nor restores a live etcd quorum.
+2. Workflow **01**: provision the guests (DB count **2**), publish the
+   Terraform inventory and configure the existing standalone Docker PostgreSQL
+   containers. Existing Day-0 plan guard refuses workload deletion/replacement.
+   Check the inventory contract before proceeding:
+   `python3 scripts/db07_patroni_preflight.py --inventory /opt/meowcloud-iac/ansible/inventory.ini --validate-inventory-only`
+3. Workflow **06, mode=full**: for fresh independent PostgreSQL DBs, use
+   `APPLY_DB_REPLICATION` **only after verifying the DB01 backup and the
+   approval to replace the standalone DB02 contents**. On a healthy existing
+   pair, the pipeline automatically skips reinitialization and checks streaming.
+4. Workflow **06, mode=dcs-bootstrap** with `BOOTSTRAP_ETCD_QUORUM`, only
+   after DB streaming/placement/firewall requirements are met. Persist the
+   original CT120 etcd CA; do NOT wipe existing etcd state as a shortcut.
+   Follow up with `dcs-health` to confirm 3/3 TLS quorum.
+5. Workflow **06, mode=patroni-preflight**, blank confirmation: check job 10
+   and every `BLOCKER`. **Do not activate Patroni on the old live PGDATA**.
+
+Running 00 and 01 does not, by itself, finish the HA rollout. Offline tests
+and rebuild-safe SSH/config checks materially reduce repeated errors but
+cannot certify 95% or 100% success on changing real hardware, guest
+firewalls, package mirrors, or Ceph storage; live checks are still mandatory.
+
 ## Required handover design milestones
 
 1. **Resilience backup:** Prove a fresh, restorable backup independent from

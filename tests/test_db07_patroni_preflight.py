@@ -1,7 +1,11 @@
 """Read-only Patroni transfer ownership contracts."""
 import importlib.util
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+import shlex
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -58,6 +62,119 @@ class PatroniPreflightTests(unittest.TestCase):
         with patch.object(module.subprocess, "run", return_value=CompletedProcess([], 0, "OK", "")) as run:
             self.assertEqual(module.ssh("192.168.150.71", ["echo", "hello world"]), "OK")
         self.assertEqual(run.call_args.args[0][-1], "echo 'hello world'")
+
+    def test_ssh_matches_proven_db06_transport_after_golden_vm_rebuild(self):
+        from subprocess import CompletedProcess
+        with patch.object(module.subprocess, "run",
+                          return_value=CompletedProcess([], 0, "healthy", "")) as run:
+            self.assertEqual(module.ssh("192.168.150.71",
+                                        ["docker", "inspect", "--format", module.DOCKER_FMT,
+                                         "meow-postgres"]), "healthy")
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[:5], ["ssh", "-T", "-n", "-i", module.SSH_IDENTITY])
+        self.assertEqual(cmd[-2], "root@192.168.150.71")
+        self.assertEqual(shlex.split(cmd[-1]),
+                         ["docker", "inspect", "--format", module.DOCKER_FMT,
+                          "meow-postgres"])
+        for required in ("BatchMode=yes", "IdentitiesOnly=yes",
+                         "StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null"):
+            self.assertIn(required, cmd)
+            self.assertIn(required, (ROOT / "scripts/db06_detect.py").read_text())
+        self.assertEqual(run.call_args.kwargs["check"], False)
+        self.assertTrue(run.call_args.kwargs["capture_output"])
+
+    def test_ssh_failure_reports_cause_without_exposing_remote_stderr(self):
+        from subprocess import CompletedProcess
+        cases = (
+            ("WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!", "host-key mismatch"),
+            ("Permission denied (publickey).", "public-key authentication"),
+            ("connect to host failed: Connection timed out", "TCP timeout"),
+            ("ssh: connect to host: Connection refused", "refused connection"),
+        )
+        for stderr, reason in cases:
+            with self.subTest(reason=reason), patch.object(
+                module.subprocess, "run",
+                return_value=CompletedProcess([], 255, "", stderr)
+            ):
+                with self.assertRaises(module.AuditError) as ctx:
+                    module.ssh("192.168.150.71", ["true"])
+                self.assertIn(reason, str(ctx.exception))
+                self.assertNotIn("WARNING:", str(ctx.exception))
+
+    def test_runtime_inventory_matches_day0_generated_host_contract(self):
+        good = ROOT / "ansible/inventory.ini"
+        module.verify_runtime_inventory(good)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "inventory.ini"
+            path.write_text(good.read_text().replace("db-01 ansible_host=192.168.150.71",
+                                                     "db-01 ansible_host=192.168.150.99"))
+            with self.assertRaisesRegex(module.AuditError, "Stale or unexpected"):
+                module.verify_runtime_inventory(path)
+            path.write_text(good.read_text() + "\n[databases]\ndb-01 ansible_host=192.168.150.71\n")
+            with self.assertRaisesRegex(module.AuditError, "Duplicate"):
+                module.verify_runtime_inventory(path)
+
+    def test_inventory_only_mode_never_connects_or_requires_private_key(self):
+        good = ROOT / "ansible/inventory.ini"
+        argv = ["db07_patroni_preflight.py", "--inventory", str(good),
+                "--validate-inventory-only"]
+        output = StringIO()
+        with patch.object(sys, "argv", argv), patch.object(
+            module, "ssh", side_effect=AssertionError("SSH is not allowed")
+        ), redirect_stdout(output):
+            module.main()
+        self.assertIn("no SSH", output.getvalue())
+
+    def test_full_readonly_cli_simulates_fresh_db_hosts_and_missing_lb_proxy(self):
+        from subprocess import CompletedProcess
+        outputs = []
+        def fake_remote(cmd, **kwargs):
+            host = cmd[-2]
+            remote = shlex.split(cmd[-1])
+            outputs.append((host, remote))
+            if remote[:2] == ["docker", "inspect"]:
+                value = ("true|always|postgres:15-alpine|"
+                         "/opt/pgdata/data=/var/lib/postgresql/data;")
+            elif remote[0] == "findmnt":
+                value = "/opt/pgdata"
+            elif remote[0] == "pvesh":
+                value = '[{"sid":"vm:271","state":"started"}]'
+            elif remote[:2] == ["python3", "-c"]:
+                self.assertIn("/proc/net/tcp", remote[2])
+                value = "closed"
+            else:
+                raise AssertionError("Unexpected remote probe: " + repr(remote))
+            return CompletedProcess(cmd, 0, value, "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            key = Path(directory) / "id_ed25519"
+            key.write_text("mock-key-for-offline-test")
+            argv = ["db07_patroni_preflight.py", "--inventory",
+                    str(ROOT / "ansible/inventory.ini")]
+            output = StringIO()
+            with patch.object(module, "SSH_IDENTITY", str(key)), patch.object(
+                module.subprocess, "run", side_effect=fake_remote
+            ), patch.object(sys, "argv", argv), redirect_stdout(output):
+                module.main()
+        self.assertEqual(len(outputs), 7)
+        for ip in ("192.168.150.71", "192.168.150.72", "192.168.150.49",
+                   "192.168.150.61", "192.168.150.62"):
+            self.assertTrue(any("root@" + ip == host for host, _ in outputs))
+        result = output.getvalue()
+        self.assertIn("READINESS: BLOCKED", result)
+        self.assertIn("Docker restart policy", result)
+        self.assertIn("Proxmox HA still starts DB01", result)
+        self.assertIn("writer proxy port 5432 not listening", result)
+
+    def test_day0_workflow_publishes_inventory_and_canonical_key(self):
+        provision = (ROOT / ".github/workflows/01-provision-infra.yml").read_text()
+        build = (ROOT / ".github/workflows/00-build-golden-images.yml").read_text()
+        self.assertIn("3b. Publish fresh Terraform-generated runtime inventory", provision)
+        self.assertIn("install -m 0644 ./ansible/inventory.ini /opt/meowcloud-iac/ansible/inventory.ini", provision)
+        self.assertIn("ssh-keygen -y -f", build)
+        self.assertIn(module.SSH_IDENTITY, provision)
+        self.assertIn(module.DEFAULT_INVENTORY, provision)
+        self.assertNotIn("rm -rf /opt/pgdata", (ROOT / "scripts/db07_patroni_preflight.py").read_text())
 
     def test_image_preserves_pg15_and_does_not_start_as_root(self):
         img = (ROOT / "docker/db-patroni/Dockerfile").read_text()
