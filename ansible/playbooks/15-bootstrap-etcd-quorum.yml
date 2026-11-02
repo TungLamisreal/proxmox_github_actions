@@ -1,0 +1,201 @@
+---
+# Explicitly gated DCS-only changes: no PostgreSQL containers, PGDATA,
+# Patroni service, or backend endpoint is touched by this playbook.
+- name: Bootstrap MeowCloud three-voter etcd mTLS cluster
+  hosts: db-01:db-02:monitoring
+  become: true
+  gather_facts: false
+  vars:
+    etcd_members:
+      db-01: "192.168.150.71"
+      db-02: "192.168.150.72"
+      observer: "192.168.150.21"
+    etcd_pki: "{{ lookup('env', 'MEOW_ETCD_PKI') }}"
+  pre_tasks:
+    - name: Require deliberate DCS-only authorization and fixed inventory
+      ansible.builtin.assert:
+        that:
+          - db_enable_etcd | default(false) | bool
+          - inventory_hostname in etcd_members
+          - ansible_host == etcd_members[inventory_hostname]
+          - groups['databases'] | length == 2
+          - groups['monitoring'] | length == 1
+          - etcd_pki | length > 10
+        fail_msg: "Refusing non-approved DCS host or unconfirmed etcd deployment."
+
+    - name: Discover existing systemd services
+      ansible.builtin.service_facts:
+
+    - name: Detect any previously owned etcd data directory marker
+      ansible.builtin.stat:
+        path: /var/lib/meowcloud-etcd/.meowcloud-db06-owned
+      register: etcd_marker
+
+    - name: Detect existing data directory
+      ansible.builtin.stat:
+        path: /var/lib/meowcloud-etcd
+      register: etcd_data_dir
+
+    - name: Refuse an unmanaged existing etcd cluster or active vendor daemon
+      ansible.builtin.assert:
+        that:
+          - not etcd_data_dir.stat.exists or etcd_marker.stat.isreg | default(false)
+          - >-
+            (ansible_facts.services.get('etcd.service', {}).get('state', 'stopped') != 'running')
+            or (etcd_marker.stat.isreg | default(false))
+          - >-
+            (ansible_facts.services.get('meowcloud-etcd.service', {}).get('state', 'stopped') != 'running')
+            or (etcd_marker.stat.isreg | default(false))
+        fail_msg: "Unmanaged etcd installation detected. Inspect before altering services."
+
+    - name: Check etcd Debian packages are available
+      ansible.builtin.command:
+        argv: [apt-cache, policy, etcd-server]
+      register: etcd_package_info
+      changed_when: false
+
+    - name: Require a candidate Debian etcd package
+      ansible.builtin.assert:
+        that:
+          - "'Candidate: (none)' not in etcd_package_info.stdout"
+          - "'Candidate:' in etcd_package_info.stdout"
+        fail_msg: "etcd-server missing from APT sources; fix package mirroring, not the databases."
+
+  tasks:
+    - name: Install Debian etcd-server and etcd-client without touching PostgreSQL
+      ansible.builtin.apt:
+        name:
+          - etcd-server
+          - etcd-client
+        state: present
+        update_cache: false
+
+    - name: Disable vendor etcd service in favor of DB06-owned service
+      ansible.builtin.systemd_service:
+        name: etcd
+        state: stopped
+        enabled: false
+
+    - name: Verify installed etcd and etcdctl binaries
+      ansible.builtin.command:
+        argv: [/usr/bin/etcd, --version]
+      register: etcd_version
+      changed_when: false
+
+    - name: Create DB06 service TLS directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /etc/meowcloud, group: etcd, mode: "0750" }
+        - { path: /etc/meowcloud/tls, group: etcd, mode: "0750" }
+
+    - name: Install CA public certificate
+      ansible.builtin.copy:
+        src: "{{ etcd_pki }}/ca.pem"
+        dest: /etc/meowcloud/tls/ca.pem
+        owner: root
+        group: etcd
+        mode: "0640"
+      notify: Restart DB06 etcd
+
+    - name: Install this node server/peer certificate
+      ansible.builtin.copy:
+        src: "{{ etcd_pki }}/{{ inventory_hostname }}.pem"
+        dest: /etc/meowcloud/tls/etcd-server.pem
+        owner: etcd
+        group: etcd
+        mode: "0640"
+      notify: Restart DB06 etcd
+
+    - name: Install this node protected server/peer key
+      ansible.builtin.copy:
+        src: "{{ etcd_pki }}/{{ inventory_hostname }}.key"
+        dest: /etc/meowcloud/tls/etcd-server-key.pem
+        owner: etcd
+        group: etcd
+        mode: "0600"
+      no_log: true
+      notify: Restart DB06 etcd
+
+    - name: Install Patroni client certificate for future controlled takeover
+      ansible.builtin.copy:
+        src: "{{ etcd_pki }}/patroni-client.pem"
+        dest: /etc/meowcloud/tls/patroni-client.pem
+        owner: root
+        group: root
+        mode: "0600"
+      when: inventory_hostname in groups['databases']
+
+    - name: Install protected Patroni client key without starting Patroni
+      ansible.builtin.copy:
+        src: "{{ etcd_pki }}/patroni-client.key"
+        dest: /etc/meowcloud/tls/patroni-client-key.pem
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      when: inventory_hostname in groups['databases']
+
+    - name: Create dedicated etcd state directory on OS disk
+      ansible.builtin.file:
+        path: /var/lib/meowcloud-etcd
+        state: directory
+        owner: etcd
+        group: etcd
+        mode: "0700"
+
+    - name: Mark state directory as DB06-managed for rerun protection
+      ansible.builtin.copy:
+        dest: /var/lib/meowcloud-etcd/.meowcloud-db06-owned
+        owner: etcd
+        group: etcd
+        mode: "0600"
+        content: "meowcloud-db06-etcd-v1\n"
+
+    - name: Render etcd mTLS peer and client configuration
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/meowcloud-etcd.yml.j2"
+        dest: /etc/meowcloud/etcd.yml
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      notify: Restart DB06 etcd
+
+    - name: Install dedicated systemd unit
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/meowcloud-etcd.service.j2"
+        dest: /etc/systemd/system/meowcloud-etcd.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart DB06 etcd
+
+    - name: Load systemd unit definition
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Enable DB06 etcd daemon without modifying PostgreSQL
+      ansible.builtin.systemd_service:
+        name: meowcloud-etcd
+        state: started
+        enabled: true
+
+    - name: Apply any configuration change before quorum verification
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait until local etcd TLS client port is listening
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 2379
+        timeout: 45
+
+  handlers:
+    - name: Restart DB06 etcd
+      ansible.builtin.systemd_service:
+        name: meowcloud-etcd
+        state: restarted

@@ -41,8 +41,8 @@
         path: /etc/meowcloud
         state: directory
         owner: root
-        group: root
-        mode: '0700'
+        group: etcd
+        mode: '0750'
 
     - name: Render reviewable Patroni config (no service start)
       ansible.builtin.template:

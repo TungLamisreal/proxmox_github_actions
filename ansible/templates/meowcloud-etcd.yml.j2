@@ -1,0 +1,22 @@
+# Owned by DB06 Ansible only. Do not install a second etcd service.
+name: "{{ inventory_hostname }}"
+data-dir: /var/lib/meowcloud-etcd
+initial-cluster: "db-01=https://192.168.150.71:2380,db-02=https://192.168.150.72:2380,observer=https://192.168.150.21:2380"
+initial-cluster-state: new
+initial-cluster-token: meowcloud-db-etcd-v1
+listen-peer-urls: "https://{{ ansible_host }}:2380"
+initial-advertise-peer-urls: "https://{{ ansible_host }}:2380"
+listen-client-urls: "https://{{ ansible_host }}:2379,https://127.0.0.1:2379"
+advertise-client-urls: "https://{{ ansible_host }}:2379"
+client-transport-security:
+  cert-file: /etc/meowcloud/tls/etcd-server.pem
+  key-file: /etc/meowcloud/tls/etcd-server-key.pem
+  trusted-ca-file: /etc/meowcloud/tls/ca.pem
+  client-cert-auth: true
+  auto-tls: false
+peer-transport-security:
+  cert-file: /etc/meowcloud/tls/etcd-server.pem
+  key-file: /etc/meowcloud/tls/etcd-server-key.pem
+  trusted-ca-file: /etc/meowcloud/tls/ca.pem
+  peer-client-cert-auth: true
+  auto-tls: false

@@ -3,13 +3,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "full = reconcile PostgreSQL streaming, verify = read-only, ha-readiness = validate Patroni prerequisites"
+        description: "PostgreSQL replication, DCS quorum or Patroni staging (no takeover)"
         type: choice
-        options: [full, verify, ha-readiness, patroni-stage]
+        options: [full, verify, ha-readiness, dcs-bootstrap, dcs-health, patroni-stage]
         default: full
         required: true
       confirmation:
-        description: "For a NEW replica only: APPLY_DB_REPLICATION. Existing healthy replicas skip bootstrap"
+        description: "New replica: APPLY_DB_REPLICATION; etcd: BOOTSTRAP_ETCD_QUORUM; config: STAGE_PATRONI_CONFIG_ONLY"
         type: string
         required: false
         default: ""
@@ -50,6 +50,8 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/12-bootstrap-db-standby.yml
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/13-audit-patroni-readiness.yml
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/14-stage-patroni-config.yml
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/15-bootstrap-etcd-quorum.yml
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/16-verify-etcd-quorum.yml
 
       - name: Detect DB roles without changing either database
         id: detect
@@ -176,8 +178,8 @@ jobs:
 
   patroni-stage:
     name: "07 • Stage Patroni config only (no takeover)"
-    needs: [preflight, patroni-readiness]
-    if: ${{ always() && needs.patroni-readiness.result == 'success' && inputs.mode == 'patroni-stage' }}
+    needs: [preflight, patroni-readiness, etcd-verify]
+    if: ${{ always() && needs.patroni-readiness.result == 'success' && needs.etcd-verify.result == 'success' && inputs.mode == 'patroni-stage' }}
     runs-on: self-hosted
     timeout-minutes: 10
     env:
@@ -199,3 +201,53 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
             ansible/playbooks/14-stage-patroni-config.yml \
             -e "@$VARS_FILE" -e pg_stage_patroni=true
+
+  etcd-bootstrap:
+    name: "08 • Provision three-member etcd DCS with mTLS"
+    needs: [preflight, verify]
+    if: ${{ always() && needs.verify.result == 'success' && inputs.mode == 'dcs-bootstrap' }}
+    runs-on: self-hosted
+    timeout-minutes: 35
+    env:
+      HOME: /home/github-runner
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+      MEOW_ETCD_PKI: /opt/meowcloud-iac/state/db-ha-etcd-pki
+      CONFIRM: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm init-only action and distinct physical PVE fault domains
+        run: |
+          set -euo pipefail
+          test "$CONFIRM" = "BOOTSTRAP_ETCD_QUORUM"
+          python3 scripts/db06_pve_placement.py
+
+      - name: Generate or validate persistent TLS certificates (no silent rotation)
+        run: |
+          set -euo pipefail
+          python3 scripts/db06_etcd_pki.py --directory "$MEOW_ETCD_PKI"
+
+      - name: Install and configure DB06-owned etcd service on DB01, DB02 and CT121
+        run: |
+          set -euo pipefail
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/15-bootstrap-etcd-quorum.yml -e db_enable_etcd=true
+
+  etcd-verify:
+    name: "09 • Verify etcd 3/3 quorum via mTLS (read-only)"
+    needs: [preflight, verify, etcd-bootstrap]
+    if: ${{ always() && needs.verify.result == 'success' && (needs.etcd-bootstrap.result == 'success' || inputs.mode == 'dcs-health' || inputs.mode == 'patroni-stage') }}
+    runs-on: self-hosted
+    timeout-minutes: 10
+    env:
+      HOME: /home/github-runner
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check three separate physical fault domains and full HTTPS quorum
+        run: |
+          set -euo pipefail
+          python3 scripts/db06_pve_placement.py
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/16-verify-etcd-quorum.yml
