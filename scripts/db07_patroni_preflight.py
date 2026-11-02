@@ -29,6 +29,23 @@ SSH_OPTIONS = [
 ]
 
 DOCKER_FMT = "{{.State.Running}}|{{.HostConfig.RestartPolicy.Name}}|{{.Config.Image}}|{{range .Mounts}}{{.Source}}={{.Destination}};{{end}}"
+# /proc/net/tcp and tcp6 are always present on Linux; checking kernel LISTEN
+# sockets avoids requiring 'ss' or 'netstat' packages in fresh LB images.
+# 5432 decimal = 1538 hexadecimal; 0A is TCP_LISTEN.
+LB_5432_PROBE = """from pathlib import Path
+files = ('/proc/net/tcp', '/proc/net/tcp6')
+opened = False
+for filename in files:
+    path = Path(filename)
+    if not path.is_file():
+        continue
+    for row in path.read_text().splitlines()[1:]:
+        columns = row.split()
+        if len(columns) >= 4 and columns[1].split(':')[-1].upper() == '1538' and columns[3] == '0A':
+            opened = True
+print('open' if opened else 'closed')
+"""
+
 
 
 class AuditError(RuntimeError):
@@ -186,11 +203,10 @@ def main():
         raise AuditError("Unexpected Proxmox HA resource response")
     listeners = {}
     for name, ip in LB.items():
-        lines = ssh(ip, ["ss", "-lnt"])
-        listeners[name] = any(
-            line.split()[3].endswith(":5432")
-            for line in lines.splitlines()[1:] if len(line.split()) >= 4
-        )
+        status = ssh(ip, ["python3", "-c", LB_5432_PROBE])
+        if status not in ("open", "closed"):
+            raise AuditError(f"Invalid TCP 5432 listener probe output on {name}")
+        listeners[name] = status == "open"
 
     issues = evaluate(containers, mounts, pve, listeners)
     print("PASS: DB07 read-only lifecycle inspection completed for both DBs, LBs and PVE HA")
