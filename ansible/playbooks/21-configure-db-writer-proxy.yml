@@ -1,0 +1,88 @@
+---
+# DB07 lab: HAProxy binds port 5432 on both existing Nginx/Keepalived LBs.
+# No changes to nginx, Keepalived or application DB_HOST.
+- name: Install HAProxy only when a unique Patroni writer is reachable from LBs
+  hosts: loadbalancers
+  become: true
+  gather_facts: false
+  serial: 1
+  pre_tasks:
+    - name: Require explicit writer-proxy opt-in
+      ansible.builtin.assert:
+        that:
+          - pg_enable_writer_proxy | default(false) | bool
+          - groups['loadbalancers'] | length == 2
+          - inventory_hostname in ['lb-01', 'lb-02']
+          - ansible_host == ('192.168.150.61' if inventory_hostname == 'lb-01' else '192.168.150.62')
+        fail_msg: "Refuse unexpected LB or unconfirmed DB writer proxy install."
+
+    - name: Query DB01 Patroni /primary from LB to prove firewall permits 8008
+      ansible.builtin.uri:
+        url: http://192.168.150.71:8008/primary
+        status_code: [200, 503]
+        timeout: 5
+      register: db01_api
+
+    - name: Query DB02 Patroni /primary from LB to prove firewall permits 8008
+      ansible.builtin.uri:
+        url: http://192.168.150.72:8008/primary
+        status_code: [200, 503]
+        timeout: 5
+      register: db02_api
+
+    - name: Require one uniquely elected writer before publishing LB port 5432
+      ansible.builtin.assert:
+        that:
+          - >-
+            (db01_api.status == 200 and db02_api.status == 503) or
+            (db01_api.status == 503 and db02_api.status == 200)
+        fail_msg: "DB REST port 8008 unreachable or multiple writers; check sg_db before proceeding."
+
+  tasks:
+    - name: Install HAProxy from Debian package without changing Nginx
+      ansible.builtin.apt:
+        name: haproxy
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+        lock_timeout: 180
+
+    - name: Render database-only HAProxy service config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/haproxy-db-standalone.cfg.j2"
+        dest: /etc/haproxy/haproxy.cfg
+        owner: root
+        group: root
+        mode: '0644'
+        backup: true
+      notify: Reload HAProxy after validating
+
+    - name: Validate HAProxy configuration before applying changes
+      ansible.builtin.command:
+        argv: [/usr/sbin/haproxy, -c, -f, /etc/haproxy/haproxy.cfg]
+      changed_when: false
+
+    - name: Start and enable dedicated DB writer proxy
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: started
+        enabled: true
+
+    - name: Reload only HAProxy when its configuration changed
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for the LB to listen on port 5432
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 5432
+        timeout: 30
+
+    - name: Report LB proxy readiness; application DB_HOST unchanged
+      ansible.builtin.debug:
+        msg: "PASS: {{ inventory_hostname }} HAProxy port 5432 active with Patroni /primary checks; Keepalived and Nginx unchanged."
+
+  handlers:
+    - name: Reload HAProxy after validating
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: reloaded
