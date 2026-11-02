@@ -5,7 +5,7 @@ on:
       mode:
         description: "prepare=stage; takeover=adopt DB01 then DB02; health=read-only; proxy=writer LB"
         type: choice
-        options: [prepare, takeover, health, proxy]
+        options: [prepare, takeover, health, proxy, diagnose]
         default: prepare
         required: true
       confirmation:
@@ -27,6 +27,7 @@ jobs:
     name: "01 • Verify inventory, etcd 3/3 and explicit approval"
     runs-on: self-hosted
     timeout-minutes: 12
+    if: ${{ inputs.mode != 'diagnose' }}
     env:
       HOME: /home/github-runner
       ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
@@ -39,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$MODE" in
-            prepare|health) test -z "$CONFIRM" ;;
+            prepare|health|diagnose) test -z "$CONFIRM" ;;
             takeover) test "$CONFIRM" = "TAKEOVER_PATRONI_LAB" ;;
             proxy) test "$CONFIRM" = "ENABLE_DB_WRITER_PROXY" ;;
             *) echo "::error::Unsupported DB07 mode"; exit 1 ;;
@@ -120,6 +121,11 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
             ansible/playbooks/19-takeover-patroni-lab.yml \
             -e pg_takeover_approved=true -e "patroni_image=$image"
+      - name: On takeover failure, collect both DBs' read-only Patroni startup diagnostics
+        if: ${{ failure() }}
+        run: |
+          python3 scripts/db07_patroni_diagnose.py
+
       - name: Verify unique leader, streaming replica, PGDATA lineage and rewind hint
         run: |
           set -euo pipefail
@@ -162,3 +168,17 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
             ansible/playbooks/21-configure-db-writer-proxy.yml \
             -e pg_enable_writer_proxy=true
+
+  diagnose:
+    name: "00 • Read-only Patroni failure diagnostics (no DCS dependency)"
+    if: ${{ inputs.mode == 'diagnose' }}
+    runs-on: self-hosted
+    timeout-minutes: 8
+    env:
+      HOME: /home/github-runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect DB01/DB02 Docker state and sanitized Patroni logs (no writes)
+        run: |
+          set -euo pipefail
+          python3 scripts/db07_patroni_diagnose.py
