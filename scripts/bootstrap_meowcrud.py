@@ -118,11 +118,12 @@ def main():
     # Bootstrap grants ownership only. Alembic is the sole writer of app schema.
     # initialized=True means the role/database/credentials exist, NOT that tables exist.
     cfg['initialized'] = True
+    # Workflow01 is Day-0 provisioning: every Backend must use the stable
+    # writer VIP, even while DB06 has not yet installed the proxy.
+    cfg['db_host'] = WRITER_VIP
     persist(cfg)
     print(f'PASS: empty or existing isolated database {DB} and role {ROLE} ready on bootstrap DB01 {HOST}.')
     print(f'Application writer endpoint: {cfg["db_host"]}:5432 (VIP readiness requires DB06 HA).')
-    if cfg['db_host'] == HOST:
-        print('NOTE: legacy direct-DB configuration retained without changing live clients; run DB06 adopt-vip after HA health.')
     print('NEXT: run Alembic upgrade head once via workflow 05 migration job.')
     print(f'Credential state: {STATE}')
     print('Demo login token is intentionally not printed. '
