@@ -220,7 +220,7 @@ jobs:
         run: bash tests/smoke_crud.sh "$BACKEND_IMAGE" "$GITHUB_SHA"
 
   migrate:
-    name: "Apply Alembic schema migration once (DB primary .71)"
+    name: "Apply Alembic schema migration once via writer VIP .100"
     needs: build
     # Keep pre-existing app release intact until the new CRUD gate is explicitly enabled.
     if: github.ref == 'refs/heads/main' && vars.MEOWCLOUD_APP_CICD_ENABLED == 'true' && vars.MEOWCLOUD_CRUD_DEMO_ENABLED == 'true'
@@ -239,8 +239,9 @@ jobs:
           set -euo pipefail
           test -s /opt/meowcloud-iac/ansible/inventory.ini
           test -s /opt/meowcloud-iac/state/meowcrud.json
+          python3 scripts/db_ha_vip.py --check
           test -n "$MEOW_MIGRATION_IMAGE"
-          jq -e '.initialized == true and .db_host == "192.168.150.71" and .db_name == "meowcloud_demo" and .db_user == "meowcrud"' \
+          jq -e '.initialized == true and .db_host == "192.168.150.100" and .db_name == "meowcloud_demo" and .db_user == "meowcrud"' \
             /opt/meowcloud-iac/state/meowcrud.json >/dev/null
       - name: Prove PostgreSQL reachable from migration runner Backend01
         shell: bash
@@ -249,7 +250,7 @@ jobs:
           export HOME=/home/github-runner
           export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
           ansible -i /opt/meowcloud-iac/ansible/inventory.ini backend-01 \
-            -m ansible.builtin.wait_for -a "host=192.168.150.71 port=5432 timeout=8"
+            -m ansible.builtin.wait_for -a "host=192.168.150.100 port=5432 timeout=8"
       - name: Run versioned database migration (single BE, transactional)
         working-directory: ./ansible
         shell: bash
@@ -290,7 +291,8 @@ jobs:
           test -n "$BACKEND_RELEASE"
           test -n "$FRONTEND_RELEASE"
           test -r /opt/meowcloud-iac/state/meowcrud.json
-          jq -e '.initialized == true and .db_host == "192.168.150.71" and .db_name == "meowcloud_demo" and (.db_password | length > 0) and (.demo_token | length > 0)' /opt/meowcloud-iac/state/meowcrud.json >/dev/null
+          python3 scripts/db_ha_vip.py --check
+          jq -e '.initialized == true and .db_host == "192.168.150.100" and .db_name == "meowcloud_demo" and (.db_password | length > 0) and (.demo_token | length > 0)' /opt/meowcloud-iac/state/meowcrud.json >/dev/null
           test -x /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook
           jq -e '.backend_count >= 3 and .frontend_count >= 3' /opt/meowcloud-iac/state/autoscale.tfvars.json
 
@@ -301,7 +303,7 @@ jobs:
           export HOME="/home/github-runner"
           export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
           ansible -i /opt/meowcloud-iac/ansible/inventory.ini backends -f 3 \
-            -m ansible.builtin.wait_for -a "host=192.168.150.71 port=5432 timeout=8"
+            -m ansible.builtin.wait_for -a "host=192.168.150.100 port=5432 timeout=8"
 
       - name: Rolling rollout, one LXC at a time with per-instance healthchecks
         id: rollout
