@@ -212,7 +212,7 @@ jobs:
       HOME: /home/github-runner
       ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
       INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
-      MEOW_ETCD_PKI: /opt/meowcloud-iac/state/db-ha-etcd-pki
+      MEOW_ETCD_PKI: /home/github-runner/.local/state/meowcloud/db-ha-etcd-pki
       CONFIRM: ${{ inputs.confirmation }}
     steps:
       - uses: actions/checkout@v4
