@@ -13,6 +13,14 @@ on:
       - "scripts/db06_secret_vars.py"
       - "ansible/playbooks/13-audit-patroni-readiness.yml"
       - "ansible/playbooks/14-stage-patroni-config.yml"
+      - "ansible/playbooks/15-bootstrap-etcd-quorum.yml"
+      - "ansible/playbooks/16-verify-etcd-quorum.yml"
+      - "ansible/templates/meowcloud-etcd.yml.j2"
+      - "ansible/templates/meowcloud-etcd.service.j2"
+      - "scripts/db06_etcd_pki.py"
+      - "scripts/db06_pve_placement.py"
+      - "tests/test_db06_etcd.py"
+      - "docs/08-etcd-dcs-runbook.md"
       - "ansible/templates/patroni.yml.j2"
       - "ansible/templates/haproxy-db.cfg.j2"
       - "docs/07-patroni-ha-design.md"
@@ -43,6 +51,8 @@ jobs:
               "ansible/playbooks/12-bootstrap-db-standby.yml",
               "ansible/playbooks/13-audit-patroni-readiness.yml",
               "ansible/playbooks/14-stage-patroni-config.yml",
+              "ansible/playbooks/15-bootstrap-etcd-quorum.yml",
+              "ansible/playbooks/16-verify-etcd-quorum.yml",
               "ansible/group_vars/databases/replication.yml",
               ".github/workflows/06-db-streaming-replication.yml",
               ".github/workflows/06-db-replication-ci.yml",
@@ -57,5 +67,6 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -p test_db_replication_guardrails.py -v
           python3 -m unittest discover -s tests -p test_db06_detect.py -v
-          python3 -m py_compile scripts/db06_detect.py scripts/db06_secret_vars.py
+          python3 -m unittest discover -s tests -p test_db06_etcd.py -v
+          python3 -m py_compile scripts/db06_detect.py scripts/db06_secret_vars.py scripts/db06_etcd_pki.py scripts/db06_pve_placement.py
 
