@@ -19,9 +19,10 @@
   tasks:
     - name: Probe DB01 Patroni primary API from the prospective standby
       ansible.builtin.uri:
-        url: http://192.168.150.71:8008/primary
+        url: http://127.0.0.1:8008/primary
         timeout: 5
         status_code: 200
+      delegate_to: db-01
         return_content: false
       register: primary_before_standby
       retries: 6
