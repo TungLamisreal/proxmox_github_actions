@@ -55,7 +55,7 @@ class PatroniDiagnosticsTests(unittest.TestCase):
         argv = runner.call_args.args[0]
         self.assertEqual(argv[:5], ["ssh", "-T", "-n", "-i", mod.KEY])
         self.assertIn("IdentitiesOnly=yes", argv)
-        self.assertIn("StrictHostKeyChecking=accept-new", argv)
+        self.assertIn("StrictHostKeyChecking=yes", argv)
         self.assertIn("UserKnownHostsFile=/home/github-runner/.ssh/known_hosts", argv)
         self.assertNotIn("StrictHostKeyChecking=no", argv)
         self.assertEqual(argv[-2], "root@192.168.150.71")
