@@ -1,0 +1,48 @@
+name: "DB Replication PR Safety Checks"
+on:
+  pull_request:
+    paths:
+      - "ansible/playbooks/09-backup-db-before-replication.yml"
+      - "ansible/playbooks/10-audit-db-replication.yml"
+      - "ansible/playbooks/11-configure-db-primary-replication.yml"
+      - "ansible/playbooks/12-bootstrap-db-standby.yml"
+      - "ansible/group_vars/databases/replication.yml"
+      - "tests/test_db_replication_guardrails.py"
+      - ".github/workflows/06-db-streaming-replication.yml"
+      - ".github/workflows/06-db-replication-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-guardrails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated YAML validator
+        run: python3 -m pip install --disable-pip-version-check pyyaml
+      - name: Parse Ansible and workflow YAML
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+          paths = [
+              "ansible/playbooks/09-backup-db-before-replication.yml",
+              "ansible/playbooks/10-audit-db-replication.yml",
+              "ansible/playbooks/11-configure-db-primary-replication.yml",
+              "ansible/playbooks/12-bootstrap-db-standby.yml",
+              "ansible/group_vars/databases/replication.yml",
+              ".github/workflows/06-db-streaming-replication.yml",
+              ".github/workflows/06-db-replication-ci.yml",
+          ]
+          for p in paths:
+              data = yaml.safe_load(Path(p).read_text())
+              if not isinstance(data, (list, dict)):
+                  raise SystemExit(f"Invalid YAML root: {p}")
+              print(f"OK: {p}")
+          PY
+      - name: Run DB replication safety contract unit tests
+        run: python3 -m unittest discover -s tests -p test_db_replication_guardrails.py -v
+

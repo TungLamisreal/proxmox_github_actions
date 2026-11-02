@@ -1,0 +1,297 @@
+---
+# Controlled one-time physical base backup. DB01 is never stopped or overwritten.
+# DB02 original PGDATA is renamed, not deleted; rollback is automatic on cutover failure.
+- name: Bootstrap DB02 from DB01 with a reversible local cutover
+  hosts: db-02
+  become: true
+  gather_facts: false
+  vars:
+    pg_data_dir: /opt/pgdata/data
+    pg_stage_dir: /opt/pgdata/replica-stage
+    pg_previous_dir: /opt/pgdata/data.before-replica
+    pg_failed_dir: /opt/pgdata/data.failed-replica
+    pg_passfile: /opt/pgdata/replication.pgpass
+  tasks:
+    - name: Fail closed unless the operator acknowledges the one-time DB02 cutover
+      ansible.builtin.assert:
+        that:
+          - db_role == 'standby'
+          - pg_bootstrap_standby | default(false) | bool
+          - pg_backup_reference | default('') | trim | length > 5
+          - vault_postgres_replication_password is defined
+          - vault_postgres_replication_password | length >= 16
+          - vault_postgres_replication_password is match('^[A-Za-z0-9_-]+$')
+          - pg_automatic_failover_enabled | default(false) | bool == false
+        fail_msg: >-
+          Bootstrap blocked: require explicit pg_bootstrap_standby=true,
+          backup reference, alphanumeric Vault secret, and auto-failover disabled.
+      no_log: true
+
+    - name: Require mounted and persistent storage
+      ansible.builtin.command:
+        argv: [findmnt, -n, -o, TARGET, --target, /opt/pgdata]
+      register: pg_mount
+      changed_when: false
+
+    - name: Assert the data volume is not the root disk
+      ansible.builtin.assert:
+        that:
+          - pg_mount.stdout | trim == '/opt/pgdata'
+
+    - name: Query current DB02 role
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT pg_is_in_recovery();"]
+      register: db02_recovery
+      changed_when: false
+
+    - name: Query source DB01 system identifier and role
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -F, "|", -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT pg_is_in_recovery(), (SELECT system_identifier FROM pg_control_system());"]
+      delegate_to: db-01
+      register: db01_identity
+      changed_when: false
+
+    - name: Refuse to clone from a standby or inconsistent source
+      ansible.builtin.assert:
+        that:
+          - db01_identity.stdout.split('|')[0] == 'f'
+          - db02_recovery.stdout | trim in ['f', 't']
+
+    - name: Check DB02 available disk capacity before staging
+      ansible.builtin.command:
+        argv: [df, -Pk, /opt/pgdata]
+      register: db02_disk
+      changed_when: false
+
+    - name: Require at least 2 GiB free on DB02
+      ansible.builtin.assert:
+        that:
+          - db02_disk.stdout_lines[-1].split()[3] | int >= 2097152
+        fail_msg: "DB02 needs at least 2 GiB free for a safe staged basebackup."
+
+    - name: Check if original data was already preserved by an earlier cutover
+      ansible.builtin.stat:
+        path: "{{ pg_previous_dir }}"
+      register: old_data_saved
+
+    - name: Check whether an abandoned staging directory exists
+      ansible.builtin.stat:
+        path: "{{ pg_stage_dir }}"
+      register: stage_exists
+
+    - name: Detect any prior failed cutover directory
+      ansible.builtin.stat:
+        path: "{{ pg_failed_dir }}"
+      register: failed_data_saved
+
+    - name: Verify existing standby without reseeding if already in recovery
+      when: db02_recovery.stdout | trim == 't'
+      block:
+        - name: Verify active WAL receiver on DB02
+          ansible.builtin.command:
+            argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT count(*) FROM pg_stat_wal_receiver WHERE status = 'streaming';"]
+          register: standby_streaming
+          changed_when: false
+
+        - name: Verify DB02 PostgreSQL lineage
+          ansible.builtin.command:
+            argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT system_identifier FROM pg_control_system();"]
+          register: db02_identity
+          changed_when: false
+
+        - name: Require healthy streaming replica of DB01
+          ansible.builtin.assert:
+            that:
+              - standby_streaming.stdout | trim == '1'
+              - db02_identity.stdout | trim == db01_identity.stdout.split('|')[1]
+            fail_msg: "Existing standby is disconnected or has wrong lineage; do not reseed it."
+
+    - name: Bootstrap only while DB02 is an independent primary
+      when: db02_recovery.stdout | trim == 'f'
+      block:
+        - name: Refuse to overwrite backup or a leftover staging attempt
+          ansible.builtin.assert:
+            that:
+              - not old_data_saved.stat.exists
+              - not stage_exists.stat.exists
+              - not failed_data_saved.stat.exists
+            fail_msg: >-
+              Old DB02 backup/staging path already exists; stop and inspect it,
+              do not overwrite or automatically reinitialize existing data.
+
+        - name: Confirm source PostgreSQL port is reachable from DB02
+          ansible.builtin.wait_for:
+            host: "{{ pg_primary_ip }}"
+            port: 5432
+            timeout: 15
+
+        - name: Ensure DB02 existing PGDATA exists
+          ansible.builtin.stat:
+            path: "{{ pg_data_dir }}/PG_VERSION"
+          register: db02_pgversion
+
+        - name: Refuse to replace unexpected database directory
+          ansible.builtin.assert:
+            that:
+              - db02_pgversion.stat.isreg | default(false)
+
+        - name: Allocate a private empty staging directory for the physical copy
+          ansible.builtin.file:
+            path: "{{ pg_stage_dir }}"
+            state: directory
+            owner: '70'
+            group: '70'
+            mode: '0700'
+
+        - name: Create a protected replication passfile for the transfer
+          ansible.builtin.copy:
+            dest: "{{ pg_passfile }}"
+            owner: '70'
+            group: '70'
+            mode: '0600'
+            content: "{{ pg_primary_ip }}:5432:replication:{{ pg_replication_user }}:{{ vault_postgres_replication_password }}\n"
+          no_log: true
+
+        - name: Stream a physical basebackup into staging (not live PGDATA)
+          ansible.builtin.command:
+            argv:
+              - docker
+              - run
+              - --rm
+              - --network
+              - host
+              - --user
+              - "70:70"
+              - -v
+              - "/opt/pgdata/replica-stage:/replica"
+              - -v
+              - "/opt/pgdata/replication.pgpass:/pgpass:ro"
+              - -e
+              - PGPASSFILE=/pgpass
+              - postgres:15-alpine
+              - pg_basebackup
+              - -h
+              - "{{ pg_primary_ip }}"
+              - -p
+              - "5432"
+              - -U
+              - "{{ pg_replication_user }}"
+              - -D
+              - /replica
+              - -Fp
+              - -X
+              - stream
+              - -R
+              - -C
+              - -S
+              - "{{ pg_replication_slot_name }}"
+          register: physical_backup
+          changed_when: true
+          no_log: true
+
+        - name: Store standby password in staged PGDATA with PostgreSQL-only access
+          ansible.builtin.copy:
+            dest: "{{ pg_stage_dir }}/.pgpass"
+            owner: '70'
+            group: '70'
+            mode: '0600'
+            content: "{{ pg_primary_ip }}:5432:replication:{{ pg_replication_user }}:{{ vault_postgres_replication_password }}\n"
+          no_log: true
+
+        - name: Pin stable host, credentials path, and replication identity
+          ansible.builtin.lineinfile:
+            path: "{{ pg_stage_dir }}/postgresql.auto.conf"
+            regexp: '^primary_conninfo\s*='
+            line: "primary_conninfo = 'host={{ pg_primary_ip }} port=5432 user={{ pg_replication_user }} passfile=/var/lib/postgresql/data/.pgpass application_name=db-02'"
+            backup: true
+
+        - name: Verify standby signal was generated by basebackup
+          ansible.builtin.stat:
+            path: "{{ pg_stage_dir }}/standby.signal"
+          register: standby_signal
+
+        - name: Require complete replica staging before stopping DB02
+          ansible.builtin.assert:
+            that:
+              - standby_signal.stat.exists
+              - physical_backup.rc == 0
+
+        - name: Cut over DB02 with automatic restoration on a failed startup
+          block:
+            - name: Stop ONLY DB02 PostgreSQL container
+              community.docker.docker_container:
+                name: meow-postgres
+                state: stopped
+
+            - name: Preserve original DB02 data directory (never delete)
+              ansible.builtin.command:
+                argv: [mv, "{{ pg_data_dir }}", "{{ pg_previous_dir }}"]
+              changed_when: true
+
+            - name: Atomically activate the staged physical replica on the same disk
+              ansible.builtin.command:
+                argv: [mv, "{{ pg_stage_dir }}", "{{ pg_data_dir }}"]
+              changed_when: true
+
+            - name: Start DB02 container on the staged replica volume
+              community.docker.docker_container:
+                name: meow-postgres
+                state: started
+
+            - name: Wait until DB02 reaches streaming recovery
+              ansible.builtin.command:
+                argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT pg_is_in_recovery(), (SELECT count(*) FROM pg_stat_wal_receiver WHERE status = 'streaming');"]
+              register: replica_ready
+              changed_when: false
+              until: replica_ready.rc == 0 and replica_ready.stdout | trim == 't|1'
+              retries: 24
+              delay: 5
+
+            - name: Require DB02 physical lineage to match DB01
+              ansible.builtin.command:
+                argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT system_identifier FROM pg_control_system();"]
+              register: activated_lineage
+              changed_when: false
+              failed_when: activated_lineage.rc != 0 or activated_lineage.stdout | trim != db01_identity.stdout.split('|')[1]
+
+          rescue:
+            - name: Stop DB02 after failed replica activation
+              community.docker.docker_container:
+                name: meow-postgres
+                state: stopped
+
+            - name: Check whether original DB02 directory was preserved
+              ansible.builtin.stat:
+                path: "{{ pg_previous_dir }}"
+              register: restore_old
+
+            - name: Check whether failed replica is at live PGDATA path
+              ansible.builtin.stat:
+                path: "{{ pg_data_dir }}"
+              register: failed_live
+
+            - name: Move failed staged replica aside for investigation
+              ansible.builtin.command:
+                argv: [mv, "{{ pg_data_dir }}", "{{ pg_failed_dir }}"]
+              when:
+                - restore_old.stat.exists
+                - failed_live.stat.exists
+              changed_when: true
+
+            - name: Restore original DB02 PGDATA after failed cutover
+              ansible.builtin.command:
+                argv: [mv, "{{ pg_previous_dir }}", "{{ pg_data_dir }}"]
+              when: restore_old.stat.exists
+              changed_when: true
+
+            - name: Restart original DB02 container after rollback
+              community.docker.docker_container:
+                name: meow-postgres
+                state: started
+
+            - name: Clearly report the original failure and rollback attempt
+              ansible.builtin.fail:
+                msg: >-
+                  Replica activation failed. DB02 old PGDATA was restored when
+                  available. Verify service/volume and investigate before retry.
+

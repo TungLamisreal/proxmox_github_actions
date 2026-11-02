@@ -1,0 +1,106 @@
+---
+# DB01-only source preparation. Does NOT initialize, wipe, or promote DB02.
+# Operator must first verify backups and provide a Vault-managed secret.
+- name: Prepare DB01 for PostgreSQL streaming replication
+  hosts: db-01
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require verified backup reference and explicit opt-in
+      ansible.builtin.assert:
+        that:
+          - db_role == 'primary'
+          - pg_apply_primary_replication | default(false) | bool
+          - pg_backup_reference | default('') | trim | length > 5
+          - vault_postgres_replication_password is defined
+          - vault_postgres_replication_password | length >= 16
+        fail_msg: >-
+          Refusing change: first verify backup, provide pg_backup_reference,
+          set pg_apply_primary_replication=true and a Vault secret.
+      no_log: true
+
+    - name: Locate persistent PostgreSQL volume
+      ansible.builtin.command:
+        argv: [findmnt, -n, -o, TARGET, --target, /opt/pgdata]
+      register: pg_mount
+      changed_when: false
+
+    - name: Prevent writing to a missing data mount
+      ansible.builtin.assert:
+        that:
+          - pg_mount.stdout | trim == '/opt/pgdata'
+
+    - name: Verify actual primary role and WAL settings
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -F, "|", -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT pg_is_in_recovery(), current_setting('wal_level'), current_setting('max_wal_senders'), current_setting('max_replication_slots');"]
+      register: pg_wal_settings
+      changed_when: false
+
+    - name: Refuse a standby or incompatible PostgreSQL source
+      ansible.builtin.assert:
+        that:
+          - pg_wal_settings.stdout.split('|')[0] == 'f'
+          - pg_wal_settings.stdout.split('|')[1] in ['replica', 'logical']
+          - pg_wal_settings.stdout.split('|')[2] | int > 0
+          - pg_wal_settings.stdout.split('|')[3] | int > 0
+
+    - name: Inspect replication role privileges
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT CASE WHEN rolcanlogin AND rolreplication THEN 'ok' ELSE 'invalid' END FROM pg_roles WHERE rolname = '{{ pg_replication_user }}';"]
+      register: pg_replication_role_state
+      changed_when: false
+
+    - name: Refuse to modify incompatible existing replication role
+      ansible.builtin.assert:
+        that:
+          - pg_replication_role_state.stdout | trim in ['', 'ok']
+
+    - name: Create replication user once, with encrypted Vault password
+      ansible.builtin.command:
+        argv: [docker, exec, -i, -u, postgres, meow-postgres, psql, -X, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres]
+        stdin: >-
+          CREATE ROLE {{ pg_replication_user }} WITH LOGIN REPLICATION
+          PASSWORD '{{ vault_postgres_replication_password | replace("'", "''") }}';
+      when: pg_replication_role_state.stdout | trim == ''
+      changed_when: true
+      no_log: true
+
+    - name: Manage DB02-only SCRAM replication access in persistent PGDATA
+      ansible.builtin.lineinfile:
+        path: /opt/pgdata/data/pg_hba.conf
+        regexp: '^host\s+replication\s+{{ pg_replication_user }}\s+'
+        line: "host replication {{ pg_replication_user }} {{ pg_replication_standby_cidr }} scram-sha-256"
+        insertafter: EOF
+        backup: true
+      notify: Reload PostgreSQL authentication
+
+    - name: Cap WAL retention for the physical standby slot at 1 GiB
+      ansible.builtin.lineinfile:
+        path: /opt/pgdata/data/postgresql.conf
+        regexp: '^\\s*#?\\s*max_slot_wal_keep_size\\s*='
+        line: "max_slot_wal_keep_size = '1024MB'"
+        backup: true
+      notify: Reload PostgreSQL authentication
+
+    - name: Reload authentication rules without restarting PostgreSQL
+      ansible.builtin.meta: flush_handlers
+
+    - name: Confirm the active WAL slot retention cap is 1 GiB
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT pg_size_bytes(current_setting('max_slot_wal_keep_size')) BETWEEN 1024*1024*1024 AND 1024*1024*1024;"]
+      register: pg_wal_cap
+      changed_when: false
+      failed_when: pg_wal_cap.rc != 0 or pg_wal_cap.stdout | trim != 't'
+
+    - name: Require no PostgreSQL HBA parsing errors
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT count(*) FROM pg_hba_file_rules WHERE error IS NOT NULL;"]
+      register: pg_hba_errors
+      changed_when: false
+      failed_when: pg_hba_errors.rc != 0 or pg_hba_errors.stdout | trim != '0'
+
+  handlers:
+    - name: Reload PostgreSQL authentication
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT pg_reload_conf();"]
+      changed_when: true
