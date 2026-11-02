@@ -49,6 +49,31 @@
       - not (old_running.stdout | trim == 'true' and patroni_inspect.rc == 0 and patroni_inspect.stdout.startswith('true|'))
     fail_msg: "Refusing dual PostgreSQL or unrecognized Patroni container. Inspect before retry."
 
+- name: Verify original PostgreSQL role before replacing a running legacy container
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -u
+      - postgres
+      - meow-postgres
+      - psql
+      - -XAt
+      - -v
+      - ON_ERROR_STOP=1
+      - -U
+      - postgres
+      - -d
+      - postgres
+      - -c
+      - "SELECT pg_is_in_recovery();"
+  when: old_running.stdout | trim == 'true'
+  register: original_role
+  changed_when: false
+  failed_when: >-
+    original_role.rc != 0 or
+    original_role.stdout | trim != ('f' if pg_target_role == 'primary' else 't')
+
 - name: Write persistent DB07 ownership marker before disabling legacy Docker
   ansible.builtin.copy:
     dest: /opt/meowcloud-patroni/takeover.lock
@@ -60,7 +85,7 @@
 - name: Remove legacy Docker automatic restart policy BEFORE stopping PostgreSQL
   ansible.builtin.command:
     argv: [docker, update, --restart=no, meow-postgres]
-  when: old_running.stdout | trim == 'true'
+  # Also correct a stopped-but-restartable legacy container on partial reruns.
   changed_when: true
 
 - name: Stop legacy PostgreSQL only on this database VM
