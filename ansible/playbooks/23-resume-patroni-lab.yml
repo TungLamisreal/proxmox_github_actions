@@ -37,7 +37,7 @@
           - db01_owner.results[1].stdout.split('|') | length == 3
           - db01_owner.results[1].stdout.split('|')[0] == 'true'
           - db01_owner.results[1].stdout.split('|')[1] == 'always'
-          - db01_owner.results[1].stdout.split('|')[2] is match('^meowcloud-patroni:pg15-[0-9a-f]{12}
+          - "db01_owner.results[1].stdout.split('|')[2] is match('^meowcloud-patroni:pg15-[0-9a-f]{12}$')"
         fail_msg: "DB01 ownership unexpectedly changed; no DB02 transition allowed."
 
     - name: Verify DB01 received primary lease after gateway repair
