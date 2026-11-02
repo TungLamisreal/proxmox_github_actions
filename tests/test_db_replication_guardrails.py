@@ -76,6 +76,8 @@ class DatabaseReplicationGuardrails(unittest.TestCase):
         self.assertIn("always()", source)
         self.assertIn("    if: ${{", source)
         self.assertIn("patroni-readiness:", source)
+        self.assertIn("patroni-stage:", source)
+        self.assertIn("STAGE_PATRONI_CONFIG_ONLY", source)
         self.assertNotIn("patroni.service", source)
 
     def test_automatic_failover_is_explicitly_disabled(self):
