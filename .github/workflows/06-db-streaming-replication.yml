@@ -1,0 +1,140 @@
+name: "06 - DB Streaming Replication (Gated)"
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "Choose the exact non-destructive or controlled database phase"
+        type: choice
+        options: [audit, prepare-primary, bootstrap-standby, verify]
+        required: true
+      backup_reference:
+        description: "Unique backup name (A-Z, a-z, digits, dot, underscore, dash; 6-64 chars), needed for changes"
+        type: string
+        required: false
+        default: ""
+      confirmation:
+        description: "For changes, type exactly APPLY_DB_REPLICATION"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meowcloud-db-replication
+  cancel-in-progress: false
+
+jobs:
+  db-replication:
+    runs-on: self-hosted
+    timeout-minutes: 35
+    env:
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      ANSIBLE_FORCE_COLOR: "1"
+      HOME: /home/github-runner
+      PATH: /home/github-runner/.venvs/ansible-2.21/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+
+    steps:
+      - name: Checkout reviewed Git revision (do not overwrite CT120 runtime checkout)
+        uses: actions/checkout@v4
+
+      - name: Fail-closed preflight
+        env:
+          RUN_PHASE: ${{ inputs.phase }}
+          BACKUP_REF: ${{ inputs.backup_reference }}
+          CONFIRM: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test -s "$INVENTORY"
+          test -s /home/github-runner/.ssh/id_ed25519
+          test -s /home/github-runner/.vault_pass
+          case "$RUN_PHASE" in
+            audit|prepare-primary|bootstrap-standby|verify) ;;
+            *) exit 1 ;;
+          esac
+          if [[ "$RUN_PHASE" == "prepare-primary" || "$RUN_PHASE" == "bootstrap-standby" ]]; then
+            test "$CONFIRM" = "APPLY_DB_REPLICATION"
+            [[ "$BACKUP_REF" =~ ^[A-Za-z0-9._-]{6,64}$ ]] || exit 1
+          fi
+          cd ansible
+          ansible-playbook --syntax-check -i "$INVENTORY" playbooks/09-backup-db-before-replication.yml
+          ansible-playbook --syntax-check -i "$INVENTORY" playbooks/10-audit-db-replication.yml
+          ansible-playbook --syntax-check -i "$INVENTORY" playbooks/11-configure-db-primary-replication.yml
+          ansible-playbook --syntax-check -i "$INVENTORY" playbooks/12-bootstrap-db-standby.yml
+
+      - name: Load replication secret into private temporary Ansible extra-vars
+        if: inputs.phase == 'prepare-primary' || inputs.phase == 'bootstrap-standby'
+        env:
+          REPL_SECRET: ${{ secrets.POSTGRES_REPLICATION_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          password = os.environ.get("REPL_SECRET", "")
+          if not re.fullmatch(r"[A-Za-z0-9_-]{16,}", password):
+              raise SystemExit("Missing or invalid POSTGRES_REPLICATION_PASSWORD repository secret")
+          target = Path(os.environ["RUNNER_TEMP"]) / "meowcloud-db-replication-vars.json"
+          target.write_text(json.dumps({"vault_postgres_replication_password": password}))
+          target.chmod(0o600)
+          with open(os.environ["GITHUB_ENV"], "a") as out:
+              out.write(f"REPL_VARS_FILE={target}\n")
+          PY
+
+      - name: Audit roles and data mounts (read-only)
+        working-directory: ansible
+        run: |
+          set -euo pipefail
+          ansible-playbook -i "$INVENTORY" playbooks/10-audit-db-replication.yml
+
+      - name: Save DB01 SQL backup before mutating anything
+        if: inputs.phase == 'prepare-primary' || inputs.phase == 'bootstrap-standby'
+        working-directory: ansible
+        env:
+          BACKUP_REF: ${{ inputs.backup_reference }}
+        run: |
+          set -euo pipefail
+          ansible-playbook -i "$INVENTORY" playbooks/09-backup-db-before-replication.yml \
+            -e pg_allow_backup=true -e "pg_backup_reference=$BACKUP_REF"
+
+      - name: Configure DB01 WAL authentication and bounded slot retention
+        if: inputs.phase == 'prepare-primary' || inputs.phase == 'bootstrap-standby'
+        working-directory: ansible
+        env:
+          BACKUP_REF: ${{ inputs.backup_reference }}
+        run: |
+          set -euo pipefail
+          ansible-playbook -i "$INVENTORY" playbooks/11-configure-db-primary-replication.yml \
+            -e "@$REPL_VARS_FILE" -e pg_apply_primary_replication=true \
+            -e "pg_backup_reference=$BACKUP_REF"
+
+      - name: Stage basebackup, activate DB02 replica and verify receiver
+        if: inputs.phase == 'bootstrap-standby'
+        working-directory: ansible
+        env:
+          BACKUP_REF: ${{ inputs.backup_reference }}
+        run: |
+          set -euo pipefail
+          ansible-playbook -i "$INVENTORY" playbooks/12-bootstrap-db-standby.yml \
+            -e "@$REPL_VARS_FILE" -e pg_bootstrap_standby=true \
+            -e "pg_backup_reference=$BACKUP_REF"
+
+      - name: Strictly verify both streaming peers and identical physical lineage
+        if: inputs.phase == 'bootstrap-standby' || inputs.phase == 'verify'
+        working-directory: ansible
+        run: |
+          set -euo pipefail
+          ansible-playbook -i "$INVENTORY" playbooks/10-audit-db-replication.yml \
+            -e pg_expect_replication_ready=true
+
+      - name: Delete temporary plaintext secret file
+        if: always()
+        run: |
+          if [ -n "${REPL_VARS_FILE:-}" ]; then
+            rm -f -- "$REPL_VARS_FILE"
+          fi
+
