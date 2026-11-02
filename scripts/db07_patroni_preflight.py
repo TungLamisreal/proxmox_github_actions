@@ -6,12 +6,28 @@ A successful audit means data was collected, NOT that takeover is approved.
 """
 import argparse
 import json
+import os
+from pathlib import Path
 import shlex
 import subprocess
 
 PVE_HOST = "192.168.150.49"
 DB = {"db-01": "192.168.150.71", "db-02": "192.168.150.72"}
 LB = {"lb-01": "192.168.150.61", "lb-02": "192.168.150.62"}
+OBSERVER = {"observer": "192.168.150.21"}
+SSH_IDENTITY = "/home/github-runner/.ssh/id_ed25519"
+DEFAULT_INVENTORY = "/opt/meowcloud-iac/ansible/inventory.ini"
+# This lab rebuilds SSH guests from golden images and guest host keys change.
+# Match the proven DB06 SSH options; keep key-based login mandatory. For
+# production, replace /dev/null known_hosts with provisioning-pinned keys.
+SSH_OPTIONS = [
+    "-o", "BatchMode=yes",
+    "-o", "IdentitiesOnly=yes",
+    "-o", "ConnectTimeout=10",
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+]
+
 DOCKER_FMT = "{{.State.Running}}|{{.HostConfig.RestartPolicy.Name}}|{{.Config.Image}}|{{range .Mounts}}{{.Source}}={{.Destination}};{{end}}"
 
 
@@ -19,19 +35,81 @@ class AuditError(RuntimeError):
     pass
 
 
-def ssh(host, argv):
-    remote = shlex.join(argv)
-    proc = subprocess.run(
-        ["ssh", "-T", "-i", "/home/github-runner/.ssh/id_ed25519",
-         "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
-         "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
-         "root@" + host, remote],
-        capture_output=True, text=True, check=False, timeout=35,
-    )
-    if proc.returncode:
-        raise AuditError(f"Read-only SSH inspection failed for {host}, rc={proc.returncode}")
-    return proc.stdout.strip()
+def verify_runtime_inventory(path):
+    """Refuse to probe stale or unexpected targets after Terraform rebuild."""
+    target = Path(path)
+    if not target.is_file():
+        raise AuditError(f"Runtime inventory missing: {path}; run Workflow 01 first")
+    expected = {"databases": DB, "loadbalancers": LB, "monitoring": OBSERVER}
+    actual = {section: {} for section in expected}
+    section = None
+    for raw in target.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section not in expected:
+            continue
+        fields = line.split()
+        if not fields:
+            continue
+        name = fields[0]
+        values = dict(field.split("=", 1) for field in fields[1:] if "=" in field)
+        if "ansible_host" in values:
+            if name in actual[section]:
+                raise AuditError(f"Duplicate {name} in runtime inventory")
+            actual[section][name] = values["ansible_host"]
+    for section, hosts in expected.items():
+        if actual[section] != hosts:
+            raise AuditError(
+                f"Stale or unexpected [{section}] runtime inventory after 00/01: "
+                f"expected {hosts}, got {actual[section]}"
+            )
 
+
+def ssh_error_reason(stderr, returncode):
+    """Bounded, credential-free SSH failure diagnosis."""
+    message = (stderr or "").lower()
+    if "host key verification failed" in message or "remote host identification has changed" in message:
+        return "host-key mismatch after VM recreation"
+    if "permission denied" in message or "publickey" in message:
+        return "SSH public-key authentication rejected"
+    if "connection refused" in message:
+        return "guest SSH daemon/port 22 refused connection"
+    if "no route to host" in message or "network is unreachable" in message:
+        return "guest or network route is unreachable"
+    if "timed out" in message or "connection timeout" in message:
+        return "SSH TCP timeout (firewall/guest/network)"
+    if "could not resolve hostname" in message:
+        return "SSH hostname resolution failed"
+    if returncode == 127 or "command not found" in message:
+        return "remote read-only inspection command unavailable"
+    if returncode == 255:
+        return "SSH transport/authentication failure"
+    return "remote read-only command exited unsuccessfully"
+
+
+def ssh(host, argv):
+    # ssh joins remote argv into a shell command. Quote the complete command,
+    # including the Docker Go template, so it survives the remote shell.
+    remote = shlex.join(argv)
+    command = ["ssh", "-T", "-n", "-i", SSH_IDENTITY, *SSH_OPTIONS,
+               "root@" + host, remote]
+    try:
+        proc = subprocess.run(
+            command, capture_output=True, text=True, check=False, timeout=35,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AuditError(f"Read-only SSH inspection timed out for {host}") from exc
+    if proc.returncode:
+        reason = ssh_error_reason(proc.stderr, proc.returncode)
+        raise AuditError(
+            f"Read-only SSH inspection failed for {host}, rc={proc.returncode}: "
+            f"{reason}. Check CT120 key/guest readiness and Workflow 01 SSH setup."
+        )
+    return proc.stdout.strip()
 
 def parse_container(text):
     fields = text.split("|", 3)
@@ -85,7 +163,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--require-ready", action="store_true",
                         help="Fail closed while any ownership blocker remains")
+    parser.add_argument("--inventory", default=os.environ.get("INVENTORY", DEFAULT_INVENTORY))
     args = parser.parse_args()
+    verify_runtime_inventory(args.inventory)
+    if not Path(SSH_IDENTITY).is_file():
+        raise AuditError("Canonical CT120 SSH private key is missing; run Workflow 01 preflight")
 
     containers, mounts = {}, {}
     for name, ip in DB.items():
