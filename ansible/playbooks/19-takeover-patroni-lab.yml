@@ -22,8 +22,8 @@
         url: http://127.0.0.1:8008/primary
         timeout: 5
         status_code: 200
-      delegate_to: db-01
         return_content: false
+      delegate_to: db-01
       register: primary_before_standby
       retries: 6
       delay: 3
