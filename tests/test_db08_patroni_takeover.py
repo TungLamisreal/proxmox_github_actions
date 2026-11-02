@@ -97,6 +97,35 @@ class DB08TakeoverContracts(unittest.TestCase):
         self.assertNotIn("keepalived.conf", pb)
         self.assertNotIn("nginx.conf", pb)
 
+    def test_current_patroni_cannot_be_prepared_or_taken_over_again(self):
+        wf = source(".github/workflows/07-db-patroni-lab.yml")
+        guard = source("ansible/playbooks/24-guard-patroni-reentry.yml")
+        self.assertIn("default: health", wf)
+        self.assertIn("24-guard-patroni-reentry.yml", wf)
+        self.assertLess(wf.index("24-guard-patroni-reentry.yml"),
+                        wf.index('name: "02 • Build'))
+        self.assertIn("takeover.lock", guard)
+        self.assertIn("meow-patroni", guard)
+        self.assertIn("changed_when: false", guard)
+        for forbidden in ("docker stop", "docker start", "docker rm",
+                          "pg_basebackup", "initdb", "rm -rf"):
+            self.assertNotIn(forbidden, guard)
+
+    def test_localhost_replication_hba_is_canonical_and_readonly_audited(self):
+        template = source("ansible/templates/patroni.yml.j2")
+        audit = source("ansible/playbooks/25-verify-patroni-local-hba.yml")
+        wf = source(".github/workflows/07-db-patroni-lab.yml")
+        for cidr in ("127.0.0.1/32", "::1/128"):
+            self.assertIn("host replication {{ pg_replication_user }} " + cidr,
+                          template)
+        self.assertIn("FROM pg_hba_file_rules", audit)
+        self.assertIn("changed_when: false", audit)
+        self.assertIn("25-verify-patroni-local-hba.yml", wf)
+        self.assertIn("needs: [gate, health, hba]", wf)
+        self.assertIn("failure-diagnostic:", wf)
+        self.assertIn("writer-smoke:", wf)
+        self.assertIn("api/db-health", wf)
+
     def test_new_workflow_is_opt_in_with_deploy_then_health_and_retry_path(self):
         wf = source(".github/workflows/07-db-patroni-lab.yml")
         d = yaml.safe_load(wf)
