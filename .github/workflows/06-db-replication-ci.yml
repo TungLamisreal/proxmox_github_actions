@@ -15,6 +15,7 @@ on:
       - "ansible/playbooks/14-stage-patroni-config.yml"
       - "ansible/playbooks/15-bootstrap-etcd-quorum.yml"
       - "ansible/playbooks/16-verify-etcd-quorum.yml"
+      - "ansible/playbooks/17-diagnose-etcd.yml"
       - "ansible/templates/meowcloud-etcd.yml.j2"
       - "ansible/templates/meowcloud-etcd.service.j2"
       - "scripts/db06_etcd_pki.py"
@@ -37,8 +38,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Install isolated YAML validator
-        run: python3 -m pip install --disable-pip-version-check pyyaml
+      - name: Install isolated YAML and Ansible syntax validators
+        run: python3 -m pip install --disable-pip-version-check pyyaml "ansible-core==2.21.5"
       - name: Parse Ansible and workflow YAML
         run: |
           python3 - <<'PY'
@@ -53,6 +54,7 @@ jobs:
               "ansible/playbooks/14-stage-patroni-config.yml",
               "ansible/playbooks/15-bootstrap-etcd-quorum.yml",
               "ansible/playbooks/16-verify-etcd-quorum.yml",
+              "ansible/playbooks/17-diagnose-etcd.yml",
               "ansible/group_vars/databases/replication.yml",
               ".github/workflows/06-db-streaming-replication.yml",
               ".github/workflows/06-db-replication-ci.yml",
@@ -63,6 +65,11 @@ jobs:
                   raise SystemExit(f"Invalid YAML root: {p}")
               print(f"OK: {p}")
           PY
+      - name: Validate DCS Ansible task/module syntax before merging
+        run: |
+          for playbook in 15-bootstrap-etcd-quorum 16-verify-etcd-quorum 17-diagnose-etcd; do
+            ansible-playbook --syntax-check -i ansible/inventory.ini "ansible/playbooks/$playbook.yml"
+          done
       - name: Run DB replication safety contract unit tests
         run: |
           python3 -m unittest discover -s tests -p test_db_replication_guardrails.py -v
