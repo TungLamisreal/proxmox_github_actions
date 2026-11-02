@@ -1,0 +1,153 @@
+---
+# DB07 lab hotfix: etcdctl speaks native gRPC, but Patroni etcd3 requires
+# HTTPS JSON /v3/cluster/member/list (gRPC gateway). Recover an existing quorum
+# one member at a time. Never delete etcd state, PGDATA or issue leader writes.
+- name: Verify intact etcd quorum before enabling Patroni HTTP gateway
+  hosts: observer
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Verify all three native gRPC member endpoints healthy
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/etcdctl
+          - --endpoints=https://192.168.150.71:2379,https://192.168.150.72:2379,https://192.168.150.21:2379
+          - --cacert=/etc/meowcloud/tls/ca.pem
+          - --cert=/etc/meowcloud/tls/etcd-server.pem
+          - --key=/etc/meowcloud/tls/etcd-server-key.pem
+          - endpoint
+          - health
+      environment:
+        ETCDCTL_API: "3"
+      register: dcs_health_before
+      changed_when: false
+
+    - name: Refuse to roll any voter without full native DCS health
+      ansible.builtin.assert:
+        that:
+          - dcs_health_before.rc == 0
+          - dcs_health_before.stdout_lines | length == 3
+        fail_msg: "The native etcd quorum is unhealthy; no rolling gateway change permitted."
+
+- name: Enable gRPC HTTP gateway on every existing etcd voter, one at a time
+  hosts: db-01:db-02:monitoring
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  serial: 1
+  vars:
+    expected_ips:
+      db-01: "192.168.150.71"
+      db-02: "192.168.150.72"
+      observer: "192.168.150.21"
+  tasks:
+    - name: Require fixed voter identity and DB06-managed etcd state
+      ansible.builtin.assert:
+        that:
+          - db07_gateway_repair_approved | default(false) | bool
+          - inventory_hostname in expected_ips
+          - ansible_host == expected_ips[inventory_hostname]
+          - groups['databases'] | length == 2
+          - groups['monitoring'] | length == 1
+        fail_msg: "Refusing unexpected voter or unconfirmed DB07 gateway repair."
+
+    - name: Check existing DB06-owned etcd marker
+      ansible.builtin.stat:
+        path: /var/lib/meowcloud-etcd/.meowcloud-db06-owned
+      register: dcs_marker
+
+    - name: Refuse unknown etcd state
+      ansible.builtin.assert:
+        that:
+          - dcs_marker.stat.isreg | default(false)
+        fail_msg: "Missing DB06 ownership marker; never initialize/overwrite etcd data."
+
+    - name: Enable the HTTP/JSON gRPC gateway without replacing existing TLS settings
+      ansible.builtin.lineinfile:
+        path: /etc/meowcloud/etcd.yml
+        regexp: '^enable-grpc-gateway:'
+        line: 'enable-grpc-gateway: true'
+        insertafter: '^initial-cluster-state:'
+        state: present
+        backup: true
+      register: gateway_changed
+
+    - name: Restart only the affected etcd member if the config changed
+      ansible.builtin.systemd_service:
+        name: meowcloud-etcd
+        state: restarted
+      when: gateway_changed.changed
+
+    - name: Prove this voter exposes the Patroni HTTPS JSON member endpoint
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:2379/v3/cluster/member/list"
+        method: POST
+        body_format: json
+        body: {}
+        client_cert: /etc/meowcloud/tls/etcd-server.pem
+        client_key: /etc/meowcloud/tls/etcd-server-key.pem
+        ca_path: /etc/meowcloud/tls/ca.pem
+        validate_certs: true
+        status_code: 200
+        timeout: 5
+        return_content: true
+      register: gateway_member_list
+      retries: 12
+      delay: 3
+      until: gateway_member_list.status | default(0) == 200
+      changed_when: false
+
+    - name: Require intact three-member reply from each HTTPS gateway
+      ansible.builtin.assert:
+        that:
+          - gateway_member_list.json.members | length == 3
+          - (gateway_member_list.json.members | map(attribute='name') | list | sort) == ['db-01','db-02','observer']
+        fail_msg: "The /v3 JSON gateway is not returning the expected etcd membership."
+
+- name: Prove Patroni client mTLS certificate can use all three gateways
+  hosts: databases
+  become: true
+  gather_facts: false
+  vars:
+    urls:
+      - https://192.168.150.71:2379/v3/cluster/member/list
+      - https://192.168.150.72:2379/v3/cluster/member/list
+      - https://192.168.150.21:2379/v3/cluster/member/list
+  tasks:
+    - name: Verify Patroni's own client certificate against the same JSON endpoint
+      ansible.builtin.uri:
+        url: "{{ item }}"
+        method: POST
+        body_format: json
+        body: {}
+        client_cert: /opt/meowcloud-patroni/tls/patroni-client.pem
+        client_key: /opt/meowcloud-patroni/tls/patroni-client-key.pem
+        ca_path: /opt/meowcloud-patroni/tls/ca.pem
+        validate_certs: true
+        status_code: 200
+        timeout: 6
+        return_content: true
+      loop: "{{ urls }}"
+      register: patroni_gateway
+      changed_when: false
+
+    - name: Fail closed if any Patroni TLS request returns wrong membership
+      ansible.builtin.assert:
+        that:
+          - patroni_gateway.results | length == 3
+          - >-
+            patroni_gateway.results
+            | selectattr('json.members', 'defined') | list | length == 3
+          - >-
+            patroni_gateway.results
+            | map(attribute='json.members') | map('length') | list == [3, 3, 3]
+        fail_msg: "Patroni mTLS credentials cannot read all three etcd HTTP gateways."
+
+- name: Report gateway readiness without modifying PostgreSQL
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Confirm all voter JSON gateways and both Patroni client credentials
+      ansible.builtin.debug:
+        msg: "PASS: three etcd /v3 HTTP gateways respond with 3-member lists over mTLS from DB01/DB02; PGDATA unchanged."

@@ -44,6 +44,33 @@
       delay: 5
       until: etcd_health.rc == 0
 
-    - name: Report successful DCS setup, NOT a PostgreSQL takeover
+    - name: Verify Patroni-compatible HTTPS JSON gateway on all three etcd members
+      ansible.builtin.uri:
+        url: "{{ item }}"
+        method: POST
+        body_format: json
+        body: {}
+        client_cert: /etc/meowcloud/tls/etcd-server.pem
+        client_key: /etc/meowcloud/tls/etcd-server-key.pem
+        ca_path: /etc/meowcloud/tls/ca.pem
+        validate_certs: true
+        status_code: 200
+        timeout: 5
+        return_content: true
+      loop:
+        - https://192.168.150.71:2379/v3/cluster/member/list
+        - https://192.168.150.72:2379/v3/cluster/member/list
+        - https://192.168.150.21:2379/v3/cluster/member/list
+      register: gateway_response
+      changed_when: false
+
+    - name: Reject HTTP 404, missing gateway or incomplete JSON cluster replies
+      ansible.builtin.assert:
+        that:
+          - gateway_response.results | length == 3
+          - gateway_response.results | map(attribute='json.members') | map('length') | list == [3,3,3]
+        fail_msg: "Native etcdctl gRPC is healthy but Patroni /v3 JSON gateway is not; run DB07 gateway-repair first."
+
+    - name: Report verified DCS and Patroni HTTP gateway, not a PostgreSQL takeover
       ansible.builtin.debug:
-        msg: "PASS: etcd 3/3 healthy with mTLS. PostgreSQL and application endpoints remain unchanged."
+        msg: "PASS: etcd 3/3 gRPC quorum AND Patroni /v3 JSON HTTPS gateway healthy over mTLS."

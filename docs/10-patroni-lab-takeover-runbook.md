@@ -131,6 +131,86 @@ backend is currently hardcoded to DB01 `.71` in the release workflow and
 runtime config. That cutover must be updated separately after verifying
 TCP 5432 from the backend to `.100` and its firewall.
 
+
+## Incident recovery: Patroni DB01 waits for etcd /v3 HTTP gateway (Nov 2)
+
+After the first live takeover in run
+[41445859845](https://github.com/TungLamisreal/proxmox_github_actions/actions/runs/41445859845),
+DB01's `meow-postgres` was cleanly stopped with restart=no and
+`meow-patroni` was **still running**. A user-provided DB01 Docker log
+reported repeat HTTP `404 page not found` on
+`https://192.168.150.{71,72,21}:2379/v3`, followed by
+`waiting on etcd`. The 3-voter etcdctl native gRPC quorum previously
+passed, but Patroni 4.0.6's etcd3 backend uses the **HTTP JSON gRPC gateway**:
+`POST /v3/cluster/member/list`. Thus native gRPC tests alone did not
+validate this crucial integration.
+
+### Permanent repair for new and existing deployments
+
+- `ansible/templates/meowcloud-etcd.yml.j2` explicitly sets
+  `enable-grpc-gateway: true`. This is applied during every future
+  DB06 bootstrap, including a clean 00→01→06 setup.
+- `ansible/playbooks/16-verify-etcd-quorum.yml` now tests native etcdctl
+  quorum **and** HTTP `/v3/cluster/member/list` on all three endpoints over
+  TLS. A missing gateway fails the health job even if native gRPC is healthy.
+- Existing voters can be fixed **in place**, one at a time, with
+  `22-enable-etcd-gateway.yml`: require intact quorum first; change only
+  `enable-grpc-gateway: true` in the owned etcd config; restart each voter
+  only if config changed; require HTTP 200 and 3-member JSON before
+  touching the next voter; then verify HTTP with the real Patroni client
+  certificate from **both database hosts**. No etcd data or PostgreSQL
+  data is deleted.
+
+### Actual recovery run order (PR29 must be merged)
+
+**First run** Workflow07 on updated `main`:
+```
+mode: gateway-repair
+confirmation: ENABLE_ETCD_HTTP_GATEWAY
+```
+
+This intentionally restarts the etcd voter daemons **sequentially**, not
+the DB containers. The voter cluster maintains a 2/3 majority during
+normal single-member restarts. It fails closed if a voter cannot restart
+or provide a valid JSON member list. Do not invoke `dcs-bootstrap` as a
+workaround: it does extra package and PKI tasks.
+
+DB01's already-running `meow-patroni` should stop logging `404`,
+acquire the single DCS leader lease and start its **original PostgreSQL 15
+data directory**. If it doesn't, read `docker logs --tail 100 meow-patroni`
+on DB01, or Workflow07 `mode=diagnose`, **before continuing**.
+
+**Then run** Workflow07 on the same updated `main`:
+```
+mode: resume
+confirmation: RESUME_PATRONI_LAB
+```
+
+The resume playbook **does not rebuild/restart DB01 Patroni** or change its
+PGDATA. It checks that DB01's old `meow-postgres` is stopped with
+restart=no, the original Patroni image is running with restart=always,
+and both REST `/primary` and SQL confirm the writer. It then reads the
+original `meowcloud-patroni:pg15-<old-SHA>` image tag from DB01 and
+uses that exact image on DB02, already imported in the initial run.
+DB02 is confirmed standby before being transferred. Finally, the
+existing failover-safe PostgreSQL health job tests the resulting cluster.
+
+**Never rerun** the old failed GitHub Actions takeover job on the old
+commit, and do **not** restart the old `meow-postgres` on DB01 while
+Patroni is handling the DCS lease. DB02 should remain on its legacy
+standby until resume passes every gate.
+
+### Fail-closed follow-up
+
+`mode=diagnose` (blank confirmation) records read-only Docker status,
+Patroni logs and file ownership from DB01/DB02 without requiring a
+healthy etcd quorum. New job03/06 failures auto-run this diagnostic.
+
+If DB01 still has no HTTP 200 `/primary` after gateway repair, treat it
+as a **new** startup blocker and inspect the actual Patroni log; don't
+reboot DB01, bypass role checking or recreate PostgreSQL volumes to
+make a workflow appear green.
+
 ## Final lab demonstration (NOT automated in this PR)
 
 Once health, writer proxy and application VIP migration are confirmed:
