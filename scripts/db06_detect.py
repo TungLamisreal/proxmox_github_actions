@@ -11,6 +11,9 @@ import subprocess
 from typing import NamedTuple
 
 
+SUPPORTED_MODES = ("full", "verify", "ha-readiness", "dcs-bootstrap", "dcs-health", "patroni-stage")
+
+
 class Snapshot(NamedTuple):
     in_recovery: str
     system_id: str
@@ -24,7 +27,7 @@ def detect(primary: Snapshot, standby: Snapshot, mode: str, confirmed: bool) -> 
     Fail closed on promoted DB02, conflicting identities, partial replication
     or mismatched topologies. No writes happen in this module.
     """
-    if mode not in ("full", "verify", "ha-readiness", "patroni-stage"):
+    if mode not in SUPPORTED_MODES:
         raise ValueError("Unknown DB06 execution mode")
     if primary.in_recovery != "f":
         raise ValueError("DB01 is not the current writer; do not bootstrap")
