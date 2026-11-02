@@ -90,7 +90,13 @@
       register: db02_image
       changed_when: false
 
-    - name: Verify DB02 is still the standby before switching ownership
+    - name: Inspect whether DB02 legacy standby still runs after an earlier partial attempt
+      ansible.builtin.command:
+        argv: [docker, inspect, --format, "{{ '{{' }}.State.Running{{ '}}' }}", meow-postgres]
+      register: db02_legacy
+      changed_when: false
+
+    - name: Verify DB02 has never been promoted before switching ownership
       ansible.builtin.command:
         argv:
           - docker
@@ -111,7 +117,19 @@
       register: db02_standby
       changed_when: false
       failed_when: db02_standby.rc != 0 or db02_standby.stdout | trim != 't'
-      when: db02_image.rc == 0
+      when: db02_legacy.stdout | trim == 'true'
+
+    - name: On rerun with old DB02 stopped, require existing takeover marker
+      ansible.builtin.stat:
+        path: /opt/meowcloud-patroni/takeover.lock
+      register: db02_marker
+      when: db02_legacy.stdout | trim == 'false'
+
+    - name: Reject stopped DB02 not previously owned by DB07
+      ansible.builtin.assert:
+        that:
+          - db02_legacy.stdout | trim == 'true' or (db02_marker.stat.isreg | default(false))
+        fail_msg: "Legacy DB02 is already stopped without DB07 ownership marker; inspect manually."
 
   tasks:
     - name: Adopt DB02 using the reviewed legacy-container ownership guard
