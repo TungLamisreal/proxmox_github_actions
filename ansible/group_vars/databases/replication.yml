@@ -1,0 +1,9 @@
+---
+# Desired topology only; the inventory labels do not prove replication.
+pg_primary_ip: "192.168.150.71"
+pg_standby_ip: "192.168.150.72"
+pg_replication_user: "meow_replication"
+pg_replication_standby_cidr: "192.168.150.72/32"
+pg_replication_slot_name: "meow_db02"
+# Never auto-promote without consensus, fencing, and a stable DB endpoint.
+pg_automatic_failover_enabled: false
