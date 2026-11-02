@@ -75,6 +75,16 @@ jobs:
       - name: "1. Checkout Repository"
         uses: actions/checkout@v4
 
+      - name: Require DB HA ready before changing elastic pool capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/scripts/db_ha_vip.py" --check
+          curl -fsS --retry 2 --retry-delay 1 --max-time 7 \
+            http://192.168.150.100/api/db-health | \
+            python3 -c 'import json,sys; assert json.load(sys.stdin).get("status") == "UP"'
+          echo "PASS: HA database writer VIP in application state and reachable via API"
+
       - name: "2. Prepare State, SSH Keys and Vault"
         shell: bash
         env:
