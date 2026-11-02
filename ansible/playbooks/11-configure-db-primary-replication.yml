@@ -74,8 +74,23 @@
         backup: true
       notify: Reload PostgreSQL authentication
 
+    - name: Cap WAL retention for the physical standby slot at 1 GiB
+      ansible.builtin.lineinfile:
+        path: /opt/pgdata/data/postgresql.conf
+        regexp: '^\\s*#?\\s*max_slot_wal_keep_size\\s*='
+        line: "max_slot_wal_keep_size = '1024MB'"
+        backup: true
+      notify: Reload PostgreSQL authentication
+
     - name: Reload authentication rules without restarting PostgreSQL
       ansible.builtin.meta: flush_handlers
+
+    - name: Confirm the active WAL slot retention cap is 1 GiB
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT pg_size_bytes(current_setting('max_slot_wal_keep_size')) BETWEEN 1024*1024*1024 AND 1024*1024*1024;"]
+      register: pg_wal_cap
+      changed_when: false
+      failed_when: pg_wal_cap.rc != 0 or pg_wal_cap.stdout | trim != 't'
 
     - name: Require no PostgreSQL HBA parsing errors
       ansible.builtin.command:
