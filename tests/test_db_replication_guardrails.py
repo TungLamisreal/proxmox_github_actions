@@ -64,8 +64,21 @@ class DatabaseReplicationGuardrails(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
         self.assertIn("pg_dumpall", source)
         self.assertIn("pre-replication-", source)
-        self.assertLess(workflow.index("Save DB01 SQL backup"),
-                        workflow.index("Configure DB01 WAL authentication"))
+        self.assertLess(workflow.index('name: "02 • Preserve DB01 data"'),
+                        workflow.index('name: "03 • Prepare DB01 replication source"'))
+
+    def test_six_job_workflow_and_read_only_patroni_gate(self):
+        source = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
+        self.assertIn("    needs: [preflight, backup]", source)
+        self.assertIn("    needs: [preflight, primary]", source)
+        self.assertIn("    needs: [preflight, backup, primary, standby]", source)
+        self.assertIn("    needs: [preflight, verify]", source)
+        self.assertIn("always()", source)
+        self.assertIn("    if: ${{", source)
+        self.assertIn("patroni-readiness:", source)
+        self.assertIn("patroni-stage:", source)
+        self.assertIn("STAGE_PATRONI_CONFIG_ONLY", source)
+        self.assertNotIn("patroni.service", source)
 
     def test_automatic_failover_is_explicitly_disabled(self):
         config = (ROOT / "ansible/group_vars/databases/replication.yml").read_text()

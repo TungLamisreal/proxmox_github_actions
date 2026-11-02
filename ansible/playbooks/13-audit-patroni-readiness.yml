@@ -1,0 +1,84 @@
+---
+# Read-only readiness. Patroni must never be started on a live PGDATA until
+# external DCS quorum, fencing, and DB writer proxy have been reviewed.
+- name: Inspect candidate DCS members (DB01, DB02, Observer)
+  hosts: db-01:db-02:monitoring
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Query host/node identity
+      ansible.builtin.command:
+        argv: [hostname, -f]
+      register: dcs_hostname
+      changed_when: false
+
+    - name: Check whether etcd daemon is installed
+      ansible.builtin.command:
+        argv: [sh, -c, "command -v etcd"]
+      register: etcd_binary
+      changed_when: false
+      failed_when: false
+
+    - name: Check whether etcd is serving on local client port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 2379
+        timeout: 1
+      register: etcd_port
+      failed_when: false
+
+    - name: Report DCS readiness without changing host
+      ansible.builtin.debug:
+        msg:
+          candidate: "{{ inventory_hostname }}"
+          hostname: "{{ dcs_hostname.stdout }}"
+          etcd_installed: "{{ etcd_binary.rc == 0 }}"
+          etcd_port_open: "{{ not (etcd_port.failed | default(false)) }}"
+          note: "An open port alone does NOT prove a healthy 3-member etcd quorum."
+
+- name: Inspect PostgreSQL lifecycle authority
+  hosts: databases
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Inspect current PostgreSQL container image and restart policy
+      ansible.builtin.command:
+        argv: [docker, inspect, --format, "{{ '{{' }}.Config.Image{{ '}}' }}:{{ '{{' }}.HostConfig.RestartPolicy.Name{{ '}}' }}", meow-postgres]
+      register: postgres_lifecycle
+      changed_when: false
+
+    - name: Check for Patroni executable
+      ansible.builtin.command:
+        argv: [sh, -c, "command -v patroni"]
+      register: patroni_binary
+      changed_when: false
+      failed_when: false
+
+    - name: Report any competing lifecycle controller
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          existing_container: "{{ postgres_lifecycle.stdout }}"
+          patroni_host_installed: "{{ patroni_binary.rc == 0 }}"
+          note: "Old Docker restart:always and playbook 05 must be reconciled before a Patroni handover."
+
+- name: Inspect stable writer endpoint prerequisites
+  hosts: loadbalancers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Detect HAProxy package without modifying LB
+      ansible.builtin.command:
+        argv: [sh, -c, "command -v haproxy"]
+      register: haproxy_binary
+      changed_when: false
+      failed_when: false
+
+    - name: Report writer proxy status
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          haproxy_installed: "{{ haproxy_binary.rc == 0 }}"
+          candidate_vip: "192.168.150.100:5432"
+          note: "Backend is still bound to DB01 .71 and must be migrated only after Patroni leader health checks."
+
