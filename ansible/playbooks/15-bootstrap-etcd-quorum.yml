@@ -38,6 +38,8 @@
   hosts: db-01:db-02:monitoring
   become: true
   gather_facts: false
+  # Roll out one voter at a time on reruns; do not restart established quorum together.
+  serial: 1
   vars:
     etcd_members:
       db-01: "192.168.150.71"
@@ -199,23 +201,33 @@
       ansible.builtin.systemd_service:
         daemon_reload: true
 
+    - name: Apply config changes as a rolling etcd service restart
+      ansible.builtin.meta: flush_handlers
+
     - name: Enable DB06 etcd daemon without modifying PostgreSQL
       ansible.builtin.systemd_service:
         name: meowcloud-etcd
         state: started
         enabled: true
 
-    - name: Apply any configuration change before quorum verification
-      ansible.builtin.meta: flush_handlers
-
-    - name: Wait until local etcd TLS client port is listening
-      ansible.builtin.wait_for:
-        host: "{{ ansible_host }}"
-        port: 2379
-        timeout: 45
+    # No per-voter readiness wait here: the first member cannot elect a leader
+    # until additional voters join. The third play and job 09 validate the
+    # complete cluster only after all three members are configured.
 
   handlers:
     - name: Restart DB06 etcd
       ansible.builtin.systemd_service:
         name: meowcloud-etcd
         state: restarted
+
+- name: Validate etcd client listeners after every voter has been installed
+  hosts: db-01:db-02:monitoring
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Confirm each etcd HTTPS client endpoint is listening
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 2379
+        timeout: 45
