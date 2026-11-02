@@ -34,7 +34,110 @@
         that:
           - db01_marker.stat.isreg | default(false)
           - db01_owner.results[0].stdout.startswith('false|no|postgres:15-alpine')
-          - db01_owner.results[1].stdout is match('^true\\|always\\|meowcloud-patroni:pg15-[0-9a-f]{12}$')
+          - db01_owner.results[1].stdout.split('|') | length == 3
+          - db01_owner.results[1].stdout.split('|')[0] == 'true'
+          - db01_owner.results[1].stdout.split('|')[1] == 'always'
+          - db01_owner.results[1].stdout.split('|')[2] is match('^meowcloud-patroni:pg15-[0-9a-f]{12}
+        fail_msg: "DB01 ownership unexpectedly changed; no DB02 transition allowed."
+
+    - name: Verify DB01 received primary lease after gateway repair
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8008/primary
+        status_code: 200
+        timeout: 5
+        return_content: false
+      register: db01_primary
+      retries: 12
+      delay: 5
+      until: db01_primary.status | default(0) == 200
+
+    - name: Confirm actual DB01 SQL writer and capture immutable container image name
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -u
+          - postgres
+          - meow-patroni
+          - psql
+          - -XAt
+          - -v
+          - ON_ERROR_STOP=1
+          - -U
+          - postgres
+          - -d
+          - postgres
+          - -c
+          - "SELECT pg_is_in_recovery();"
+      register: db01_sql_writer
+      changed_when: false
+      failed_when: db01_sql_writer.rc != 0 or db01_sql_writer.stdout | trim != 'f'
+
+    - name: Confirm original DB01 image can be reused without building another version
+      ansible.builtin.set_fact:
+        original_patroni_image: "{{ db01_owner.results[1].stdout.split('|')[2] }}"
+      changed_when: false
+
+- name: Resume DB02 only if it still streams from DB01
+  hosts: db-02
+  become: true
+  gather_facts: false
+  vars:
+    pg_target_role: replica
+    patroni_image: "{{ hostvars['db-01'].original_patroni_image }}"
+    pg_takeover_approved: true
+  pre_tasks:
+    - name: Verify DB02 has exactly the original Patroni image
+      ansible.builtin.command:
+        argv: [docker, image, inspect, "{{ patroni_image }}"]
+      register: db02_image
+      changed_when: false
+
+    - name: Inspect whether DB02 legacy standby still runs after an earlier partial attempt
+      ansible.builtin.command:
+        argv: [docker, inspect, --format, "{{ '{{' }}.State.Running{{ '}}' }}", meow-postgres]
+      register: db02_legacy
+      changed_when: false
+
+    - name: Verify DB02 has never been promoted before switching ownership
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -u
+          - postgres
+          - meow-postgres
+          - psql
+          - -XAt
+          - -v
+          - ON_ERROR_STOP=1
+          - -U
+          - postgres
+          - -d
+          - postgres
+          - -c
+          - "SELECT pg_is_in_recovery(), COALESCE((SELECT status FROM pg_stat_wal_receiver LIMIT 1),'none');"
+      register: db02_standby
+      changed_when: false
+      failed_when: db02_standby.rc != 0 or db02_standby.stdout | trim != 't|streaming'
+      when: db02_legacy.stdout | trim == 'true'
+
+    - name: On rerun with old DB02 stopped, require existing takeover marker
+      ansible.builtin.stat:
+        path: /opt/meowcloud-patroni/takeover.lock
+      register: db02_marker
+      when: db02_legacy.stdout | trim == 'false'
+
+    - name: Reject stopped DB02 not previously owned by DB07
+      ansible.builtin.assert:
+        that:
+          - db02_legacy.stdout | trim == 'true' or (db02_marker.stat.isreg | default(false))
+        fail_msg: "Legacy DB02 is already stopped without DB07 ownership marker; inspect manually."
+
+  tasks:
+    - name: Adopt DB02 using the reviewed legacy-container ownership guard
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/db07-activate-one.yml"
+)
         fail_msg: "DB01 ownership unexpectedly changed; no DB02 transition allowed."
 
     - name: Verify DB01 received primary lease after gateway repair
