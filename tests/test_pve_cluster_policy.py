@@ -141,7 +141,7 @@ class PveClusterPolicyTests(unittest.TestCase):
              mock.patch.object(ha, "remote") as remote:
             ha.remove_ha()
             calls = [" ".join(str(v) for v in call.args) for call in remote.call_args_list]
-            self.assertEqual(len(calls), 4)
+            self.assertEqual(len(calls), 6)
             self.assertIn("/cluster/ha/rules/meow-observer", calls[0])
             self.assertIn("/cluster/ha/resources/ct:121", calls[1])
             self.assertIn("/cluster/ha/rules/meow-db-primary", calls[2])
