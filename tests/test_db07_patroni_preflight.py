@@ -110,7 +110,7 @@ class PatroniPreflightTests(unittest.TestCase):
                                                      "db-01 ansible_host=192.168.150.99"))
             with self.assertRaisesRegex(module.AuditError, "Stale or unexpected"):
                 module.verify_runtime_inventory(path)
-            path.write_text(good.read_text() + "\\n[databases]\\ndb-01 ansible_host=192.168.150.71\\n")
+            path.write_text(good.read_text() + "\n[databases]\ndb-01 ansible_host=192.168.150.71\n")
             with self.assertRaisesRegex(module.AuditError, "Duplicate"):
                 module.verify_runtime_inventory(path)
 
