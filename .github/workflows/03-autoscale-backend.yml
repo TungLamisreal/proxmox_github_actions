@@ -80,10 +80,14 @@ jobs:
         run: |
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/scripts/db_ha_vip.py" --check
-          curl -fsS --retry 2 --retry-delay 1 --max-time 7 \
-            http://192.168.150.100/api/db-health | \
-            python3 -c 'import json,sys; assert json.load(sys.stdin).get("status") == "UP"'
-          echo "PASS: HA database writer VIP in application state and reachable via API"
+          export HOME=/home/github-runner
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          export ANSIBLE_CONFIG="$GITHUB_WORKSPACE/ansible/ansible.cfg"
+          ansible-playbook -i /opt/meowcloud-iac/ansible/inventory.ini \
+            "$GITHUB_WORKSPACE/ansible/playbooks/20-verify-patroni-lab.yml"
+          ansible -i /opt/meowcloud-iac/ansible/inventory.ini backend-01 \
+            -m ansible.builtin.wait_for -a "host=192.168.150.100 port=5432 timeout=10"
+          echo "PASS: Patroni single writer + streaming and Backend-to-VIP TCP 5432"
 
       - name: "2. Prepare State, SSH Keys and Vault"
         shell: bash
