@@ -52,7 +52,7 @@ class DatabaseReplicationGuardrails(unittest.TestCase):
 
     def test_workflow_is_manual_and_keeps_dirty_runtime_checkout(self):
         source = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
-        for required in ("workflow_dispatch:", "actions/checkout@v4", "APPLY_DB_REPLICATION",
+        for required in ("workflow_dispatch:", "actions/checkout@v4", "BOOTSTRAP_MEOWCLOUD_DB_HA",
                          "POSTGRES_REPLICATION_PASSWORD", "pg_bootstrap_standby=true",
                          "pg_expect_replication_ready=true"):
             self.assertIn(required, source)
@@ -64,8 +64,8 @@ class DatabaseReplicationGuardrails(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
         self.assertIn("pg_dumpall", source)
         self.assertIn("pre-replication-", source)
-        self.assertLess(workflow.index('name: "02 • Preserve DB01 data"'),
-                        workflow.index('name: "03 • Prepare DB01 replication source"'))
+        self.assertLess(workflow.index('name: "02 • Preserve existing standalone DB01 SQL"'),
+                        workflow.index('name: "03 • Set up WAL sender on standalone DB01"'))
 
     def test_six_job_workflow_and_read_only_patroni_gate(self):
         source = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
