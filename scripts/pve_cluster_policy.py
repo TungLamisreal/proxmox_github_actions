@@ -32,7 +32,7 @@ HA = (
     ("vm:271", "meow-db-primary", "node2:2,node1:1,node3:1", "qemu", 271),
     # Preferences only: do not pin a former Replica after Patroni promotes it.
     # DB02 favors node3 so DB01/node2 and Observer/node1 remain separated.
-    ("vm:272", "meow-db-replica", "node3:2,node1:1,node2:1", "qemu", 272),
+    ("vm:272", "meow-db-02", "node3:2,node1:1,node2:1", "qemu", 272),
 )
 
 
