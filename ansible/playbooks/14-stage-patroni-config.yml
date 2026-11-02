@@ -1,0 +1,60 @@
+---
+# Stage declarative Patroni config, do not start/stop or replace PostgreSQL.
+# Secrets stay outside the Git repo, and TLS prerequisites must exist.
+- name: Stage Patroni configuration without starting it
+  hosts: databases
+  become: true
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/databases/replication.yml"
+    - "{{ playbook_dir }}/../group_vars/databases/vault.yml"
+  tasks:
+    - name: Require deliberate config-only staging and external DCS approval
+      ansible.builtin.assert:
+        that:
+          - pg_stage_patroni | default(false) | bool
+          - not (pg_automatic_failover_enabled | bool)
+          - vault_postgres_password is defined
+          - vault_postgres_replication_password is defined
+          - vault_postgres_replication_password | length >= 16
+        fail_msg: "Patroni handover is disabled. This stage only writes configuration."
+      no_log: true
+
+    - name: Require DCS CA and client certificates already provisioned
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: patroni_certs
+      loop:
+        - /etc/meowcloud/tls/ca.pem
+        - /etc/meowcloud/tls/patroni-client.pem
+        - /etc/meowcloud/tls/patroni-client-key.pem
+
+    - name: Block staging without full DCS client TLS material
+      ansible.builtin.assert:
+        that:
+          - (patroni_certs.results | selectattr('stat.isreg', 'defined') | list | length) == 3
+          - (patroni_certs.results | selectattr('stat.isreg', 'equalto', true) | list | length) == 3
+        fail_msg: "TLS not provisioned. Refusing incomplete Patroni configuration."
+ 
+    - name: Create root-only Patroni config directory
+      ansible.builtin.file:
+        path: /etc/meowcloud
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Render reviewable Patroni config (no service start)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/patroni.yml.j2"
+        dest: /etc/meowcloud/patroni.yml
+        owner: root
+        group: root
+        mode: '0600'
+        backup: true
+      no_log: true
+
+    - name: Explain next safety dependency
+      ansible.builtin.debug:
+        msg: "Patroni config staged only. Existing meow-postgres remains the sole live PostgreSQL process."
+
