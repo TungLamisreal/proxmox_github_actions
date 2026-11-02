@@ -125,11 +125,11 @@ class GatewayAndResumeTests(unittest.TestCase):
             self.assertNotIn(forbidden, first_play)
 
     def test_workflow_gateway_repair_bypasses_preexisting_false_green_gate(self):
-        workflow = read(".github/workflows/07-db-patroni-lab.yml")
+        workflow = read(".github/workflows/06-db-streaming-replication.yml")
         doc = yaml.safe_load(workflow)
         self.assertEqual(doc.get("on", doc.get(True))["workflow_dispatch"]["inputs"]["mode"]["options"],
-                         ["prepare", "takeover", "health", "proxy", "diagnose", "gateway-repair", "resume"])
-        self.assertIn("inputs.mode != 'gateway-repair'", workflow)
+                         ["bootstrap-ha", "health", "diagnose", "adopt-vip", "gateway-repair", "resume"])
+        self.assertIn("inputs.mode == 'gateway-repair'", workflow)
         self.assertIn("ENABLE_ETCD_HTTP_GATEWAY", workflow)
         self.assertIn("RESUME_PATRONI_LAB", workflow)
         self.assertIn("ansible/playbooks/22-enable-etcd-gateway.yml", workflow)
