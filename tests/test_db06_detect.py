@@ -19,7 +19,7 @@ class DB06StateMachine(unittest.TestCase):
     replica = Snapshot("t", "1000", 0, 1)
 
     def test_existing_healthy_pair_skips_bootstrap(self):
-        for mode in ("full", "verify", "ha-readiness"):
+        for mode in ("full", "verify", "ha-readiness", "patroni-stage"):
             self.assertFalse(detect(self.primary, self.replica, mode, False))
 
     def test_initial_standalone_requires_explicit_confirmation(self):
