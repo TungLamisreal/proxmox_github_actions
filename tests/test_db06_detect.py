@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 import shlex
 import subprocess
+import tempfile
 
 SOURCE = Path(__file__).resolve().parents[1] / "scripts/db06_detect.py"
 spec = importlib.util.spec_from_file_location("db06_detect", SOURCE)
@@ -66,6 +67,30 @@ class DB06StateMachine(unittest.TestCase):
             with self.subTest(mode=mode):
                 with self.assertRaisesRegex(ValueError, "not set up"):
                     detect(self.primary, missing, mode, True)
+
+    def test_cli_dcs_modes_emit_no_replica_bootstrap_output(self):
+        # Exercise the actual preflight CLI path, not only the helper.
+        with tempfile.TemporaryDirectory() as folder:
+            inventory = Path(folder) / "inventory.ini"
+            inventory.write_text("[databases]\\ndb-01\\ndb-02\\n")
+            for mode in ("dcs-bootstrap", "dcs-health"):
+                with self.subTest(mode=mode):
+                    output = Path(folder) / (mode + ".out")
+                    argv = [
+                        "db06_detect.py", "--mode", mode,
+                        "--confirmation", "BOOTSTRAP_ETCD_QUORUM",
+                        "--inventory", str(inventory),
+                        "--output", str(output),
+                        "--backup-reference", "unit-check",
+                    ]
+                    with patch.object(sys, "argv", argv), patch.object(
+                        module, "snapshot", side_effect=[self.primary, self.replica]
+                    ):
+                        module.main()
+                    self.assertEqual(
+                        output.read_text().splitlines(),
+                        ["bootstrap_required=false", "backup_reference=unit-check"],
+                    )
 
     def test_unrecognized_mode_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unknown DB06"):
