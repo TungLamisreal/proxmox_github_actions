@@ -83,7 +83,7 @@ APT, network, PVE, Ceph and Packer will be healthy at recording time.
   startup/recovery sequencing and can ignore `order=5,up=60` for VM271. This
   policy also does not serialize Terraform provisioning across multiple runners.
 
-- **PVE HA Manager:** Only **Observer CT121** and **DB Primary VM271** are
+- **PVE HA Manager:** **Observer CT121**, **DB01 VM271** and **DB02 VM272** are
   registered after all 01 configuration and service checks pass:
   `python3 scripts/pve_cluster_policy.py --mode apply-ha`. The controller uses
   idempotent **PVE 9.2 node-affinity rules** (`type=node-affinity`,
@@ -92,7 +92,8 @@ APT, network, PVE, Ceph and Packer will be healthy at recording time.
   **`auto-rebalance=0`** (confirmed supported by live PVE 9.2.21
   `pvesh usage /cluster/ha/resources -v`), and the policy audits both values:
   - `meow-observer`: node1 preferred (2), node2/node3 allowed (1)
-  - `meow-db-primary`: node2 preferred (2), node1/node3 allowed (1)
+  - `meow-db-primary` (VM271, legacy rule name): node2 preferred (2), node1/node3 allowed (1)
+  - `meow-db-02` (VM272): node3 preferred (2), node1/node2 allowed (1)
 - CT120 Auto-VM is **not currently registered with HA Manager** according to
   the live 2026-11-01 inspection (`/cluster/ha/resources` returned `[]`).
   It still has `onboot=1` and an existing startup order; neither guarantees HA.
@@ -100,8 +101,9 @@ APT, network, PVE, Ceph and Packer will be healthy at recording time.
   configure and test it separately with explicit approval.
   Tunnel CT131-133 and Nginx LB CT141-142 retain distinct initial placements by
   Terraform (no HA registration). BE CT151+ and FE CT171+ remain replaceable
-  stateless cattle and are **not** Proxmox HA services. DB2 VM272 is **not**
-  configured for PostgreSQL streaming replication/promotion; do not claim DB HA.
+  stateless cattle and are **not** Proxmox HA services. Both DB VMs are
+  HA-managed, but Patroni (Workflow 06) still governs SQL Primary/Replica
+  election and must be healthy before claiming Database HA.
 - VM/CT HA recovery is **restart after safe fencing/quorum**, not uninterrupted
   live migration. `ignore_changes = [node_name]` protects Observer placement,
   and `ignore_changes = [node_name, clone]` protects DB placement when HA
@@ -109,7 +111,7 @@ APT, network, PVE, Ceph and Packer will be healthy at recording time.
 - **IMPORTANT: PVE `startall-onboot-delay` governs ordinary PVE host
   auto-start; HA-managed guests are scheduled by the HA Manager separately.**
   It does **not** guarantee a cluster-wide one-minute gap, nor that ct:121 and
-  vm:271 (HA-managed after 01) start sequentially with CT120 (currently ordinary onboot). Do a controlled
+  vm:271/vm:272 (HA-managed after 01) start sequentially with CT120 (currently ordinary onboot). Do a controlled
   power-on/recovery test with Ceph and RAM monitoring; do not rely on this
   setting alone to eliminate host memory spikes.
 - PVE 9.2 has **migrated HA groups to HA rules** (`/cluster/ha/groups` returns an
@@ -122,7 +124,7 @@ APT, network, PVE, Ceph and Packer will be healthy at recording time.
   CT120 is outside its managed scope and remains untouched.
 - Before Terraform destroy, workflow 02 runs
   `python3 scripts/pve_cluster_policy.py --mode remove-ha`, which unregisters
-  only CT121 and VM271 and removes only their matching, owned HA rules.
+  only CT121, VM271 and VM272 and removes only their matching, owned HA rules.
   **Guest data and VM disks are not deleted by the HA policy script**;
   workflow 02's subsequent Terraform operation is destructive and
   will destroy PostgreSQL disks; user has copied a demo dump off CT120 but
