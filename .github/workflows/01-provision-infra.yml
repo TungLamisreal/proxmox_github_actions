@@ -167,6 +167,11 @@ jobs:
           BACKEND_CNT="${{ github.event.inputs.backend_count || '3' }}"
           FRONTEND_CNT="${{ github.event.inputs.frontend_count || '3' }}"
           DB_CNT="${{ github.event.inputs.db_count || '2' }}"
+          # Unified DB06 requires two persistent PGDATA owners and one Observer voter.
+          if [ "$DB_CNT" != "2" ]; then
+            echo "::error::Database HA needs db_count=2 in Workflow 01."
+            exit 1
+          fi
           PARALLEL="${{ github.event.inputs.tf_parallelism || '1' }}"
           SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@${PVE_HOST}"
 
