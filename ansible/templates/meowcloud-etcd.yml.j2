@@ -3,6 +3,9 @@ name: "{{ inventory_hostname }}"
 data-dir: /var/lib/meowcloud-etcd
 initial-cluster: "db-01=https://192.168.150.71:2380,db-02=https://192.168.150.72:2380,observer=https://192.168.150.21:2380"
 initial-cluster-state: new
+# Patroni etcd3 uses HTTPS JSON/gRPC-gateway /v3/cluster/member/list.
+# etcdctl gRPC quorum health alone does NOT prove this endpoint is available.
+enable-grpc-gateway: true
 initial-cluster-token: meowcloud-db-etcd-v1
 listen-peer-urls: "https://{{ ansible_host }}:2380"
 initial-advertise-peer-urls: "https://{{ ansible_host }}:2380"
