@@ -364,7 +364,7 @@ jobs:
           echo "| **2. Ansible Service Configuration (6 Tiers + Wait SSH)** | **${ANS_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
           echo "| **Tổng thời gian hoàn tất (End-to-End)** | **${TOTAL_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "NEXT: Run Workflow 06 \\`bootstrap-ha\\` (PostgreSQL replication → etcd → Patroni → writer VIP), then Workflow 05/03/04." >> "$GITHUB_STEP_SUMMARY"
+          echo "NEXT: Run Workflow 06 mode bootstrap-ha (PostgreSQL replication -> etcd -> Patroni -> writer VIP), then Workflow 05/03/04." >> "$GITHUB_STEP_SUMMARY"
           echo "The Day-0 Backend DB endpoint is .100 and may report DB DOWN until Workflow 06 completes." >> "$GITHUB_STEP_SUMMARY"
 
       - name: "11b. Restore DB VM-specific startup order without changing CT120"
