@@ -93,5 +93,27 @@ jobs:
             /usr/local/bin/pg_rewind --version | grep -E "pg_rewind.*15[.]"
             /opt/patroni-venv/bin/python3 -c "import patroni, psycopg2; print(\"PASS: Patroni and psycopg2 importable\")"
           '
+      - name: Smoke-test real Docker inspect Go template against a disposable container
+        run: |
+          set -euo pipefail
+          name="db07-inspect-ci-${GITHUB_RUN_ID}"
+          docker create --name "$name" --restart=always \
+            -v /tmp:/var/lib/postgresql/data postgres:15-alpine >/dev/null
+          trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+          python3 - "$name" <<'PY'
+          import subprocess
+          import sys
+          from scripts.db07_patroni_preflight import DOCKER_FMT, parse_container
+          inspection = subprocess.run(
+              ["docker", "inspect", "--format", DOCKER_FMT, sys.argv[1]],
+              text=True, capture_output=True, check=True
+          )
+          data = parse_container(inspection.stdout.strip())
+          assert data["restart_policy"] == "always", data
+          assert data["mounts"].get("/tmp") == "/var/lib/postgresql/data", data
+          assert data["running"] is False, data
+          print("PASS: Docker inspection command and parser match real Docker output")
+          PY
+
 
 
