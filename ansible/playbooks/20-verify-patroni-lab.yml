@@ -1,0 +1,114 @@
+---
+# Read-only health independent of fixed DB01/DB02 primary order. Safe after failover.
+- name: Inspect the live Patroni cluster on both database VMs
+  hosts: databases
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read local Patroni primary endpoint without requiring that it be 200
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8008/primary
+        status_code: [200, 503]
+        timeout: 5
+        return_content: false
+      register: patroni_primary_api
+      changed_when: false
+
+    - name: Read local Patroni healthy-replica endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8008/replica
+        status_code: [200, 503]
+        timeout: 5
+        return_content: false
+      register: patroni_replica_api
+      changed_when: false
+
+    - name: Inspect old and Patroni Docker container lifecycle states
+      ansible.builtin.command:
+        argv:
+          - docker
+          - inspect
+          - --format
+          - "{{ '{{' }}.State.Running{{ '}}' }}|{{ '{{' }}.HostConfig.RestartPolicy.Name{{ '}}' }}"
+          - "{{ item }}"
+      loop: [meow-postgres, meow-patroni]
+      register: container_lifecycle
+      changed_when: false
+
+    - name: Require old server stopped with no automatic restart and Patroni active
+      ansible.builtin.assert:
+        that:
+          - container_lifecycle.results[0].stdout | trim == 'false|no'
+          - container_lifecycle.results[1].stdout | trim == 'true|always'
+        fail_msg: "Unexpected competing PostgreSQL lifecycle; refuse to claim failover works."
+
+    - name: Read current PostgreSQL role, lineage, streaming and rewind capability
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - -u
+          - postgres
+          - meow-patroni
+          - psql
+          - -XAt
+          - -F
+          - "|"
+          - -v
+          - ON_ERROR_STOP=1
+          - -U
+          - postgres
+          - -d
+          - postgres
+          - -c
+          - >-
+            SELECT pg_is_in_recovery(),
+                   (SELECT system_identifier FROM pg_control_system()),
+                   (SELECT count(*) FROM pg_stat_replication WHERE state='streaming'),
+                   (SELECT count(*) FROM pg_stat_wal_receiver WHERE status='streaming'),
+                   current_setting('wal_log_hints');
+      register: patroni_sql
+      changed_when: false
+
+    - name: Require local role to agree with Patroni health endpoint
+      ansible.builtin.assert:
+        that:
+          - patroni_sql.stdout.split('|') | length == 5
+          - patroni_sql.stdout.split('|')[1] is match('^[0-9]+$')
+          - patroni_sql.stdout.split('|')[4] == 'on'
+          - >-
+            (patroni_primary_api.status == 200 and
+             patroni_replica_api.status != 200 and
+             patroni_sql.stdout.split('|')[0] == 'f' and
+             patroni_sql.stdout.split('|')[2] | int >= 1)
+            or
+            (patroni_primary_api.status != 200 and
+             patroni_replica_api.status == 200 and
+             patroni_sql.stdout.split('|')[0] == 't' and
+             patroni_sql.stdout.split('|')[3] | int == 1)
+        fail_msg: "Patroni HTTP role and PostgreSQL SQL role/streaming disagree."
+
+- name: Verify one and only one writer with healthy streaming replica
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert both databases share physical lineage, one DCS primary, one standby
+      ansible.builtin.assert:
+        that:
+          - hostvars['db-01'].patroni_sql.stdout.split('|')[1] == hostvars['db-02'].patroni_sql.stdout.split('|')[1]
+          - >-
+            (hostvars['db-01'].patroni_primary_api.status == 200 and
+             hostvars['db-02'].patroni_replica_api.status == 200)
+            or
+            (hostvars['db-02'].patroni_primary_api.status == 200 and
+             hostvars['db-01'].patroni_replica_api.status == 200)
+        fail_msg: "Dual-primary, no-primary, wrong lineage or unavailable streaming replica."
+
+    - name: Report PostgreSQL role ownership after failover-safe health audit
+      ansible.builtin.debug:
+        msg: >-
+          PASS: one Patroni primary and one streaming standby;
+          DB01 primary={{ hostvars['db-01'].patroni_primary_api.status == 200 }},
+          DB02 primary={{ hostvars['db-02'].patroni_primary_api.status == 200 }};
+          old Docker restart disabled; wal_log_hints=on on both.
