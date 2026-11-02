@@ -5,12 +5,27 @@
   hosts: db-02
   become: true
   gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/databases/replication.yml"
   vars:
     pg_data_dir: /opt/pgdata/data
     pg_stage_dir: /opt/pgdata/replica-stage
     pg_previous_dir: /opt/pgdata/data.before-replica
     pg_failed_dir: /opt/pgdata/data.failed-replica
     pg_passfile: /opt/pgdata/replication.pgpass
+  pre_tasks:
+    - name: Validate declared replication topology is loaded
+      ansible.builtin.assert:
+        that:
+          - pg_primary_ip == '192.168.150.71'
+          - pg_standby_ip == '192.168.150.72'
+          - pg_replication_user is defined
+          - pg_replication_user | length > 0
+          - pg_replication_standby_cidr == '192.168.150.72/32'
+          - pg_replication_slot_name is defined
+          - pg_replication_slot_name | length > 0
+          - not (pg_automatic_failover_enabled | bool)
+        fail_msg: "Missing or unexpected DB replication topology variables; refuse to modify PostgreSQL."
   tasks:
     - name: Fail closed unless the operator acknowledges the one-time DB02 cutover
       ansible.builtin.assert:

@@ -5,6 +5,21 @@
   hosts: db-01
   become: true
   gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/databases/replication.yml"
+  pre_tasks:
+    - name: Validate declared replication topology is loaded
+      ansible.builtin.assert:
+        that:
+          - pg_primary_ip == '192.168.150.71'
+          - pg_standby_ip == '192.168.150.72'
+          - pg_replication_user is defined
+          - pg_replication_user | length > 0
+          - pg_replication_standby_cidr == '192.168.150.72/32'
+          - pg_replication_slot_name is defined
+          - pg_replication_slot_name | length > 0
+          - not (pg_automatic_failover_enabled | bool)
+        fail_msg: "Missing or unexpected DB replication topology variables; refuse to modify PostgreSQL."
   tasks:
     - name: Require verified backup reference and explicit opt-in
       ansible.builtin.assert:
