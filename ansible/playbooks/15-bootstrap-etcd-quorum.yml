@@ -91,6 +91,9 @@
           - etcd-client
         state: present
         update_cache: false
+        # Debian postinst must not auto-start plaintext vendor etcd before mTLS.
+        policy_rc_d: 101
+        lock_timeout: 180
 
     - name: Disable vendor etcd service in favor of DB06-owned service
       ansible.builtin.systemd_service:
