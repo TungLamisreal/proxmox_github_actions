@@ -19,10 +19,11 @@ SSH = [
     "-o", "UserKnownHostsFile=/dev/null",
 ]
 SENSITIVE = [
-    (re.compile(r"(?i)(password|passwd|passphrase|secret|token)(\\s*[:=]\\s*)([^\\s,;]+)"),
-     r"\\1\\2[REDACTED]"),
-    (re.compile(r"(?i)(postgres(?:ql)?://[^:/\\s@]+:)[^@\\s]+(@)"),
-     r"\\1[REDACTED]\\2"),
+    # Strip a complete key/value instead of risky backreference substitution.
+    (re.compile(r"(?i)\b(?:password|passwd|passphrase|secret|token)\s*[:=]\s*[^\s,;]+"),
+     "[REDACTED]"),
+    (re.compile(r"(?i)postgres(?:ql)?://[^\s@]+@"),
+     "postgresql://[REDACTED]@"),
 ]
 RELEVANT = re.compile(
     r"(?i)error|fatal|exception|traceback|etcd|postgres|python|permission|"
