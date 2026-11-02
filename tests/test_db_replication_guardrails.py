@@ -67,17 +67,18 @@ class DatabaseReplicationGuardrails(unittest.TestCase):
         self.assertLess(workflow.index('name: "02 • Preserve existing standalone DB01 SQL"'),
                         workflow.index('name: "03 • Set up WAL sender on standalone DB01"'))
 
-    def test_six_job_workflow_and_read_only_patroni_gate(self):
+    def test_unified_workflow_stages_replication_before_patroni(self):
         source = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
         self.assertIn("    needs: [preflight, backup]", source)
         self.assertIn("    needs: [preflight, primary]", source)
         self.assertIn("    needs: [preflight, backup, primary, standby]", source)
-        self.assertIn("    needs: [preflight, verify]", source)
+        self.assertIn("    needs: etcd-verify", source)
+        for job in ("takeover:", "health:", "diagnose:", "activate-vip:",
+                    "failure-diagnostic:", "writer-smoke:"):
+            self.assertIn("  " + job, source)
         self.assertIn("always()", source)
-        self.assertIn("    if: ${{", source)
-        self.assertIn("patroni-readiness:", source)
-        self.assertIn("patroni-stage:", source)
-        self.assertIn("STAGE_PATRONI_CONFIG_ONLY", source)
+        self.assertIn("BOOTSTRAP_MEOWCLOUD_DB_HA", source)
+        self.assertNotIn("patroni-stage:", source)
         self.assertNotIn("patroni.service", source)
 
     def test_automatic_failover_is_explicitly_disabled(self):
