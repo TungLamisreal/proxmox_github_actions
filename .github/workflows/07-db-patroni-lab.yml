@@ -182,7 +182,12 @@ jobs:
       - name: Inspect DB01/DB02 Docker state and sanitized Patroni logs (no writes)
         run: |
           set -euo pipefail
-          python3 scripts/db07_patroni_diagnose.py
+          python3 scripts/db07_patroni_diagnose.py | tee "$RUNNER_TEMP/db07-patroni-readonly.txt"
+          {
+            echo "### DB07 read-only Patroni role snapshot (not takeover authorization)"
+            grep -E '^(=== DB07|PATRONI INTERPRETATION:|DIAGNOSTICS COMPLETE:)' \
+              "$RUNNER_TEMP/db07-patroni-readonly.txt" || true
+          } >> "$GITHUB_STEP_SUMMARY"
 
   gateway-repair:
     name: "00 • Enable Patroni-compatible etcd /v3 gateway (3-voter rolling)"
