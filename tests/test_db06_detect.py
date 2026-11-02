@@ -1,6 +1,7 @@
 """Pure state transition checks for the DB06 no-rebootstrap gate."""
 import importlib.util
 from pathlib import Path
+import re
 import unittest
 from unittest.mock import patch
 import shlex
@@ -46,8 +47,29 @@ class DB06StateMachine(unittest.TestCase):
                 module.remote_sql("192.168.150.71", "SELECT private_value;")
 
     def test_existing_healthy_pair_skips_bootstrap(self):
-        for mode in ("full", "verify", "ha-readiness", "patroni-stage"):
-            self.assertFalse(detect(self.primary, self.replica, mode, False))
+
+        for mode in module.SUPPORTED_MODES:
+            with self.subTest(mode=mode):
+                self.assertFalse(detect(self.primary, self.replica, mode, False))
+
+    def test_workflow_modes_match_detector_modes(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/06-db-streaming-replication.yml").read_text()
+        matches = re.findall(r"^\s*options:\s*\[([^\]]+)\]", workflow, flags=re.MULTILINE)
+        self.assertEqual(len(matches), 1)
+        choices = [mode.strip() for mode in matches[0].split(",")]
+        self.assertCountEqual(choices, module.SUPPORTED_MODES)
+
+    def test_dcs_modes_do_not_bootstrap_standalone_replica(self):
+        missing = Snapshot("f", "2000", 0, 0)
+        for mode in ("dcs-bootstrap", "dcs-health"):
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(ValueError, "not set up"):
+                    detect(self.primary, missing, mode, True)
+
+    def test_unrecognized_mode_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Unknown DB06"):
+            detect(self.primary, self.replica, "dcs-activate", True)
 
     def test_initial_standalone_requires_explicit_confirmation(self):
         empty = Snapshot("f", "2000", 0, 0)
