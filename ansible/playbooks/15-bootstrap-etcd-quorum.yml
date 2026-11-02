@@ -1,10 +1,45 @@
 ---
-# Explicitly gated DCS-only changes: no PostgreSQL containers, PGDATA,
-# Patroni service, or backend endpoint is touched by this playbook.
+# Block partial cluster installs: ensure every voter has Debian package metadata
+# BEFORE any host changes its etcd installation, units or data directory.
+- name: Preflight etcd APT availability on all three voters
+  hosts: db-01:db-02:monitoring
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Refresh apt package indexes on every voter before installing
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 0
+        lock_timeout: 180
+        update_cache_retries: 3
+        update_cache_retry_max_delay: 12
+
+    - name: Verify etcd server AND client packages are resolvable
+      ansible.builtin.command:
+        argv: [apt-cache, show, "{{ item }}"]
+      loop:
+        - etcd-server
+        - etcd-client
+      register: etcd_apt_candidates
+      failed_when: false
+      changed_when: false
+
+    - name: Fail as one group if any voter cannot install required etcd packages
+      ansible.builtin.assert:
+        that:
+          - etcd_apt_candidates.results | selectattr('rc', 'equalto', 0) | list | length == 2
+        fail_msg: >-
+          Missing etcd-server/etcd-client from the refreshed APT metadata on
+          {{ inventory_hostname }}. Check Debian APT sources (bookworm main)
+          and network before retrying; no DB or existing etcd data was removed.
+
 - name: Bootstrap MeowCloud three-voter etcd mTLS cluster
   hosts: db-01:db-02:monitoring
   become: true
   gather_facts: false
+  # Roll out one voter at a time on reruns; do not restart established quorum together.
+  serial: 1
   vars:
     etcd_members:
       db-01: "192.168.150.71"
@@ -48,19 +83,6 @@
             or (etcd_marker.stat.isreg | default(false))
         fail_msg: "Unmanaged etcd installation detected. Inspect before altering services."
 
-    - name: Check etcd Debian packages are available
-      ansible.builtin.command:
-        argv: [apt-cache, policy, etcd-server]
-      register: etcd_package_info
-      changed_when: false
-
-    - name: Require a candidate Debian etcd package
-      ansible.builtin.assert:
-        that:
-          - "'Candidate: (none)' not in etcd_package_info.stdout"
-          - "'Candidate:' in etcd_package_info.stdout"
-        fail_msg: "etcd-server missing from APT sources; fix package mirroring, not the databases."
-
   tasks:
     - name: Install Debian etcd-server and etcd-client without touching PostgreSQL
       ansible.builtin.apt:
@@ -69,6 +91,9 @@
           - etcd-client
         state: present
         update_cache: false
+        # Debian postinst must not auto-start plaintext vendor etcd before mTLS.
+        policy_rc_d: 101
+        lock_timeout: 180
 
     - name: Disable vendor etcd service in favor of DB06-owned service
       ansible.builtin.systemd_service:
@@ -179,23 +204,33 @@
       ansible.builtin.systemd_service:
         daemon_reload: true
 
+    - name: Apply config changes as a rolling etcd service restart
+      ansible.builtin.meta: flush_handlers
+
     - name: Enable DB06 etcd daemon without modifying PostgreSQL
       ansible.builtin.systemd_service:
         name: meowcloud-etcd
         state: started
         enabled: true
 
-    - name: Apply any configuration change before quorum verification
-      ansible.builtin.meta: flush_handlers
-
-    - name: Wait until local etcd TLS client port is listening
-      ansible.builtin.wait_for:
-        host: "{{ ansible_host }}"
-        port: 2379
-        timeout: 45
+    # No per-voter readiness wait here: the first member cannot elect a leader
+    # until additional voters join. The third play and job 09 validate the
+    # complete cluster only after all three members are configured.
 
   handlers:
     - name: Restart DB06 etcd
       ansible.builtin.systemd_service:
         name: meowcloud-etcd
         state: restarted
+
+- name: Validate etcd client listeners after every voter has been installed
+  hosts: db-01:db-02:monitoring
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Confirm each etcd HTTPS client endpoint is listening
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 2379
+        timeout: 45

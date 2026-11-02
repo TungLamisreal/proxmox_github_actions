@@ -52,6 +52,44 @@ If a previous run was interrupted between publishing a certificate and its key, 
 
 If etcd-verify fails because of firewall or networking, correct the underlying issue and use GitHub's **Re-run failed jobs** for that workflow attempt. Do not delete `/var/lib/meowcloud-etcd`, regenerate the CA, or reprovision PostgreSQL.
 
+
+## Recovery from partial etcd bootstrap (2026-11-02, run 41435755796)
+
+The first DCS bootstrap run reached DB02 but did not reach service setup on DB01
+or Observer. DB01 and Observer failed a stale `apt-cache policy etcd-server`
+availability check: no `Candidate:` field was returned. DB02 successfully
+installed packages, placed mTLS material and created the DB06 ownership marker,
+but a `Type=notify` systemd service waited for readiness without any peers
+available and timed out. A service timeout alone cannot exclude a separate
+configuration or TLS error; the next run will capture journal evidence.
+
+**The repair does not require deleting any etcd data, regenerating the CA,
+reinitializing the DB, or disabling Proxmox firewall.** Fixes:
+
+1. Refresh APT indexes and verify both `etcd-server` and `etcd-client` on
+   **all three voters** before touching a single service. If package retrieval
+   still fails, the run stops at an explicit APT prerequisite error with no
+   cluster installation changes; inspect the failing host's Debian package
+   source configuration.
+2. Install the distribution packages with `policy_rc_d: 101`, preventing
+   Debian's unconfigured vendor etcd daemon from autostarting. Then disable the
+   vendor `etcd` unit and manage only `meowcloud-etcd`.
+3. The DB06 service uses `Type=exec`. This indicates only that the daemon
+   process was launched; **not that quorum exists**. Startup and restart occur
+   one voter at a time (`serial: 1`) so an established quorum isn't
+   interrupted by a simultaneous restart. All client listeners are tested
+   after the last voter is configured.
+4. Job 09 independently confirms all three member identities and mTLS endpoint
+   health. Bootstrap job 08 runs `17-diagnose-etcd.yml` on failure and records
+   package installation, systemd status and a bounded journal tail on all voters.
+
+The failed run from the **old** commit must **not** be rerun as-is. After
+reviewing and merging the fix PR, create a **new** run on the updated `main`
+with `mode=dcs-bootstrap` and confirmation `BOOTSTRAP_ETCD_QUORUM`.
+The existing DB02 marker and mTLS files are deliberately reused. If an
+APT source or systemd error remains, do not force-delete any state: use the
+diagnostic task output to resolve the specific guest-level dependency.
+
 ## What remains to make DB01 power-off safe
 
 - Verify that the PVE HA policy for VM271 cannot start an old writable PostgreSQL while DB02 is leader.

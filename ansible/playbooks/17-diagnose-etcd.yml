@@ -1,0 +1,45 @@
+---
+# Read-only diagnostics, safe after a partially failed etcd bootstrap.
+# Never print TLS private keys, environment variables or PostgreSQL secrets.
+- name: Collect actionable etcd installation and startup diagnostics
+  hosts: db-01:db-02:monitoring
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Inspect installed etcd packages (read-only)
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, "-f=${Package} ${Status} ${Version}\n", etcd-server, etcd-client]
+      register: etcd_packages
+      changed_when: false
+      failed_when: false
+
+    - name: Inspect etcd systemd status (read-only)
+      ansible.builtin.command:
+        argv: [systemctl, show, meowcloud-etcd.service, --property=ActiveState, --property=SubState, --property=Result, --property=ExecMainStatus, --property=Type]
+      register: etcd_systemd
+      changed_when: false
+      failed_when: false
+
+    - name: Collect recent service errors (last 35 messages; no credentials)
+      ansible.builtin.command:
+        argv: [journalctl, -u, meowcloud-etcd.service, --no-pager, -n, "35", --output=short-iso]
+      register: etcd_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Check local etcd HTTPS listeners (read-only)
+      ansible.builtin.command:
+        argv: [ss, -lnt]
+      register: listeners
+      changed_when: false
+      failed_when: false
+
+    - name: Summarize etcd state without exposing TLS material
+      ansible.builtin.debug:
+        msg:
+          voter: "{{ inventory_hostname }}"
+          package_status: "{{ etcd_packages.stdout_lines | default([]) }}"
+          systemd_status: "{{ etcd_systemd.stdout_lines | default([]) }}"
+          etcd_port_listening: "{{ ':2379' in listeners.stdout or ':2380' in listeners.stdout }}"
+          journal_tail: "{{ (etcd_journal.stdout | default(''))[-7000:] }}"
+          note: "Diagnostics are read-only. Neither PGDATA nor etcd membership is modified."

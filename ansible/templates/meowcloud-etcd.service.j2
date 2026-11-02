@@ -4,7 +4,10 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-Type=notify
+# Etcd cannot elect a leader while other voters are still being provisioned.
+# Do not block systemctl start on NOTIFY_READY/quorum. Verify DCS in job 09.
+Type=exec
+TimeoutStartSec=25s
 User=etcd
 Group=etcd
 ExecStart=/usr/bin/etcd --config-file=/etc/meowcloud/etcd.yml

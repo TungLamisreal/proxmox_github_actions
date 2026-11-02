@@ -52,6 +52,7 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/14-stage-patroni-config.yml
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/15-bootstrap-etcd-quorum.yml
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/16-verify-etcd-quorum.yml
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/17-diagnose-etcd.yml
 
       - name: Detect DB roles without changing either database
         id: detect
@@ -232,6 +233,14 @@ jobs:
           set -euo pipefail
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
             ansible/playbooks/15-bootstrap-etcd-quorum.yml -e db_enable_etcd=true
+      - name: Capture read-only etcd diagnostics when any bootstrap step fails
+        if: ${{ failure() }}
+        run: |
+          # Keep the workflow failed, but show package/systemd/journal evidence
+          # for every voter instead of leaving an opaque systemctl timeout.
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/17-diagnose-etcd.yml
+
 
   etcd-verify:
     name: "09 • Verify etcd 3/3 quorum via mTLS (read-only)"

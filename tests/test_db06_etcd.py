@@ -69,6 +69,39 @@ class DBEtcdSafetyTests(unittest.TestCase):
                           "rm -rf", "/opt/pgdata", "terraform destroy"):
             self.assertNotIn(forbidden, play)
 
+    def test_all_voter_package_preflight_before_any_etcd_service_change(self):
+        play = (ROOT / "ansible/playbooks/15-bootstrap-etcd-quorum.yml").read_text()
+        self.assertIn("Preflight etcd APT availability on all three voters", play)
+        self.assertIn("any_errors_fatal: true", play)
+        self.assertIn("update_cache: true", play)
+        self.assertIn("etcd_apt_candidates.results", play)
+        self.assertIn("policy_rc_d: 101", play)
+        self.assertLess(play.index("Refresh apt package indexes"),
+                        play.index("Install Debian etcd-server and etcd-client"))
+        self.assertLess(play.index("Fail as one group"),
+                        play.index("Install Debian etcd-server and etcd-client"))
+
+    def test_cluster_bootstrap_is_rolling_and_not_gated_on_notify_ready(self):
+        service = (ROOT / "ansible/templates/meowcloud-etcd.service.j2").read_text()
+        play = (ROOT / "ansible/playbooks/15-bootstrap-etcd-quorum.yml").read_text()
+        self.assertIn("Type=exec", service)
+        self.assertNotIn("Type=notify", service)
+        self.assertIn("serial: 1", play)
+        self.assertIn("Apply config changes as a rolling etcd service restart", play)
+        self.assertLess(play.index("Apply config changes as a rolling"),
+                        play.index("Enable DB06 etcd daemon"))
+        self.assertLess(play.index("Enable DB06 etcd daemon"),
+                        play.index("Validate etcd client listeners after every voter"))
+
+    def test_dcs_diagnostics_do_not_write_services_or_print_secrets(self):
+        diag = (ROOT / "ansible/playbooks/17-diagnose-etcd.yml").read_text()
+        for expected in ("journalctl", "systemctl", "etcd-server", "etcd-client",
+                         "changed_when: false"):
+            self.assertIn(expected, diag)
+        for forbidden in ("/opt/pgdata", "private_key", "cat /etc/meowcloud/tls",
+                          "systemd_service:", "apt:"):
+            self.assertNotIn(forbidden, diag)
+
     def test_dcs_jobs_are_separate_and_patroni_stage_waits_for_quorum(self):
         content = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
         self.assertIn("  etcd-bootstrap:", content)
@@ -77,6 +110,8 @@ class DBEtcdSafetyTests(unittest.TestCase):
         self.assertIn("needs: [preflight, patroni-readiness, etcd-verify]", content)
         self.assertIn("ansible/playbooks/15-bootstrap-etcd-quorum.yml", content)
         self.assertIn("ansible/playbooks/16-verify-etcd-quorum.yml", content)
+        self.assertIn("ansible/playbooks/17-diagnose-etcd.yml", content)
+        self.assertIn("if: ${{ failure() }}", content)
         self.assertIn("db06_pve_placement.py", content)
         self.assertIn("MEOW_ETCD_PKI: /home/github-runner/.local/state/meowcloud/db-ha-etcd-pki", content)
         self.assertNotIn("MEOW_ETCD_PKI: /opt/meowcloud-iac/state", content)
