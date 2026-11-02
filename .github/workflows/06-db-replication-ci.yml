@@ -85,9 +85,11 @@ jobs:
                   raise SystemExit(f"Invalid YAML root: {p}")
               print(f"OK: {p}")
           PY
-      - name: Validate DCS Ansible task/module syntax before merging
+      # 18-prepare loads encrypted vault.yml, which GitHub-hosted CI cannot decrypt;
+      # it is YAML-parsed here and syntax-checked on CT120 with a Vault key by Workflow07.
+      - name: Validate DCS + takeover Ansible task/module syntax before merging
         run: |
-          for playbook in 15-bootstrap-etcd-quorum 16-verify-etcd-quorum 17-diagnose-etcd 18-prepare-patroni-lab 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy; do
+          for playbook in 15-bootstrap-etcd-quorum 16-verify-etcd-quorum 17-diagnose-etcd 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy; do
             ansible-playbook --syntax-check -i ansible/inventory.ini "ansible/playbooks/$playbook.yml"
           done
       - name: Run DB replication safety contract unit tests
