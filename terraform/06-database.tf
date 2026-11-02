@@ -18,7 +18,8 @@ resource "proxmox_virtual_environment_vm" "db" {
   on_boot = true
   started = true
 
-  # HA may relocate DB-01; never force it back by Terraform during 01/03/04.
+  # PVE HA may relocate either DB VM after a host failure; do not force its placement back
+  # on 01/03/04 reruns. Patroni alone governs Primary/Replica SQL roles.
   lifecycle {
     ignore_changes = [node_name, clone]
   }
