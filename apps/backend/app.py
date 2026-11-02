@@ -106,7 +106,7 @@ def query_rows(sql, params=(), *, one=False):
 def health():
     # Intentionally independent of DB, so load balancer and autoscaling stay healthy.
     return jsonify(service='MeowCloud Backend API (Docker)', node=socket.gethostname(),
-                   db_primary='192.168.150.71', status='UP')
+                   db_endpoint=DB_HOST, status='UP')
 
 
 @app.get('/version')
