@@ -7,6 +7,7 @@
 - Both are **independent primaries**. `db_role=standby` is only an inventory label.
 - `05-setup-database.yml` currently starts two independent PostgreSQL Docker containers; do not use it to initialize or promote a standby.
 - The CRUD configuration still directs backend traffic to DB01 (.71). A database promotion by itself will not reroute backend connections.
+- The backup-reference variable is a **manual operator attestation**, not automated proof that a backup exists or can be restored. Confirm actual backup and restore access before using the guarded playbook.
 - Proxmox HA VM271 does NOT arbitrate PostgreSQL leadership.
 
 ## Rollout sequence
