@@ -79,8 +79,9 @@ jobs:
           if not re.fullmatch(r"[A-Za-z0-9_-]{16,}", password):
               raise SystemExit("Missing or invalid POSTGRES_REPLICATION_PASSWORD repository secret")
           target = Path(os.environ["RUNNER_TEMP"]) / "meowcloud-db-replication-vars.json"
-          target.write_text(json.dumps({"vault_postgres_replication_password": password}))
-          target.chmod(0o600)
+          fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+          with os.fdopen(fd, "w") as stream:
+              json.dump({"vault_postgres_replication_password": password}, stream)
           with open(os.environ["GITHUB_ENV"], "a") as out:
               out.write(f"REPL_VARS_FILE={target}\n")
           PY
