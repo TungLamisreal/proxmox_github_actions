@@ -1,0 +1,23 @@
+# Planned Patroni + etcd HA cutover — not yet activated
+
+## Scope and immutable boundaries
+- Existing PostgreSQL 15 containers on VM271/VM272 run streaming replication on Ceph persistent volumes. PostgreSQL must have **one lifecycle authority**.
+- Proposed 3 etcd voters: DB01 (192.168.150.71), DB02 (.72), observer CT121 (.21). Verify placement on distinct Proxmox nodes and DCS firewall/transport protections before deployment. **Do not assume CT121 is node1**; Proxmox HA can relocate it.
+- Patroni should own PostgreSQL process management after the controlled one-time handover. Do not run Patroni as a second PostgreSQL server beside the existing `meow-postgres` container on port 5432/PGDATA.
+- The existing `05-setup-database.yml` plus Proxmox HA VM271 are independent lifecycle controllers: reconcile them before any Patroni activation so they cannot restart an old writable primary.
+- DB write endpoint should be HAProxy TCP on LB01/LB02 using existing Keepalived VIP `192.168.150.100:5432`, with active PostgreSQL target chosen by Patroni `/primary` REST health on port 8008. Load balancers must not route to a standby or to a reachable-but-demoted primary.
+- The application remains tied to `meowcrud.json` DB host `.71`, and workflow 05 currently asserts `.71`. Both release workflow and backend runtime need a reviewed, atomic switch to the stable endpoint; no changes are applied here.
+- Use a fixed, reviewed Patroni container image with PostgreSQL 15 binaries, the same PGDATA mount, and all DCS credentials injected through Ansible. Do not bootstrap a new PostgreSQL database over live PGDATA.
+
+## Readiness and order
+1. Run the DB06 `ha-readiness` mode to inspect DCS software/ports, PostgreSQL lifecycle, and writer-proxy prerequisites without changing the cluster.
+2. Implement and test three-voter etcd provisioning from immutable Ansible, with a fault-domain check, mTLS or equivalent strong access control, and a quorum test. Etcd ports 2379/2380 must be restricted to cluster participants.
+3. Prepare isolated Patroni config and image, verify binary compatibility and ownership on each DB VM; backup and test recovery. Never start both old docker-managed PostgreSQL and Patroni-managed PostgreSQL simultaneously.
+4. Initialize DCS leadership with **DB01 as sole primary** after fencing/disabling the old PostgreSQL container restart policy. Then attach DB02 as standby only after proving DB01 holds the lock. If any step fails, stop and restore controlled state rather than create a second writer.
+5. Configure HAProxy on both existing LBs: bind port 5432, use `/primary` health endpoint to select writer. Verify VIP failover and DB write routing; update runtime backend config and workflow 05 guardrails before enabling automatic failover.
+6. Only then test failover: stop VM271, verify DB02 election and successful writes via VIP; bring DB01 back, ensure `pg_rewind` / rejoin as standby and no split brain. Test lost network between DBs separately; with no DCS quorum, safety wins over availability.
+7. Monitor etcd quorum, Patroni API and PostgreSQL slots/WAL lag. PostgreSQL replication does not replace PBS or other independent backups.
+
+## GitHub Actions jobs and retry semantics
+The refactored 06 workflow has jobs `preflight`, `backup`, `primary`, `standby`, `verify`, and `patroni-readiness`. The last is **a read-only prerequisite audit, not a Patroni installer**. On an already healthy streaming pair, `full` skips backup/primary/bootstrap, and still runs strict verify. The `verify` mode avoids configuration changes entirely. GitHub's **Re-run failed jobs** feature reruns failed stages while retaining successful dependencies; inputs and target state must remain stable across a retry. A failed bootstrap after an incomplete cutover must be investigated before rerunning; it deliberately fails on leftover staging/rollback paths.
+
