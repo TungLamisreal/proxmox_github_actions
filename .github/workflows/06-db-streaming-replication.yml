@@ -245,8 +245,9 @@ jobs:
       INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
     steps:
       - uses: actions/checkout@v4
-      - name: Check etcd membership and all HTTPS endpoints
+      - name: Check three separate physical fault domains and full HTTPS quorum
         run: |
           set -euo pipefail
+          python3 scripts/db06_pve_placement.py
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
             ansible/playbooks/16-verify-etcd-quorum.yml
