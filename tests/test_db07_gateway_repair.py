@@ -1,8 +1,10 @@
 """Regression tests: etcd gRPC health is NOT Patroni HTTP API health."""
 from pathlib import Path
+import json
 import re
 import unittest
 import yaml
+from jinja2 import Environment, StrictUndefined
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -50,6 +52,62 @@ class GatewayAndResumeTests(unittest.TestCase):
         for forbidden in ("initdb", "pg_basebackup", "docker stop", "docker start",
                           "rm -rf", "etcdctl member remove", "systemctl stop postgres"):
             self.assertNotIn(forbidden, pb)
+
+    def test_preflight_requires_all_three_real_grpc_health_return_codes(self):
+        pb = yaml.safe_load(read("ansible/playbooks/22-enable-etcd-gateway.yml"))
+        pre = pb[0]
+        tasks = pre["tasks"]
+        self.assertEqual(len(pre["vars"]["dcs_endpoints"]), 3)
+        self.assertIn("member', 'list', '-w', 'json'", repr(tasks[0]))
+        self.assertIn("loop", tasks[2])
+        self.assertEqual(tasks[2]["loop"], "{{ dcs_endpoints }}")
+        self.assertFalse(tasks[2]["failed_when"])
+        self.assertIn("dcs_health_before.results", repr(tasks[3]))
+        self.assertNotIn("stdout_lines", repr(tasks[3]["ansible.builtin.assert"]["that"]))
+        self.assertLess(read("ansible/playbooks/22-enable-etcd-gateway.yml").index(
+            "Refuse rollout unless all three native gRPC endpoint commands succeed"),
+            read("ansible/playbooks/22-enable-etcd-gateway.yml").index(
+                "Enable the HTTP/JSON gRPC gateway without replacing existing TLS settings"))
+
+        # Evaluate the *actual* three Jinja expressions used by Ansible.
+        env = Environment(undefined=StrictUndefined)
+        expressions = [
+            env.compile_expression(expr)
+            for expr in tasks[3]["ansible.builtin.assert"]["that"]
+        ]
+        endpoints = pre["vars"]["dcs_endpoints"]
+        healthy = [
+            {"item": endpoint, "rc": 0, "stdout": "",
+             "stderr": endpoint + " is healthy: successfully committed proposal"}
+            for endpoint in endpoints
+        ]
+        def approved(results):
+            ctx = {"dcs_endpoints": endpoints, "dcs_health_before": {"results": results}}
+            return all(bool(expr(**ctx)) for expr in expressions)
+        self.assertTrue(approved(healthy),
+                        "etcdctl rc=0 with stderr-only success must pass")
+        for failed_index in range(3):
+            unhealthy = [x.copy() for x in healthy]
+            unhealthy[failed_index]["rc"] = 1
+            self.assertFalse(approved(unhealthy),
+                             "any dead voter must block rolling restart")
+        self.assertFalse(approved(healthy[:2]), "two-voter health is insufficient")
+        wrong_order = list(reversed(healthy))
+        self.assertFalse(approved(wrong_order), "unexpected endpoint sequence must fail")
+
+    def test_preflight_requires_authoritative_json_membership(self):
+        d = yaml.safe_load(read("ansible/playbooks/22-enable-etcd-gateway.yml"))
+        expr = d[0]["tasks"][1]["ansible.builtin.assert"]["that"]
+        env = Environment(undefined=StrictUndefined)
+        env.filters["from_json"] = json.loads
+        checks = [env.compile_expression(x) for x in expr]
+        def valid(members):
+            ctx = {"dcs_members_before": {"stdout": json.dumps({"members": members})}}
+            return all(bool(check(**ctx)) for check in checks)
+        healthy = [{"name": name} for name in ("db-01", "db-02", "observer")]
+        self.assertTrue(valid(healthy))
+        self.assertFalse(valid(healthy[:2]))
+        self.assertFalse(valid(healthy[:2] + [{"name": "unknown"}]))
 
     def test_resume_uses_original_db01_patroni_image_and_never_replaces_db01(self):
         pb = read("ansible/playbooks/23-resume-patroni-lab.yml")
