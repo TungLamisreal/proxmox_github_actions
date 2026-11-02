@@ -62,6 +62,25 @@ the recovered live demo without a specific incident and reviewed runbook.
 for an interrupted first-time takeover and assumes the historical DB01
 first-Primary handover stage, not a DB01 that rejoined as Replica.
 
+## Pre-existing firewall security-group prerequisites
+
+Terraform Workflow 01 attaches `sg_db`, `sg_lb` and
+`sg_observer` but currently **does not own their rule bodies**.
+Therefore Workflow 06 does not silently overwrite PVE firewall policies.
+Before the first `bootstrap-ha`, check the existing rules permit:
+- DB01/DB02/Observer etcd mTLS client/peer traffic on TCP 2379 and 2380,
+  restricted to the three voters; Patroni 2379 HTTPS gateway must be reachable.
+- Both LB IPs `.61`/`.62` reaching both DBs' Patroni REST `8008`
+  and PostgreSQL `5432`; keep `8008` private.
+- Backend IPs reaching both LB services through VIP `.100:5432`.
+
+Existing firewall-denied traffic fails **closed** in the DCS,
+HAProxy and Backend01 TCP readiness jobs. See
+`docs/08-etcd-dcs-runbook.md` and the existing PVE security-group
+configuration for source-scoped rule details. A completely fresh PVE
+installation requires this firewall groundwork; the repo does not yet
+automate the security-group rule definitions.
+
 ## Critical regression guardrails
 
 - Patroni 4.0.6 initially failed `waiting on etcd` with HTTP 404
