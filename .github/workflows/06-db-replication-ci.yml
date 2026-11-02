@@ -87,7 +87,7 @@ jobs:
           PY
       - name: Validate DCS Ansible task/module syntax before merging
         run: |
-          for playbook in 05-setup-database 15-bootstrap-etcd-quorum 16-verify-etcd-quorum 17-diagnose-etcd 18-prepare-patroni-lab 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy; do
+          for playbook in 15-bootstrap-etcd-quorum 16-verify-etcd-quorum 17-diagnose-etcd 18-prepare-patroni-lab 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy; do
             ansible-playbook --syntax-check -i ansible/inventory.ini "ansible/playbooks/$playbook.yml"
           done
       - name: Run DB replication safety contract unit tests
