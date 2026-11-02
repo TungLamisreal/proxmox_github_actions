@@ -1,0 +1,82 @@
+---
+# Read-only inspection; strict mode: -e pg_expect_replication_ready=true
+- name: Inspect PostgreSQL replication without changing either database
+  hosts: databases
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require explicitly labeled database hosts
+      ansible.builtin.assert:
+        that:
+          - db_role is defined
+          - db_role in ['primary', 'standby']
+
+    - name: Find PostgreSQL persistent volume mount
+      ansible.builtin.command:
+        argv: [findmnt, -n, -o, TARGET, --target, /opt/pgdata]
+      register: pg_mount
+      changed_when: false
+
+    - name: Fail if PostgreSQL volume is not mounted
+      ansible.builtin.assert:
+        that:
+          - pg_mount.stdout | trim == '/opt/pgdata'
+        fail_msg: "Stop: /opt/pgdata is not a mounted data volume."
+
+    - name: Read recovery mode, WAL level and cluster identifier
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -F, "|", -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT pg_is_in_recovery(), current_setting('wal_level'), (SELECT system_identifier FROM pg_control_system());"]
+      register: pg_cluster_info
+      changed_when: false
+
+    - name: Count active WAL senders
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT count(*) FROM pg_stat_replication WHERE state = 'streaming';"]
+      register: pg_stream_senders
+      changed_when: false
+
+    - name: Count active WAL receivers
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT count(*) FROM pg_stat_wal_receiver WHERE status = 'streaming';"]
+      register: pg_stream_receivers
+      changed_when: false
+
+    - name: List user databases
+      ansible.builtin.command:
+        argv: [docker, exec, -u, postgres, meow-postgres, psql, -XAt, -v, ON_ERROR_STOP=1, -U, postgres, -d, postgres, -c, "SELECT string_agg(datname, ', ' ORDER BY datname) FROM pg_database WHERE NOT datistemplate;"]
+      register: pg_database_list
+      changed_when: false
+
+    - name: Report actual database state
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          desired_role: "{{ db_role }}"
+          actual_is_in_recovery: "{{ pg_cluster_info.stdout.split('|')[0] }}"
+          wal_level: "{{ pg_cluster_info.stdout.split('|')[1] }}"
+          system_identifier: "{{ pg_cluster_info.stdout.split('|')[2] }}"
+          streaming_senders: "{{ pg_stream_senders.stdout | trim }}"
+          streaming_receivers: "{{ pg_stream_receivers.stdout | trim }}"
+          databases: "{{ pg_database_list.stdout | trim }}"
+
+    - name: Require healthy streaming roles only when opted in
+      ansible.builtin.assert:
+        that:
+          - "(db_role == 'primary' and pg_cluster_info.stdout.split('|')[0] == 'f') or (db_role == 'standby' and pg_cluster_info.stdout.split('|')[0] == 't')"
+          - "(db_role == 'primary' and (pg_stream_senders.stdout | int) >= 1) or (db_role == 'standby' and (pg_stream_receivers.stdout | int) >= 1)"
+        fail_msg: "Replication is NOT ready: do not enable automatic failover."
+      when: pg_expect_replication_ready | default(false) | bool
+
+- name: Verify physical lineage after replica bootstrap is completed
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Compare primary and standby system identifiers
+      ansible.builtin.assert:
+        that:
+          - "hostvars['db-01'].pg_cluster_info.stdout.split('|')[2] == hostvars['db-02'].pg_cluster_info.stdout.split('|')[2]"
+          - "hostvars['db-01'].pg_cluster_info.stdout.split('|')[0] == 'f'"
+          - "hostvars['db-02'].pg_cluster_info.stdout.split('|')[0] == 't'"
+        fail_msg: "DB01 and DB02 do not share a primary/standby lineage."
+      when: pg_expect_replication_ready | default(false) | bool
