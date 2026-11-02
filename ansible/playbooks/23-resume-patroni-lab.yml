@@ -113,10 +113,10 @@
           - -d
           - postgres
           - -c
-          - "SELECT pg_is_in_recovery();"
+          - "SELECT pg_is_in_recovery(), COALESCE((SELECT status FROM pg_stat_wal_receiver LIMIT 1),'none');"
       register: db02_standby
       changed_when: false
-      failed_when: db02_standby.rc != 0 or db02_standby.stdout | trim != 't'
+      failed_when: db02_standby.rc != 0 or db02_standby.stdout | trim != 't|streaming'
       when: db02_legacy.stdout | trim == 'true'
 
     - name: On rerun with old DB02 stopped, require existing takeover marker
