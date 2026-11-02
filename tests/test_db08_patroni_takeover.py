@@ -101,7 +101,7 @@ class DB08TakeoverContracts(unittest.TestCase):
         wf = source(".github/workflows/07-db-patroni-lab.yml")
         d = yaml.safe_load(wf)
         inputs = d.get("on", d.get(True))["workflow_dispatch"]["inputs"]
-        self.assertEqual(inputs["mode"]["options"], ["prepare", "takeover", "health", "proxy"])
+        self.assertEqual(inputs["mode"]["options"], ["prepare", "takeover", "health", "proxy", "diagnose"])
         for token in ("TAKEOVER_PATRONI_LAB", "ENABLE_DB_WRITER_PROXY"):
             self.assertIn(token, wf)
         self.assertIn("group: meowcloud-iac-state", wf)
