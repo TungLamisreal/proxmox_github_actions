@@ -5,6 +5,7 @@ Do not infer leadership from hostnames or a successful TCP connection.
 A live replica must share DB01's PostgreSQL system identifier AND be streaming.
 """
 import argparse
+import shlex
 from pathlib import Path
 import subprocess
 from typing import NamedTuple
@@ -45,17 +46,30 @@ def detect(primary: Snapshot, standby: Snapshot, mode: str, confirmed: bool) -> 
 
 def remote_sql(host: str, sql: str) -> str:
     # The only remote operation is a read-only SELECT sent over ssh stdin.
+    # ssh joins arguments after the hostname into one remote shell command.
+    # Passing -F "|" as bare argv produces an unquoted shell pipe on DB01.
+    # Quote the entire remote command with shlex.join, preserving SQL via stdin.
+    remote_argv = [
+        "docker", "exec", "-i", "-u", "postgres", "meow-postgres", "psql",
+        "-XAt", "-F", "|", "-v", "ON_ERROR_STOP=1", "-U", "postgres",
+        "-d", "postgres",
+    ]
     command = [
         "ssh", "-i", "/home/github-runner/.ssh/id_ed25519",
         "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
         "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null", f"root@{host}",
-        "docker", "exec", "-i", "-u", "postgres", "meow-postgres", "psql",
-        "-XAt", "-F", "|", "-v", "ON_ERROR_STOP=1", "-U", "postgres",
-        "-d", "postgres",
+        shlex.join(remote_argv),
     ]
     result = subprocess.run(command, input=sql, capture_output=True, text=True,
-                            timeout=35, check=True)
+                            timeout=35, check=False)
+    if result.returncode:
+        # Only a read-only SELECT is passed to this function. Never log the
+        # command's SQL or environment secrets; cap the remote diagnostic.
+        error = (result.stderr or "").strip()[:400]
+        raise RuntimeError(
+            f"Read-only PostgreSQL probe failed on {host} (exit {result.returncode}): {error}"
+        )
     return result.stdout.strip()
 
 
