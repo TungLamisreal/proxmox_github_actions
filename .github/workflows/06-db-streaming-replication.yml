@@ -277,4 +277,8 @@ jobs:
           set -euo pipefail
           # This is intentionally informational: a green audit job DOES NOT
           # mean takeover readiness; inspect explicit BLOCKER records.
-          python3 scripts/db07_patroni_preflight.py
+          python3 scripts/db07_patroni_preflight.py --inventory "$INVENTORY" | tee "$RUNNER_TEMP/patroni-preflight-audit.txt"
+          {
+            echo "### Patroni preflight — diagnostic only, NOT takeover authorization"
+            grep -E '^(PASS:|READINESS:|BLOCKER )' "$RUNNER_TEMP/patroni-preflight-audit.txt" || true
+          } >> "$GITHUB_STEP_SUMMARY"
