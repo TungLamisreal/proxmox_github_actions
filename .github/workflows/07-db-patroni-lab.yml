@@ -6,7 +6,8 @@ on:
         description: "prepare=stage; takeover=adopt DB01 then DB02; health=read-only; proxy=writer LB"
         type: choice
         options: [prepare, takeover, health, proxy, diagnose, gateway-repair, resume]
-        default: prepare
+        # Safe default for an already-running Patroni cluster; no service changes.
+        default: health
         required: true
       confirmation:
         description: "takeover: TAKEOVER_PATRONI_LAB; repair: ENABLE_ETCD_HTTP_GATEWAY; resume: RESUME_PATRONI_LAB; proxy: ENABLE_DB_WRITER_PROXY"
@@ -50,14 +51,26 @@ jobs:
           test -s /home/github-runner/.ssh/id_ed25519
           test -s /home/github-runner/.vault_pass
           python3 scripts/db07_patroni_preflight.py --inventory "$INVENTORY" --validate-inventory-only
-          for pb in 18-prepare-patroni-lab 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy 22-enable-etcd-gateway 23-resume-patroni-lab; do
+          for pb in 18-prepare-patroni-lab 19-takeover-patroni-lab 20-verify-patroni-lab 21-configure-db-writer-proxy 22-enable-etcd-gateway 23-resume-patroni-lab 24-guard-patroni-reentry 25-verify-patroni-local-hba; do
             /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" "ansible/playbooks/$pb.yml"
           done
 
-      - name: Prove live DCS voter separation and mTLS consensus before any takeover
+      - name: Refuse any repeated prepare/takeover after Patroni adoption
+        if: ${{ inputs.mode == 'prepare' || inputs.mode == 'takeover' }}
+        run: |
+          set -euo pipefail
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/24-guard-patroni-reentry.yml
+
+      - name: Verify voter placement before an intentional one-time handover
+        if: ${{ inputs.mode == 'prepare' || inputs.mode == 'takeover' || inputs.mode == 'resume' }}
         run: |
           set -euo pipefail
           python3 scripts/db06_pve_placement.py
+
+      - name: Verify 3/3 etcd gRPC quorum AND Patroni /v3 JSON gateway (read-only)
+        run: |
+          set -euo pipefail
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
             ansible/playbooks/16-verify-etcd-quorum.yml
 
@@ -82,11 +95,11 @@ jobs:
           for ip in 192.168.150.71 192.168.150.72; do
             docker save "$image" | ssh -T -i /home/github-runner/.ssh/id_ed25519 \
               -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
-              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/github-runner/.ssh/known_hosts \
               "root@$ip" docker load
             ssh -T -n -i /home/github-runner/.ssh/id_ed25519 \
               -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
-              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/github-runner/.ssh/known_hosts \
               "root@$ip" "docker image inspect '$image' >/dev/null"
             echo "PASS: $ip imported image $image"
           done
@@ -151,9 +164,27 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
             ansible/playbooks/20-verify-patroni-lab.yml
 
+  hba:
+    name: "05 • Read-only effective PostgreSQL HBA validation (both roles)"
+    needs: health
+    if: ${{ inputs.mode == 'health' || inputs.mode == 'proxy' }}
+    runs-on: self-hosted
+    timeout-minutes: 10
+    env:
+      HOME: /home/github-runner
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert local physical replication HBA entries survive failover
+        run: |
+          set -euo pipefail
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/25-verify-patroni-local-hba.yml
+
   proxy:
-    name: "05 • Configure writer HAProxy 5432 on LB01 and LB02"
-    needs: [gate, health]
+    name: "06 • Configure writer HAProxy 5432 on LB01 and LB02"
+    needs: [gate, health, hba]
     if: ${{ inputs.mode == 'proxy' && needs.health.result == 'success' }}
     runs-on: self-hosted
     timeout-minutes: 20
@@ -169,6 +200,21 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
             ansible/playbooks/21-configure-db-writer-proxy.yml \
             -e pg_enable_writer_proxy=true
+
+  writer-smoke:
+    name: "07 • End-to-end DB health via application VIP (read-only)"
+    needs: [health, hba, proxy]
+    if: ${{ always() && (inputs.mode == 'health' || inputs.mode == 'proxy') && needs.health.result == 'success' && needs.hba.result == 'success' && (inputs.mode != 'proxy' || needs.proxy.result == 'success') }}
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Verify active backend can query the single PostgreSQL writer via VIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl -fsS --retry 3 --retry-delay 2 --max-time 7 http://192.168.150.100/api/db-health)"
+          printf '%s\n' "$response" | python3 -c 'import json,sys; p=json.load(sys.stdin); assert p.get("status") == "UP", p'
+          echo "PASS: application DB health through VIP; primary and replication verified in earlier jobs"
 
   diagnose:
     name: "00 • Read-only Patroni failure diagnostics (no DCS dependency)"
@@ -255,4 +301,19 @@ jobs:
       - name: Diagnose any resume error without starting the legacy PostgreSQL
         if: ${{ failure() }}
         run: |
+          python3 scripts/db07_patroni_diagnose.py
+
+  failure-diagnostic:
+    name: "99 • Automatic read-only diagnostics on any DB07 job failure"
+    needs: [gate, prepare, takeover, health, hba, proxy, writer-smoke, resume, gateway-repair]
+    if: ${{ always() && inputs.mode != 'diagnose' && contains(needs.*.result, 'failure') }}
+    runs-on: self-hosted
+    timeout-minutes: 8
+    env:
+      HOME: /home/github-runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect bounded, redacted Docker/Patroni errors without touching PGDATA
+        run: |
+          set -euo pipefail
           python3 scripts/db07_patroni_diagnose.py
