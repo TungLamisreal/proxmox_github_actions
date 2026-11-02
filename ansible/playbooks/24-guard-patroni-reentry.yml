@@ -1,0 +1,37 @@
+---
+# Read-only gate for bootstrap-only operations. Once DB07 owns PGDATA,
+# never render/stage new config or build/adopt another Patroni on top of it.
+- name: Refuse repeat Patroni preparation or takeover on an adopted DB
+  hosts: databases
+  become: true
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Detect irreversible DB07 ownership marker
+      ansible.builtin.stat:
+        path: /opt/meowcloud-patroni/takeover.lock
+      register: db07_guard_marker
+
+    - name: Detect any existing Patroni Docker container (including stopped)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - inspect
+          - --format
+          - "{{ '{{' }}.Config.Image{{ '}}' }}"
+          - meow-patroni
+      register: db07_guard_patroni
+      changed_when: false
+      failed_when: false
+
+    - name: Fail closed before image transfer, staging or legacy PG stop
+      ansible.builtin.assert:
+        that:
+          - not (db07_guard_marker.stat.exists | default(false))
+          - db07_guard_patroni.rc != 0
+        fail_msg: >-
+          This database has already entered Patroni ownership. Refusing
+          prepare/takeover to avoid overwriting live Patroni TLS/config and
+          starting another PostgreSQL on the same PGDATA. Use DB07 health or
+          diagnose, not takeover. Interrupted one-time takeover must use
+          reviewed resume after verifying the current primary.
