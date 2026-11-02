@@ -6,28 +6,54 @@
   hosts: observer
   become: true
   gather_facts: false
+  vars:
+    dcs_endpoints:
+      - https://192.168.150.71:2379
+      - https://192.168.150.72:2379
+      - https://192.168.150.21:2379
+    etcdctl_tls:
+      - /usr/bin/etcdctl
+      - --cacert=/etc/meowcloud/tls/ca.pem
+      - --cert=/etc/meowcloud/tls/etcd-server.pem
+      - --key=/etc/meowcloud/tls/etcd-server-key.pem
   tasks:
-    - name: Verify all three native gRPC member endpoints healthy
+    - name: Read authoritative etcd membership as JSON, not console output lines
       ansible.builtin.command:
-        argv:
-          - /usr/bin/etcdctl
-          - --endpoints=https://192.168.150.71:2379,https://192.168.150.72:2379,https://192.168.150.21:2379
-          - --cacert=/etc/meowcloud/tls/ca.pem
-          - --cert=/etc/meowcloud/tls/etcd-server.pem
-          - --key=/etc/meowcloud/tls/etcd-server-key.pem
-          - endpoint
-          - health
+        argv: "{{ etcdctl_tls + ['--endpoints=' ~ (dcs_endpoints | join(',')), 'member', 'list', '-w', 'json'] }}"
       environment:
         ETCDCTL_API: "3"
-      register: dcs_health_before
+      register: dcs_members_before
       changed_when: false
 
-    - name: Refuse to roll any voter without full native DCS health
+    - name: Require exactly the original three DCS voters before any restart
       ansible.builtin.assert:
         that:
-          - dcs_health_before.rc == 0
-          - dcs_health_before.stdout_lines | length == 3
-        fail_msg: "The native etcd quorum is unhealthy; no rolling gateway change permitted."
+          - (dcs_members_before.stdout | from_json).members | length == 3
+          - >-
+            ((dcs_members_before.stdout | from_json).members
+             | map(attribute='name') | list | sort) == ['db-01', 'db-02', 'observer']
+        fail_msg: "Unexpected etcd membership; do not perform a rolling repair."
+
+    - name: Probe the native gRPC health of EVERY endpoint independently
+      ansible.builtin.command:
+        argv: "{{ etcdctl_tls + ['--endpoints=' ~ item, 'endpoint', 'health'] }}"
+      environment:
+        ETCDCTL_API: "3"
+      loop: "{{ dcs_endpoints }}"
+      register: dcs_health_before
+      changed_when: false
+      failed_when: false
+
+    - name: Refuse rollout unless all three native gRPC endpoint commands succeed
+      ansible.builtin.assert:
+        that:
+          - dcs_health_before.results | length == 3
+          - dcs_health_before.results | map(attribute='item') | list == dcs_endpoints
+          - dcs_health_before.results | selectattr('rc', 'equalto', 0) | list | length == 3
+        fail_msg: >-
+          At least one etcd endpoint is not healthy: inspect the three per-endpoint
+          return codes above. Do not infer health from stdout_lines: etcdctl
+          may write a successful health message to stderr.
 
 - name: Enable gRPC HTTP gateway on every existing etcd voter, one at a time
   hosts: db-01:db-02:monitoring
