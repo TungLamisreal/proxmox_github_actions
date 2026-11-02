@@ -164,8 +164,13 @@ def main():
     parser.add_argument("--require-ready", action="store_true",
                         help="Fail closed while any ownership blocker remains")
     parser.add_argument("--inventory", default=os.environ.get("INVENTORY", DEFAULT_INVENTORY))
+    parser.add_argument("--validate-inventory-only", action="store_true",
+                        help="Validate Terraform-generated inventory after Workflow 01; no SSH")
     args = parser.parse_args()
     verify_runtime_inventory(args.inventory)
+    if args.validate_inventory_only:
+        print("PASS: DB07 runtime inventory matches DB01/DB02/LB01/LB02/Observer; no SSH")
+        return
     if not Path(SSH_IDENTITY).is_file():
         raise AuditError("Canonical CT120 SSH private key is missing; run Workflow 01 preflight")
 
