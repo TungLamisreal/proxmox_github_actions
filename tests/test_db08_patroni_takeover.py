@@ -98,12 +98,12 @@ class DB08TakeoverContracts(unittest.TestCase):
         self.assertNotIn("nginx.conf", pb)
 
     def test_current_patroni_cannot_be_prepared_or_taken_over_again(self):
-        wf = source(".github/workflows/07-db-patroni-lab.yml")
+        wf = source(".github/workflows/06-db-streaming-replication.yml")
         guard = source("ansible/playbooks/24-guard-patroni-reentry.yml")
         self.assertIn("default: health", wf)
         self.assertIn("24-guard-patroni-reentry.yml", wf)
         self.assertLess(wf.index("24-guard-patroni-reentry.yml"),
-                        wf.index('name: "02 • Build'))
+                        wf.index('name: "08 • Build'))
         self.assertIn("takeover.lock", guard)
         self.assertIn("meow-patroni", guard)
         self.assertIn("changed_when: false", guard)
@@ -114,27 +114,27 @@ class DB08TakeoverContracts(unittest.TestCase):
     def test_localhost_replication_hba_is_canonical_and_readonly_audited(self):
         template = source("ansible/templates/patroni.yml.j2")
         audit = source("ansible/playbooks/25-verify-patroni-local-hba.yml")
-        wf = source(".github/workflows/07-db-patroni-lab.yml")
+        wf = source(".github/workflows/06-db-streaming-replication.yml")
         for cidr in ("127.0.0.1/32", "::1/128"):
             self.assertIn("host replication {{ pg_replication_user }} " + cidr,
                           template)
         self.assertIn("FROM pg_hba_file_rules", audit)
         self.assertIn("changed_when: false", audit)
         self.assertIn("25-verify-patroni-local-hba.yml", wf)
-        self.assertIn("needs: [gate, health, hba]", wf)
+        self.assertIn("needs: [takeover, hba]", wf)
         self.assertIn("failure-diagnostic:", wf)
         self.assertIn("writer-smoke:", wf)
-        self.assertIn("api/db-health", wf)
+        self.assertIn("26-verify-backend-db-writer.yml", wf)
 
     def test_new_workflow_is_opt_in_with_deploy_then_health_and_retry_path(self):
-        wf = source(".github/workflows/07-db-patroni-lab.yml")
+        wf = source(".github/workflows/06-db-streaming-replication.yml")
         d = yaml.safe_load(wf)
         inputs = d.get("on", d.get(True))["workflow_dispatch"]["inputs"]
-        self.assertEqual(inputs["mode"]["options"], ["prepare", "takeover", "health", "proxy", "diagnose", "gateway-repair", "resume"])
-        for token in ("TAKEOVER_PATRONI_LAB", "ENABLE_DB_WRITER_PROXY"):
+        self.assertEqual(inputs["mode"]["options"], ["bootstrap-ha", "health", "diagnose", "adopt-vip", "gateway-repair", "resume"])
+        for token in ("BOOTSTRAP_MEOWCLOUD_DB_HA", "ACTIVATE_DB_WRITER_VIP"):
             self.assertIn(token, wf)
         self.assertIn("group: meowcloud-iac-state", wf)
-        self.assertIn("needs: [gate, prepare]", wf)
+        self.assertIn("needs: etcd-verify", wf)
         self.assertIn("ansible/playbooks/16-verify-etcd-quorum.yml", wf)
         self.assertIn("ansible/playbooks/19-takeover-patroni-lab.yml", wf)
         self.assertIn("ansible/playbooks/20-verify-patroni-lab.yml", wf)
