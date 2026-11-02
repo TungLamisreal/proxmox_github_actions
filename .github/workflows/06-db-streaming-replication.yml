@@ -5,7 +5,7 @@ on:
       mode:
         description: "full = reconcile PostgreSQL streaming, verify = read-only, ha-readiness = validate Patroni prerequisites"
         type: choice
-        options: [full, verify, ha-readiness]
+        options: [full, verify, ha-readiness, patroni-stage]
         default: full
         required: true
       confirmation:
@@ -49,6 +49,7 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/11-configure-db-primary-replication.yml
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/12-bootstrap-db-standby.yml
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/13-audit-patroni-readiness.yml
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook --syntax-check -i "$INVENTORY" ansible/playbooks/14-stage-patroni-config.yml
 
       - name: Detect DB roles without changing either database
         id: detect
@@ -157,7 +158,7 @@ jobs:
   patroni-readiness:
     name: "06 • Patroni / quorum / fencing read-only readiness"
     needs: [preflight, verify]
-    if: ${{ always() && needs.verify.result == 'success' && inputs.mode == 'ha-readiness' }}
+    if: ${{ always() && needs.verify.result == 'success' && (inputs.mode == 'ha-readiness' || inputs.mode == 'patroni-stage') }}
     runs-on: self-hosted
     timeout-minutes: 10
     env:
@@ -172,3 +173,29 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
             ansible/playbooks/13-audit-patroni-readiness.yml
 
+
+  patroni-stage:
+    name: "07 • Stage Patroni config only (no takeover)"
+    needs: [preflight, patroni-readiness]
+    if: ${{ always() && needs.patroni-readiness.result == 'success' && inputs.mode == 'patroni-stage' }}
+    runs-on: self-hosted
+    timeout-minutes: 10
+    env:
+      HOME: /home/github-runner
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+      INVENTORY: /opt/meowcloud-iac/ansible/inventory.ini
+      REPL_SECRET: ${{ secrets.POSTGRES_REPLICATION_PASSWORD }}
+      CONFIRM: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require explicit configuration-only approval and stage Patroni YAML
+        run: |
+          set -euo pipefail
+          test "$CONFIRM" = "STAGE_PATRONI_CONFIG_ONLY"
+          export VARS_FILE="$(mktemp)"
+          chmod 0600 "$VARS_FILE"
+          trap 'rm -f "$VARS_FILE"' EXIT
+          python3 scripts/db06_secret_vars.py "$VARS_FILE"
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" \
+            ansible/playbooks/14-stage-patroni-config.yml \
+            -e "@$VARS_FILE" -e pg_stage_patroni=true
