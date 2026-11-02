@@ -1,10 +1,14 @@
 """Read-only Patroni diagnostic safeguards; no live database access."""
+from contextlib import redirect_stdout
+from io import StringIO
+import json
 from pathlib import Path
 from subprocess import CompletedProcess
 import importlib.util
 import sys
 import unittest
 from unittest.mock import patch
+from urllib import error
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -68,6 +72,79 @@ class PatroniDiagnosticsTests(unittest.TestCase):
         excerpts = mod.patroni_log_excerpt(logs)
         self.assertIn("FATAL", excerpts)
         self.assertNotIn("uninformative", excerpts)
+
+    def test_primary_503_is_not_interpreted_as_postgresql_failure_or_leadership(self):
+        body = json.dumps({"/primary_http": 503, "/replica_http": 503,
+                           "/_http": 200, "local": {"state": "running", "role": "uninitialized"}})
+        message = mod.interpret_patroni_rest(body)
+        self.assertIn("NOT PRIMARY", message)
+        self.assertIn("role=uninitialized", message)
+        self.assertNotIn("DATABASE LOST", message)
+        self.assertIn("PRIMARY", mod.interpret_patroni_rest(
+            json.dumps({"/primary_http": 200, "/replica_http": 503})))
+        self.assertIn("REPLICA", mod.interpret_patroni_rest(
+            json.dumps({"/primary_http": 503, "/replica_http": 200})))
+        self.assertIn("not reachable", mod.interpret_patroni_rest(
+            json.dumps({"/primary_http": 0})))
+        self.assertIn("unavailable", mod.interpret_patroni_rest("not-json"))
+
+    def test_remote_rest_probe_allowlists_roles_and_drops_passwords(self):
+        # Executes the exact remote Python probe without making any network calls.
+        class Response:
+            def __init__(self, code, data):
+                self.status = code
+                self._data = data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, count):
+                return self._data[:count]
+
+        def fake_urlopen(url, timeout):
+            if url.endswith("/primary") or url.endswith("/replica"):
+                raise error.HTTPError(url, 503, "Not primary", {}, None)
+            if url.endswith("/cluster"):
+                return Response(200, json.dumps({
+                    "members": [
+                        {"name": "db-01", "state": "running",
+                         "role": "uninitialized", "conn_url": "postgresql://user:password@host"},
+                        {"name": "db-02", "state": "running", "role": "replica"},
+                    ],
+                    "password": "do-not-print"
+                }).encode())
+            return Response(200, json.dumps({
+                "role": "uninitialized", "state": "running",
+                "password": "do-not-print", "patroni": {"private_key": "secret"},
+                "dcs_last_seen": 12345
+            }).encode())
+        output = StringIO()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen), redirect_stdout(output):
+            exec(compile(mod.PATRONI_REST_PROBE, "<probe>", "exec"), {"__name__": "__main__"})
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["/primary_http"], 503)
+        self.assertEqual(result["/replica_http"], 503)
+        self.assertEqual(result["/_http"], 200)
+        self.assertEqual(result["local"], {"role": "uninitialized", "state": "running"})
+        self.assertEqual(result["members"][0], {
+            "name": "db-01", "role": "uninitialized", "state": "running"
+        })
+        self.assertNotIn("do-not-print", output.getvalue())
+        self.assertNotIn("postgresql://", output.getvalue())
+        self.assertNotIn("private_key", output.getvalue())
+
+    def test_diagnostic_checks_sql_readiness_without_role_changes(self):
+        from inspect import getsource
+        src = getsource(mod.main)
+        self.assertIn("PATRONI_REST_PROBE", src)
+        self.assertIn("pg_isready", src)
+        self.assertIn("PATRONI INTERPRETATION", src)
+        self.assertNotIn("pg_ctl", src)
+        self.assertNotIn("pg_promote", src)
+        self.assertNotIn("docker restart", src)
 
     def test_diagnose_mode_is_decoupled_from_failing_etcd_gate(self):
         workflow = (ROOT / ".github/workflows/07-db-patroni-lab.yml").read_text()
