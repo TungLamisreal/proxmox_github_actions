@@ -78,6 +78,8 @@ class DBEtcdSafetyTests(unittest.TestCase):
         self.assertIn("ansible/playbooks/15-bootstrap-etcd-quorum.yml", content)
         self.assertIn("ansible/playbooks/16-verify-etcd-quorum.yml", content)
         self.assertIn("db06_pve_placement.py", content)
+        self.assertIn("MEOW_ETCD_PKI: /home/github-runner/.local/state/meowcloud/db-ha-etcd-pki", content)
+        self.assertNotIn("MEOW_ETCD_PKI: /opt/meowcloud-iac/state", content)
         self.assertNotIn("git reset --hard", content)
 
 
