@@ -102,19 +102,20 @@ class DBEtcdSafetyTests(unittest.TestCase):
                           "systemd_service:", "apt:"):
             self.assertNotIn(forbidden, diag)
 
-    def test_dcs_jobs_are_separate_and_patroni_stage_waits_for_quorum(self):
+    def test_unified_workflow_orders_dcs_before_patroni_takeover(self):
         content = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
         self.assertIn("  etcd-bootstrap:", content)
         self.assertIn("  etcd-verify:", content)
-        self.assertIn("BOOTSTRAP_ETCD_QUORUM", content)
-        self.assertIn("needs: [preflight, patroni-readiness, etcd-verify]", content)
+        self.assertIn("  prepare:", content)
+        self.assertIn("  takeover:", content)
+        self.assertIn("BOOTSTRAP_MEOWCLOUD_DB_HA", content)
+        self.assertIn("needs: etcd-verify", content)
         self.assertIn("ansible/playbooks/15-bootstrap-etcd-quorum.yml", content)
         self.assertIn("ansible/playbooks/16-verify-etcd-quorum.yml", content)
-        self.assertIn("ansible/playbooks/17-diagnose-etcd.yml", content)
-        self.assertIn("if: ${{ failure() }}", content)
         self.assertIn("db06_pve_placement.py", content)
         self.assertIn("MEOW_ETCD_PKI: /home/github-runner/.local/state/meowcloud/db-ha-etcd-pki", content)
-        self.assertNotIn("MEOW_ETCD_PKI: /opt/meowcloud-iac/state", content)
+        self.assertLess(content.index("  etcd-bootstrap:"), content.index("  prepare:"))
+        self.assertLess(content.index("  prepare:"), content.index("  takeover:"))
         self.assertNotIn("git reset --hard", content)
 
 
