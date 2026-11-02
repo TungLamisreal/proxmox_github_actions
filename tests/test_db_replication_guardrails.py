@@ -25,6 +25,20 @@ class DatabaseReplicationGuardrails(unittest.TestCase):
         for unsafe in ("pg_basebackup", "pg_promote(", "rm -rf", "docker stop", "docker restart"):
             self.assertNotIn(unsafe, source)
 
+    def test_replication_vars_loaded_explicitly_for_external_runtime_inventory(self):
+        # GitHub Actions runs from its own checkout but uses an external CT120
+        # inventory. Ansible must not depend on automatic group_vars discovery.
+        vars_path = "{{ playbook_dir }}/../group_vars/databases/replication.yml"
+        config = (ROOT / "ansible/group_vars/databases/replication.yml").read_text()
+        self.assertIn('pg_replication_user: "meow_replication"', config)
+        for filename in ("11-configure-db-primary-replication.yml",
+                         "12-bootstrap-db-standby.yml"):
+            with self.subTest(playbook=filename):
+                source = (PLAYBOOKS / filename).read_text()
+                self.assertIn("vars_files:", source)
+                self.assertIn(vars_path, source)
+                self.assertIn("Validate declared replication topology is loaded", source)
+
     def test_standby_bootstrap_is_staged_and_has_rollback(self):
         source = (PLAYBOOKS / "12-bootstrap-db-standby.yml").read_text()
         for required in ("hosts: db-02", "pg_bootstrap_standby | default(false) | bool",
