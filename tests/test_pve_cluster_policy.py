@@ -12,7 +12,7 @@ class PveClusterPolicyTests(unittest.TestCase):
     def test_only_pets_are_ha_managed(self):
         self.assertEqual({item[0] for item in ha.HA}, {"ct:121", "vm:271", "vm:272"})
         self.assertNotIn("ct:120", [item[0] for item in ha.HA])
-        self.assertEqual(ha.HA[2], ("vm:272", "meow-db-replica", "node3:2,node1:1,node2:1", "qemu", 272))
+        self.assertEqual(ha.HA[2], ("vm:272", "meow-db-02", "node3:2,node1:1,node2:1", "qemu", 272))
         for _, _, nodes, _, _ in ha.HA:
             self.assertEqual(set(ha.normalize_nodes(nodes)), set(ha.NODES))
 
@@ -146,7 +146,7 @@ class PveClusterPolicyTests(unittest.TestCase):
             self.assertIn("/cluster/ha/resources/ct:121", calls[1])
             self.assertIn("/cluster/ha/rules/meow-db-primary", calls[2])
             self.assertIn("/cluster/ha/resources/vm:271", calls[3])
-            self.assertIn("/cluster/ha/rules/meow-db-replica", calls[4])
+            self.assertIn("/cluster/ha/rules/meow-db-02", calls[4])
             self.assertIn("/cluster/ha/resources/vm:272", calls[5])
             self.assertTrue(all("ct:120" not in call for call in calls))
 
