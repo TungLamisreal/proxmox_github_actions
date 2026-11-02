@@ -71,7 +71,7 @@ class PatroniDiagnosticsTests(unittest.TestCase):
 
     def test_diagnose_mode_is_decoupled_from_failing_etcd_gate(self):
         workflow = (ROOT / ".github/workflows/07-db-patroni-lab.yml").read_text()
-        self.assertIn("options: [prepare, takeover, health, proxy, diagnose]", workflow)
+        self.assertIn("options: [prepare, takeover, health, proxy, diagnose, gateway-repair, resume]", workflow)
         self.assertIn("inputs.mode != 'diagnose'", workflow)
         self.assertIn("inputs.mode == 'diagnose'", workflow)
         self.assertIn("if: ${{ failure() }}", workflow)
