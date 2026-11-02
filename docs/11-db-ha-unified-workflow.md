@@ -81,6 +81,32 @@ configuration for source-scoped rule details. A completely fresh PVE
 installation requires this firewall groundwork; the repo does not yet
 automate the security-group rule definitions.
 
+## Proxmox VM-level HA (Observer + both Patroni database VMs)
+
+The owned PVE 9.2 HA policy now covers **`ct:121`, `vm:271`,
+and `vm:272`**. Workflow 01's `pve_cluster_policy.py --mode apply-ha`
+registers both DB VMs and the Observer with non-strict node-affinity
+preferences:
+
+- Observer `ct:121` prefers node1.
+- DB01 `vm:271` prefers node2.
+- DB02 `vm:272` prefers node3.
+
+Both DB VMs use `failback=0` and `auto-rebalance=0`; a host recovery
+does not automatically relocate them back. Non-strict affinities are
+**preferences, not physical anti-affinity guarantees**: verify the live
+placement has three independent etcd voter failure domains before a
+controlled HA failover demo. The Proxmox HA manager restarts/migrates
+VMs; **Patroni** elects database Primary/Replica and protects the
+writer lease. Do not manually promote a VM due solely to its HA name.
+
+For an existing lab where VM272 is not yet in PVE HA, updating this PR
+alone makes **no live HA change**. After merging, apply
+`python3 scripts/pve_cluster_policy.py --mode apply-ha` from CT120's
+repository checkout (requires existing PVE access) and verify
+`ha-manager status` lists `vm:272` as started. The policy refuses
+ambiguous or externally-owned HA entries rather than replacing them.
+
 ## Critical regression guardrails
 
 - Patroni 4.0.6 initially failed `waiting on etcd` with HTTP 404
