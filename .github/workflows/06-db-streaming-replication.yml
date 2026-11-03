@@ -131,10 +131,12 @@ jobs:
           set -euo pipefail
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" ansible/playbooks/10-audit-db-replication.yml -e pg_expect_replication_ready=true
 
+  # Start etcd even when DB02 has already been seeded: upstream seed jobs
+  # may be skipped, but the streaming verification is still mandatory.
   etcd-bootstrap:
     name: "06 • Install 3-voter mTLS etcd (DB01, DB02, Observer)"
     needs: verify
-    if: ${{ needs.verify.result == 'success' && inputs.mode == 'bootstrap-ha' }}
+    if: ${{ always() && needs.verify.result == 'success' && inputs.mode == 'bootstrap-ha' }}
     runs-on: self-hosted
     timeout-minutes: 40
     env:
@@ -158,7 +160,7 @@ jobs:
   etcd-verify:
     name: "07 • Verify 3/3 etcd gRPC and Patroni HTTPS /v3 gateway"
     needs: etcd-bootstrap
-    if: ${{ needs.etcd-bootstrap.result == 'success' }}
+    if: ${{ always() && needs.etcd-bootstrap.result == 'success' }}
     runs-on: self-hosted
     timeout-minutes: 12
     env:
@@ -174,7 +176,7 @@ jobs:
   prepare:
     name: "08 • Build/stage Patroni PostgreSQL 15 image and private TLS"
     needs: etcd-verify
-    if: ${{ inputs.mode == 'bootstrap-ha' && needs.etcd-verify.result == 'success' }}
+    if: ${{ always() && inputs.mode == 'bootstrap-ha' && needs.etcd-verify.result == 'success' }}
     runs-on: self-hosted
     timeout-minutes: 35
     env:
@@ -215,7 +217,7 @@ jobs:
   takeover:
     name: "09 • Exclusive PGDATA takeover: DB01 then DB02 (never repeat)"
     needs: prepare
-    if: ${{ inputs.mode == 'bootstrap-ha' && needs.prepare.result == 'success' }}
+    if: ${{ always() && inputs.mode == 'bootstrap-ha' && needs.prepare.result == 'success' }}
     runs-on: self-hosted
     timeout-minutes: 30
     env:
@@ -275,7 +277,7 @@ jobs:
   hba:
     name: "12 • Read-only physical replication loopback HBA verification"
     needs: health
-    if: ${{ needs.health.result == 'success' }}
+    if: ${{ always() && needs.health.result == 'success' }}
     runs-on: self-hosted
     timeout-minutes: 10
     env:
@@ -291,7 +293,7 @@ jobs:
   proxy:
     name: "13 • Install HAProxy PostgreSQL writer port 5432 on both LBs"
     needs: [takeover, hba]
-    if: ${{ inputs.mode == 'bootstrap-ha' && needs.takeover.result == 'success' && needs.hba.result == 'success' }}
+    if: ${{ always() && inputs.mode == 'bootstrap-ha' && needs.takeover.result == 'success' && needs.hba.result == 'success' }}
     runs-on: self-hosted
     timeout-minutes: 25
     env:
@@ -348,7 +350,7 @@ jobs:
   final-smoke:
     name: "16 • Check every Backend VIP mapping and optional SQL smoke"
     needs: activate-vip
-    if: ${{ needs.activate-vip.result == 'success' }}
+    if: ${{ always() && needs.activate-vip.result == 'success' }}
     runs-on: self-hosted
     timeout-minutes: 12
     env:
@@ -410,9 +412,27 @@ jobs:
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" ansible/playbooks/23-resume-patroni-lab.yml -e pg_resume_takeover_approved=true
           /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$INVENTORY" ansible/playbooks/20-verify-patroni-lab.yml
 
+  completion-gate:
+    name: "17 • Require every applicable DB HA stage to succeed (no green-on-skip)"
+    # The 02/03/04 seed jobs are intentionally SKIPPED when an existing
+    # healthy physical replica is adopted. In GitHub Actions, implicit
+    # success() can propagate those skips to later jobs even though 'verify'
+    # explicitly succeeded. This terminal gate refuses a false-green run.
+    needs: [preflight, backup, primary, standby, verify, etcd-bootstrap, etcd-verify, prepare, takeover, gate, health, hba, proxy, writer-smoke, activate-vip, final-smoke, diagnose, gateway-repair, resume]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      MODE: ${{ inputs.mode }}
+      NEEDS_JSON: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce mode-specific workflow results and seed-adoption safety
+        run: python3 scripts/db06_workflow_gate.py
+
   failure-diagnostic:
     name: "99 • Read-only failure capture; never resets etcd or Patroni"
-    needs: [preflight, backup, primary, standby, verify, etcd-bootstrap, etcd-verify, prepare, takeover, gate, health, hba, proxy, writer-smoke, activate-vip, final-smoke, gateway-repair, resume]
+    needs: [preflight, backup, primary, standby, verify, etcd-bootstrap, etcd-verify, prepare, takeover, gate, health, hba, proxy, writer-smoke, activate-vip, final-smoke, gateway-repair, resume, completion-gate]
     if: ${{ always() && inputs.mode != 'diagnose' && contains(needs.*.result, 'failure') }}
     runs-on: self-hosted
     timeout-minutes: 8
