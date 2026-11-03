@@ -188,3 +188,22 @@ outside the deletion scope and are verified afterward.
 This is a guarded recovery path, **not proof** that a new live destroy
 has succeeded. Do not run 01 until 02 finishes green and orphan
 investigation is complete.
+
+### PVE 9 resource-affinity API schema (2026-11-04 incident)
+
+A real workflow 01 retry (#65) migrated all five owned weighted
+node-affinity rules, then failed with
+`strict: property is not defined in schema` while creating a
+`resource-affinity` rule. The PVE endpoint accepts `strict` on
+`node-affinity`, but **not on `resource-affinity`**. The IaC now omits
+`--strict` for negative resource-affinity and has a regression test
+that rejects future attempts to pass it.
+
+On #65, **the five HA service registrations survived** and all five
+weighted node rules were removed. A new 01 run on the fixed commit
+must first prove those ruleless services are MeowCloud-managed via
+canonical Terraform state and live guest identities, then create only
+the two resource-affinity rules. No 02/VM recreation is required.
+
+Offline CI does not demonstrate PVE runtime rule creation or its actual
+failover placement behavior; both must be verified on the live cluster.
