@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""MeowCloud day-0 PVE node boot staggering and narrowly scoped HA policy.
+"""MeowCloud day-0 PVE node boot staggering and scoped HA policy.
 
-Managed HA resources: ct:121 observer, vm:271 DB01 and vm:272 DB02.
+Managed HA resources: CT121 Observer, VM271/272 databases, CT141/142 LBs.
 Both database VMs have Patroni-managed PostgreSQL roles that can switch
 on failover; Proxmox HA only controls their VM lifecycle, never promotes a DB.
-Never manages ct:120 (the separately configured Auto-VM), tunnels, LBs,
+Never manages ct:120 (the separately configured Auto-VM), tunnels,
 backends or frontends. Uses PVE's cluster API via trusted SSH.
 All mutating operations are explicitly requested by workflow 01 or 02.
 """
 import argparse
 import json
+from pathlib import Path
 import shlex
 import subprocess
 import sys
@@ -33,7 +34,25 @@ HA = (
     # Preferences only: do not pin a former Replica after Patroni promotes it.
     # DB02 favors node3 so DB01/node2 and Observer/node1 remain separated.
     ("vm:272", "meow-db-02", "node3:2,node1:1,node2:1", "qemu", 272),
+    ("ct:141", "meow-lb-01", "node1:2,node2:1,node3:1", "lxc", 141),
+    ("ct:142", "meow-lb-02", "node2:2,node1:1,node3:1", "lxc", 142),
 )
+
+# PVE 9 resource-affinity: non-strict negative affinity (best-effort spread).
+# Hard anti-affinity is intentionally avoided: after losing a host, requiring
+# three etcd voters on three separate nodes would block HA guest recovery.
+SPREAD_RULES = (
+    ("meow-etcd-voter-spread", ("ct:121", "vm:271", "vm:272")),
+    ("meow-lb-spread", ("ct:141", "ct:142")),
+)
+TERRAFORM_STATE_PATH = Path("/opt/meowcloud-iac/state/terraform.tfstate")
+GUEST_IDENTITIES = {
+    "ct:121": ("proxmox_virtual_environment_container", "observer", 121, "lxc", "observer"),
+    "vm:271": ("proxmox_virtual_environment_vm", "db", 271, "qemu", "db-01"),
+    "vm:272": ("proxmox_virtual_environment_vm", "db", 272, "qemu", "db-02"),
+    "ct:141": ("proxmox_virtual_environment_container", "loadbalancer", 141, "lxc", "lb-master"),
+    "ct:142": ("proxmox_virtual_environment_container", "loadbalancer", 142, "lxc", "lb-backup"),
+}
 
 
 class PolicyError(RuntimeError):
@@ -143,6 +162,57 @@ def rule_matches(rule, sid, desired_nodes):
     )
 
 
+def spread_rule_matches(rule, members):
+    return (
+        rule.get("type") == "resource-affinity"
+        and rule.get("affinity") == "negative"
+        and not disabled(rule.get("strict", 0))
+        and not disabled(rule.get("disable", 0))
+        and rule_resources(rule) == set(members)
+    )
+
+
+def prove_orphaned_ha_ownership(sids):
+    """Before 02 cleans up legacy rule-less HA, prove its Terraform ownership.
+
+    A VMID alone is not proof: require both canonical local Terraform state
+    and the actual guest type/name. Never let 02 claim arbitrary HA services.
+    """
+    try:
+        state = json.loads(TERRAFORM_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise PolicyError("Cannot verify legacy HA ownership: Terraform state unreadable") from exc
+
+    managed = set()
+    for item in state.get("resources", []):
+        if item.get("mode") != "managed":
+            continue
+        for instance in item.get("instances", []):
+            vmid = instance.get("attributes", {}).get("vm_id")
+            for sid in sids:
+                resource_type, resource_name, expected_id, _, _ = GUEST_IDENTITIES[sid]
+                if (item.get("type"), item.get("name"), str(vmid)) == (
+                    resource_type, resource_name, str(expected_id)
+                ):
+                    managed.add(sid)
+
+    if managed != set(sids):
+        raise PolicyError(
+            f"Legacy HA ownership not proved by Terraform state: {sorted(set(sids) - managed)}"
+        )
+
+    guests = pvesh_json("get", "/cluster/resources", "--type", "vm")
+    for sid in sorted(sids):
+        _, _, vmid, guest_type, guest_name = GUEST_IDENTITIES[sid]
+        matches = [guest for guest in guests
+                   if str(guest.get("vmid")) == str(vmid)
+                   and guest.get("type") == guest_type
+                   and guest.get("name") == guest_name]
+        if len(matches) != 1:
+            raise PolicyError(f"Legacy HA guest identity mismatch: {sid}; refusing to remove")
+        print(f"[PASS] Legacy HA ownership verified: {sid} ({guest_name})")
+
+
 def resource_matches(resource):
     # Missing PVE fields have documented default=1 (unsafe for this policy).
     # Require explicit booleans off, including when evaluating existing HA.
@@ -154,14 +224,26 @@ def resource_matches(resource):
     )
 
 
-def validate_owned_rules(rules, resources):
-    """Refuse ambiguous ownership or third-party affinity before any writes."""
+def validate_owned_rules(rules, resources, allow_unruled=()):
+    """Fail closed on external HA policies; allow verified legacy gaps for 02."""
+    allowed_unruled = set(allow_unruled)
+    known_services = {item[0] for item in HA}
+    if not allowed_unruled <= known_services:
+        raise PolicyError("Cannot relax HA ownership outside MeowCloud services")
+    for name, members in SPREAD_RULES:
+        current = rules.get(name)
+        if current is not None and not spread_rule_matches(current, members):
+            raise PolicyError(f"Conflicting existing HA spread rule {name}: {current}")
     for sid, name, nodes, _, _ in HA:
         current_rule = rules.get(name)
         if current_rule is not None and not rule_matches(current_rule, sid, nodes):
             raise PolicyError(f"Conflicting existing HA rule {name}: {current_rule}")
+        permitted_spread = {
+            spread_name for spread_name, members in SPREAD_RULES if sid in members
+        }
         for other_name, rule in rules.items():
-            if other_name != name and sid in rule_resources(rule):
+            if (other_name != name and other_name not in permitted_spread
+                    and sid in rule_resources(rule)):
                 raise PolicyError(f"External HA rule {other_name} already targets {sid}")
         current_resource = resources.get(sid)
         if current_resource is not None:
@@ -169,7 +251,7 @@ def validate_owned_rules(rules, resources):
                 raise PolicyError(
                     f"HA service {sid} has incompatible state or failback/rebalance policy"
                 )
-            if current_rule is None:
+            if current_rule is None and sid not in allowed_unruled:
                 raise PolicyError(
                     f"HA service {sid} exists without owned rule {name}; "
                     "refusing to claim or delete externally managed service"
@@ -263,6 +345,16 @@ def apply_ha():
         else:
             print(f"[KEEP] HA node-affinity rule {name}")
 
+    # Create spread rules only after every referenced HA service exists.
+    for name, members in SPREAD_RULES:
+        if name not in rules:
+            remote("pvesh", "create", "/cluster/ha/rules",
+                   "--rule", name, "--type", "resource-affinity",
+                   "--resources", ",".join(members), "--affinity", "negative")
+            print(f"[CREATE] Non-strict HA resource anti-affinity {name}")
+        else:
+            print(f"[KEEP] Non-strict HA resource anti-affinity {name}")
+
     final_rules = ha_rules()
     final_resources = ha_resources()
     for sid, name, nodes, _, _ in HA:
@@ -271,17 +363,31 @@ def apply_ha():
         if name not in final_rules or not rule_matches(final_rules[name], sid, nodes):
             raise PolicyError(f"HA rule verification failed: {name}")
         print(f"[PASS] {sid}: HA rule={name}; failback=0; auto-rebalance=0")
+    for name, members in SPREAD_RULES:
+        if name not in final_rules or not spread_rule_matches(final_rules[name], members):
+            raise PolicyError(f"HA spread rule verification failed: {name}")
+        print(f"[PASS] Non-strict anti-affinity {name}: {','.join(members)}")
     print("[PASS] CT120 untouched")
 
 
-def remove_ha():
+def remove_ha(allow_owned_missing_rule=False):
     check_cluster()
     resources = ha_resources()
     rules = ha_rules()
-    validate_owned_rules(rules, resources)
+    legacy = {
+        sid for sid, name, _, _, _ in HA
+        if sid in resources and name not in rules
+    }
+    if allow_owned_missing_rule and legacy:
+        prove_orphaned_ha_ownership(legacy)
+    validate_owned_rules(rules, resources,
+                         allow_unruled=legacy if allow_owned_missing_rule else ())
 
-    # Remove rule references first, then only the services that the matching
-    # owned rules proved belong to this controller. Empty state is a no-op.
+    # Remove cross-service rules first, then node rules and registered services.
+    for name, _ in SPREAD_RULES:
+        if name in rules:
+            remote("pvesh", "delete", f"/cluster/ha/rules/{name}")
+            print(f"[REMOVE] HA spread rule {name}")
     for sid, name, _, _, _ in HA:
         if name in rules:
             remote("pvesh", "delete", f"/cluster/ha/rules/{name}")
@@ -289,7 +395,7 @@ def remove_ha():
         if sid in resources:
             remote("pvesh", "delete", f"/cluster/ha/resources/{sid}")
             print(f"[REMOVE] HA service {sid} (guest remains)")
-    print("[PASS] Removed only owned ct:121/vm:271/vm:272 HA policy; ct:120 untouched")
+    print("[PASS] Removed only owned MeowCloud Observer/DB/LB HA policy; ct:120 untouched")
 
 
 def audit():
@@ -302,6 +408,8 @@ def audit():
     for sid, name, _, _, _ in HA:
         print(f"[READ] {sid}: {resources.get(sid, 'not registered')}")
         print(f"[READ] HA rule {name}: {rules.get(name, 'missing')}")
+    for name, _ in SPREAD_RULES:
+        print(f"[READ] HA spread {name}: {rules.get(name, 'missing')}")
     print(f"[READ] ct:120: {'registered' if 'ct:120' in resources else 'not registered'} (not managed by script)")
 
 
@@ -309,13 +417,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("audit", "set-startup-delay", "set-guest-startup", "apply-ha", "remove-ha"),
                         required=True)
+    parser.add_argument(
+        "--allow-owned-missing-rule", action="store_true",
+        help="02 only: reconcile missing HA rules after Terraform state and live identity checks",
+    )
     args = parser.parse_args()
     try:
-        {
-            "audit": audit, "set-startup-delay": set_startup_delay,
-            "set-guest-startup": set_guest_startup,
-            "apply-ha": apply_ha, "remove-ha": remove_ha,
-        }[args.mode]()
+        if args.allow_owned_missing_rule and args.mode != "remove-ha":
+            raise PolicyError("--allow-owned-missing-rule is restricted to destroy")
+        if args.mode == "remove-ha":
+            remove_ha(allow_owned_missing_rule=args.allow_owned_missing_rule)
+        else:
+            {
+                "audit": audit, "set-startup-delay": set_startup_delay,
+                "set-guest-startup": set_guest_startup, "apply-ha": apply_ha,
+            }[args.mode]()
     except (PolicyError, subprocess.TimeoutExpired) as exc:
         print(f"[STOP] {exc}", file=sys.stderr)
         sys.exit(1)
