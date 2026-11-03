@@ -189,8 +189,19 @@ jobs:
           set -euo pipefail
           image="meowcloud-patroni:pg15-${GITHUB_SHA:0:12}"
           docker build --file docker/db-patroni/Dockerfile --tag "$image" .
+          # DB01/DB02 are recreated from golden VMs on 02 -> 01. Their SSH host
+          # keys rotate, while the self-hosted runner's global known_hosts is
+          # persistent. Use an isolated trust-on-first-use file for this job,
+          # without altering the runner's global SSH trust store.
+          transfer_known_hosts="$(mktemp)"
+          chmod 0600 "$transfer_known_hosts"
+          trap 'rm -f "$transfer_known_hosts"' EXIT
           for ip in 192.168.150.71 192.168.150.72; do
-            docker save "$image" | ssh -T -i /home/github-runner/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/home/github-runner/.ssh/known_hosts "root@$ip" docker load
+            docker save "$image" | ssh -T -i /home/github-runner/.ssh/id_ed25519 \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
+              -o StrictHostKeyChecking=accept-new \
+              -o "UserKnownHostsFile=$transfer_known_hosts" \
+              "root@$ip" docker load
           done
       - name: Stage Patroni config without restarting legacy PostgreSQL
         run: |
