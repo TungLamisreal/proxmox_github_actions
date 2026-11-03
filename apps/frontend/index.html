@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MeowCloud · Inventory Intelligence v2</title>
+<title>MeowCloud · CRUD Console</title>
 <style>
 :root{font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:#e9eff8;background:#0c1220}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 90% -10%,#124052 0,transparent 32%),#0c1220;min-height:100vh}
@@ -49,59 +49,12 @@ label{display:block;margin:14px 0 5px;font-weight:700;color:#b9c9de;font-size:12
 #toast{position:fixed;right:20px;bottom:20px;z-index:20;padding:14px 20px;border:1px solid #327b71;border-radius:11px;color:#c6fff0;background:#173c3b;font-size:13px}
 @media(max-width:900px){.app{grid-template-columns:1fr}aside{padding:16px;gap:12px;border-right:0;border-bottom:1px solid #253950}.nav-label,.aside-footer{display:none}nav{display:flex;overflow-x:auto}nav button{width:auto;white-space:nowrap;padding:9px 12px}main{padding-top:25px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:450px){.metrics{gap:9px}.metric{padding:13px}.notice{padding:14px}.toolbar{width:100%}}
-
-/* CRUD v2 — unmistakable visual refresh: violet / amber inventory intelligence */
-:root{color:#f6f3ff;background:#100d20}
-body{background:radial-gradient(circle at 88% 3%,#422776 0,transparent 34%),radial-gradient(circle at 20% 100%,#4b2447 0,transparent 42%),#100d20}
-.app{grid-template-columns:272px minmax(0,1fr)}
-aside{background:linear-gradient(175deg,#24163b 0%,#160f2b 62%,#22102f 100%);border-right:1px solid #523565}
-.brand .mark{background:linear-gradient(135deg,#ffb65c,#f46e96);color:#231029;box-shadow:0 0 30px #ed66894d}
-.brand small{color:#f5b770}.nav-label{color:#a68dbd}
-nav button{color:#c7b4d9}
-nav button.active{color:#ffd19a;background:#40244e;border-color:#855175}
-nav button:hover:not(.active){background:#36214b}
-.aside-footer{border-color:#67416c;background:#2c1c3b}.aside-footer p{color:#c4a7cf}
-.eyebrow{color:#ffb964}.muted{color:#d0bddb}
-.btn{background:#342344;border-color:#74516f;color:#f5e9ff}.btn:hover{border-color:#e29b8b}
-.btn.primary{background:linear-gradient(110deg,#fba75d,#ff658a);border-color:#ff9e75;color:#30152f}
-.btn.primary:hover{background:linear-gradient(110deg,#ffc17a,#ff83a4)}
-.notice{background:linear-gradient(115deg,#41224f,#241d51);border-color:#8d5781}
-.notice .round{background:#61325d;border-color:#ae6386}.notice p{color:#dbc3dd}
-.metric{background:linear-gradient(155deg,#281d44,#201933);border-color:#5a3a67}
-.metric .label{color:#cfb4e2}.metric .sub{color:#ffb878}
-.panel{background:#211933;border-color:#65456c}
-.panel-head{border-color:#50375b}.panel-head p{color:#c2a8d7}
-.search,.field{background:#18132a;color:#fff;border-color:#6b4b76}
-th{background:#352447;color:#e3bdcf}
-td{border-top-color:#443054;color:#f4e9fd}tbody tr:hover{background:#392448}
-.tag{background:#3b294f;border-color:#845a8c;color:#ffc782}
-.row-actions button{background:#362444;border-color:#75516d;color:#f9d8f1}
-.dialog{background:#261b3a;border-color:#8b6091}.dialog p{color:#ddc4e4}
-#toast{background:#452850;border-color:#b57993;color:#fff1cf}
-header{position:relative;border-radius:22px;background:linear-gradient(105deg,#41265a,#603462 60%,#572c56);padding:28px;border:1px solid #875483;box-shadow:0 12px 50px #09051244}
-header h1{font-size:clamp(28px,3.3vw,42px)}
-.release-v2{display:inline-block;border:1px solid #ffbc7990;border-radius:100px;padding:5px 12px;margin-bottom:6px;color:#ffd69c;background:#a660502d;font-size:10px;letter-spacing:2px;font-weight:850}
-.insight-card{border:1px solid #a86b7b;background:linear-gradient(115deg,#332244,#4d285b 58%,#683d5a);border-radius:22px;padding:26px;margin:0 0 26px;box-shadow:0 16px 55px #0b061955}
-.insight-head{display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap}
-.insight-card h2{font-size:24px;margin:8px 0}
-.insight-card p{color:#e0cde1;font-size:13px;line-height:1.55;max-width:700px}
-.insight-controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
-.insight-controls label{margin:0 0 6px}
-.insight-controls .field{width:100px}
-.insight-meta{margin-top:15px;color:#ffe6b8;font-size:13px;font-weight:700}
-.insight-table{display:grid;gap:10px;margin-top:14px}
-.stock-item{display:grid;grid-template-columns:minmax(160px,2fr) minmax(95px,1fr) 92px minmax(105px,1fr);align-items:center;gap:14px;border:1px solid #956a86;background:#160f2a88;padding:13px 16px;border-radius:13px;font-size:12px}
-.stock-item strong{font-size:14px}.stock-item .sku{color:#d5b3e4;display:block;margin-top:4px}
-.stock-item .risk{color:#ffcc91;font-weight:800}
-.insight-empty{color:#e1c5dc;font-size:13px;padding:8px 0}
-@media(max-width:900px){.app{grid-template-columns:1fr}}
-@media(max-width:640px){.stock-item{grid-template-columns:1fr 80px}.stock-item .category,.stock-item .price{display:none}header{padding:20px}}
 </style>
 </head>
 <body>
 <div class="app">
 <aside>
-  <div class="brand"><div class="mark">🐾</div><div><strong>MeowCloud</strong><small>INVENTORY INTELLIGENCE</small></div></div>
+  <div class="brand"><div class="mark">🐾</div><div><strong>MeowCloud</strong><small>CONTROL CENTER</small></div></div>
   <div class="nav-label">Quản lý dữ liệu</div>
   <nav aria-label="Danh sách bảng">
     <button data-tab="products" class="active"><span>▣</span> Sản phẩm</button>
@@ -113,27 +66,15 @@ header h1{font-size:clamp(28px,3.3vw,42px)}
 </aside>
 <main>
 <header>
-  <div><div class="eyebrow">Application Deployment / Workflow 05 · CRUD v2</div><span class="release-v2">RELEASE 02 / INVENTORY EDITION</span><h1>Trung tâm quản trị bán hàng</h1><div class="muted">Giao diện mới · Báo cáo tồn kho thông minh · Dữ liệu PostgreSQL giữ nguyên</div></div>
+  <div><div class="eyebrow">Application Deployment / Workflow 05 · CRUD v1</div><h1>Quản lý cửa hàng</h1><div class="muted">CRUD trên PostgreSQL · 4 bảng dữ liệu · Triển khai qua Docker</div></div>
   <div class="header-actions"><button class="btn" id="reloadBtn">↻ Làm mới</button><button class="btn" id="signoutBtn">↪ Đổi mã truy cập</button></div>
 </header>
-<section class="notice"><div class="round">⚡</div><div><strong>V2 đã sẵn sàng cho báo cáo tồn kho</strong><p>Thêm / xem / sửa / xóa dữ liệu ngay trên website. Dữ liệu nằm trong PostgreSQL KVM, không mất khi Backend/Frontend scale-in hay deploy image mới.</p></div></section>
+<section class="notice"><div class="round">⚡</div><div><strong>Ứng dụng CI/CD đang hoạt động</strong><p>Thêm / xem / sửa / xóa dữ liệu ngay trên website. Dữ liệu nằm trong PostgreSQL KVM, không mất khi Backend/Frontend scale-in hay deploy image mới.</p></div></section>
 <section class="metrics">
   <div class="metric"><div class="label">Sản phẩm</div><div class="value" id="count-products">—</div><div class="sub">Products</div></div>
   <div class="metric"><div class="label">Danh mục</div><div class="value" id="count-categories">—</div><div class="sub">Categories</div></div>
   <div class="metric"><div class="label">Khách hàng</div><div class="value" id="count-customers">—</div><div class="sub">Customers</div></div>
   <div class="metric"><div class="label">Đơn hàng</div><div class="value" id="count-orders">—</div><div class="sub">Orders</div></div>
-</section>
-<section class="insight-card" aria-label="Báo cáo sản phẩm sắp hết hàng">
-  <div class="insight-head">
-    <div><div class="eyebrow">NEW FEATURE · BACKEND V2</div><h2>⚡ Inventory Intelligence</h2>
-      <p>Phát hiện sản phẩm sắp hết hàng dựa trên số lượng tồn kho thật trong PostgreSQL. Đổi ngưỡng để xem danh sách ưu tiên nhập thêm.</p></div>
-    <div class="insight-controls">
-      <div><label for="stockThreshold">Ngưỡng tồn kho</label><input class="field" id="stockThreshold" type="number" min="0" max="1000" step="1" value="5"></div>
-      <button class="btn primary" id="stockRefreshBtn" type="button">Phân tích tồn kho ↗</button>
-    </div>
-  </div>
-  <div id="stockTotal" class="insight-meta">Đăng nhập để tải báo cáo tồn kho</div>
-  <div id="stockItems" class="insight-table" aria-live="polite"></div>
 </section>
 <section class="panel">
   <div class="panel-head"><div><h2 id="tableTitle">Sản phẩm</h2><p id="tableSubtitle">Dữ liệu được lưu trong PostgreSQL</p></div>
@@ -203,33 +144,6 @@ function render(){
  }
  $('tbody').replaceChildren(out);
 }
-
-async function loadLowStock(){
- if(!state.token)return;
- const raw=$('stockThreshold').value;
- const threshold=Number(raw);
- if(!Number.isInteger(threshold)||threshold<0||threshold>1000){toast('Ngưỡng tồn kho phải từ 0 tới 1000');return;}
- $('stockTotal').textContent='Đang phân tích tồn kho...';
- try{
-  const report=await api('reports/low-stock?threshold='+threshold);
-  $('stockTotal').textContent=report.total+' sản phẩm có tồn kho ≤ '+report.threshold+' · Đang hiển thị tối đa 100';
-  const fragment=document.createDocumentFragment();
-  if(report.items.length===0){
-   const el=document.createElement('div');el.className='insight-empty';el.textContent='✓ Chưa có sản phẩm nào dưới ngưỡng này.';fragment.append(el);
-  }
-  for(const product of report.items){
-   const card=document.createElement('div');card.className='stock-item';
-   const a=document.createElement('div'),title=document.createElement('strong'),sku=document.createElement('span');
-   title.textContent=product.name;sku.className='sku';sku.textContent=product.sku;a.append(title,sku);
-   const category=document.createElement('div');category.className='category';category.textContent=product.category_name;
-   const stock=document.createElement('div');stock.className='risk';stock.textContent=product.stock===0?'HẾT HÀNG':'Còn '+product.stock;
-   const price=document.createElement('div');price.className='price';price.textContent=Number(product.price).toLocaleString('vi-VN')+' ₫';
-   card.append(a,category,stock,price);fragment.append(card);
-  }
-  $('stockItems').replaceChildren(fragment);
- }catch(err){$('stockTotal').textContent='Không tải được báo cáo: '+err.message;}
-}
-$('stockRefreshBtn').addEventListener('click',loadLowStock);
 async function reload(){
  if(!state.token){$('authOverlay').classList.remove('hidden');return;}
  $('status').textContent='Đang đồng bộ dữ liệu...';
@@ -237,7 +151,7 @@ async function reload(){
   const [categories,products,customers,orders,stats]=await Promise.all([api('categories'),api('products'),api('customers'),api('orders'),api('stats')]);
   state.items={categories,products,customers,orders};
   for(const key of Object.keys(stats))$('count-'+key).textContent=stats[key].toLocaleString('vi-VN');
-  $('status').textContent='● PostgreSQL connected · '+new Date().toLocaleTimeString('vi-VN');render();loadLowStock();
+  $('status').textContent='● PostgreSQL connected · '+new Date().toLocaleTimeString('vi-VN');render();
  }catch(err){$('status').textContent='● '+err.message;toast(err.message);}
 }
 function showForm(record=null){
