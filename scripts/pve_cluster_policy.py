@@ -42,7 +42,7 @@ HA = (
     ("ct:142", "meow-lb-02", "node2:2,node1:1,node3:1", "lxc", 142),
 )
 
-# PVE 9 resource-affinity: non-strict negative affinity (best-effort spread).
+# PVE 9 resource-affinity: negative affinity, without node-only --strict option.
 # Hard anti-affinity is intentionally avoided: after losing a host, requiring
 # three etcd voters on three separate nodes would block HA guest recovery.
 SPREAD_RULES = (
@@ -373,15 +373,15 @@ def apply_ha():
             remote("pvesh", "delete", f"/cluster/ha/rules/{name}")
             print(f"[MIGRATE] Removed conflicting owned node rule {name} ({sid})")
 
-    # Soft negative resource-affinity works with the initial node placement
-    # from Terraform. Non-strict so 2 surviving nodes can host 3 etcd voters.
+    # Resource-affinity does not accept --strict in the PVE 9 API schema.
+    # Initial placement remains controlled by Terraform. The exact behavior
+    # of negative resource-affinity during failover must be tested live.
     for name, members in SPREAD_RULES:
         if name not in rules:
             remote("pvesh", "create", "/cluster/ha/rules",
                    "--rule", name, "--type", "resource-affinity",
-                   "--resources", ",".join(members), "--affinity", "negative",
-                   "--strict", "0")
-            print(f"[CREATE] Non-strict HA resource anti-affinity {name}")
+                   "--resources", ",".join(members), "--affinity", "negative")
+            print(f"[CREATE] HA negative resource-affinity {name}")
         else:
             print(f"[KEEP] Non-strict HA resource anti-affinity {name}")
 
@@ -399,7 +399,7 @@ def apply_ha():
     for name, members in SPREAD_RULES:
         if name not in final_rules or not spread_rule_matches(final_rules[name], members):
             raise PolicyError(f"HA spread rule verification failed: {name}")
-        print(f"[PASS] Non-strict anti-affinity {name}: {','.join(members)}")
+        print(f"[PASS] Negative resource-affinity {name}: {','.join(members)}")
     print("[PASS] CT120 untouched")
 
 
