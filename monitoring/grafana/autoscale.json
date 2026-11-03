@@ -15,13 +15,193 @@
   },
   "panels": [
     {
+      "id": 4,
+      "type": "stat",
+      "title": "Alert · PENDING",
+      "description": "Số lượng alert autoscale đang PENDING. Dữ liệu lấy trực tiếp từ Prometheus ALERTS; 0 = không có alert. Trạng thái có thể chỉ xuất hiện vài giây trong lúc test tải.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "sum(ALERTS{autoscale=\"true\",alertstate=\"pending\"}) or vector(0)",
+          "legendFormat": "Alert · PENDING",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Alert · FIRING",
+      "description": "Số lượng alert autoscale đang FIRING. Dữ liệu lấy trực tiếp từ Prometheus ALERTS; 0 = không có alert. Trạng thái có thể chỉ xuất hiện vài giây trong lúc test tải.",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "sum(ALERTS{autoscale=\"true\",alertstate=\"firing\"}) or vector(0)",
+          "legendFormat": "Alert · FIRING",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Số target trong pool",
+      "description": "Tổng target trong cấu hình scrape và số target trả lời. Chênh lệch cho thấy có exporter DOWN.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "count by (job) (up{job=~\"lxc_backends|lxc_frontends\"})",
+          "legendFormat": "{{job}} tổng",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "sum by (job) (up{job=~\"lxc_backends|lxc_frontends\"})",
+          "legendFormat": "{{job}} UP",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      }
+    },
+    {
       "id": 5,
       "type": "bargauge",
       "title": "CPU từng máy · Backend",
       "description": "CPU mỗi Backend = rate(cpu.stat) / vCPU cấp cho LXC × 100. Hiện tự động mọi máy trong inventory sau khi Prometheus cập nhật; 80% là ngưỡng scale-out. Máy mất exporter sẽ không trả CPU: xem panel Targets UP.",
       "gridPos": {
         "x": 0,
-        "y": 0,
+        "y": 6,
         "w": 12,
         "h": 9
       },
@@ -92,7 +272,7 @@
       "description": "CPU mỗi Frontend = rate(cpu.stat) / vCPU cấp cho LXC × 100. Hiện tự động mọi máy trong inventory sau khi Prometheus cập nhật; 80% là ngưỡng scale-out. Máy mất exporter sẽ không trả CPU: xem panel Targets UP.",
       "gridPos": {
         "x": 12,
-        "y": 0,
+        "y": 6,
         "w": 12,
         "h": 9
       },
@@ -163,7 +343,7 @@
       "description": "CPU pool theo quota. Scale-out >80% trong 10s. Scale-in <10% trong 20s khi pool >3. Mọi exporter phải UP.",
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 15,
         "w": 12,
         "h": 7
       },
@@ -227,7 +407,7 @@
       "description": "CPU pool theo quota. Scale-out >80% trong 10s. Scale-in <20% trong 20s khi pool >3. Mọi exporter phải UP.",
       "gridPos": {
         "x": 12,
-        "y": 9,
+        "y": 15,
         "w": 12,
         "h": 7
       },
@@ -291,7 +471,7 @@
       "description": "Lịch sử CPU theo từng máy Backend (mỗi đường một instance). Mức CPU đã chuẩn hóa theo vCPU LXC, không phải CPU của Proxmox node.",
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 22,
         "w": 12,
         "h": 10
       },
@@ -379,7 +559,7 @@
       "description": "Lịch sử CPU theo từng máy Frontend (mỗi đường một instance). Mức CPU đã chuẩn hóa theo vCPU LXC, không phải CPU của Proxmox node.",
       "gridPos": {
         "x": 12,
-        "y": 16,
+        "y": 22,
         "w": 12,
         "h": 10
       },
@@ -459,101 +639,7 @@
           ]
         }
       }
-    },
-    {
-      "id": 3,
-      "type": "timeseries",
-      "title": "Số target trong pool",
-      "description": "Tổng target trong cấu hình scrape và số target trả lời. Chênh lệch cho thấy có exporter DOWN.",
-      "gridPos": {
-        "x": 0,
-        "y": 26,
-        "w": 14,
-        "h": 7
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "meow-prom"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "meow-prom"
-          },
-          "expr": "count by (job) (up{job=~\"lxc_backends|lxc_frontends\"})",
-          "legendFormat": "{{job}} tổng",
-          "range": true
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "meow-prom"
-          },
-          "expr": "sum by (job) (up{job=~\"lxc_backends|lxc_frontends\"})",
-          "legendFormat": "{{job}} UP",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        }
-      }
-    },
-    {
-      "id": 4,
-      "type": "timeseries",
-      "title": "Alert autoscale",
-      "description": "1 = alert đang pending hoặc firing. 0 = chưa có alert. Đối chiếu workflow 03/04 để xác nhận apply.",
-      "gridPos": {
-        "x": 14,
-        "y": 26,
-        "w": 10,
-        "h": 7
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "meow-prom"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "meow-prom"
-          },
-          "expr": "ALERTS{autoscale=\"true\",alertstate=~\"pending|firing\"} or on() vector(0)",
-          "legendFormat": "{{alertname}} {{alertstate}}",
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        }
-      }
     }
   ],
-  "description": "Theo dõi CPU pool và CPU từng BE/FE LXC, tự nhận thêm máy khi autoscale cập nhật inventory; phục vụ demo workflows 03/04."
+  "description": "Dashboard demo autoscale: PENDING/FIRING đặt trên cùng, cùng trạng thái exporters; CPU BE/FE từng máy, CPU pool, lịch sử per-machine. Prometheus + file-provisioned."
 }
