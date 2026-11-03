@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
+command -v curl >/dev/null
+command -v tar >/dev/null
+command -v sha256sum >/dev/null
+command -v systemctl >/dev/null
+command -v python3 >/dev/null
 app=/opt/meowcloud-grafana-13.3.0
 config=/etc/meowcloud-grafana
 unit=/etc/systemd/system/meowcloud-grafana.service
@@ -45,3 +50,4 @@ else
   systemctl start meowcloud-grafana
 fi
 python3 check.py
+printf "changed=%s\n" "$changed"

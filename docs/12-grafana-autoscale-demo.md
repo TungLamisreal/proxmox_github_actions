@@ -1,15 +1,22 @@
 # Dashboard autoscale trên Observer CT121
 
-Trong Workflow 01 trên branch của PR, chọn **grafana-only** cho lab hiện hữu hoặc **provision-with-grafana** cho lab mới. CT120 chạy Ansible. Grafana chạy bằng systemd trên CT121 và đọc Prometheus tại localhost:9090. Cài riêng trên lab hiện hữu yêu cầu cả ba endpoint etcd khỏe trước khi cài và kiểm lại sau lần cài. Cài Day-0 trước Workflow 06 bỏ qua bước etcd nếu chưa có thư mục DCS.
+Grafana được cài cùng Prometheus và Alertmanager qua playbook Observer hiện có. CT120 chỉ chạy Ansible.
+
+## Lab hiện hữu
+
+Từ checkout đúng branch trên runner CT120:
 
 ```sh
-gh workflow run 01-provision-infra.yml -R TungLamisreal/proxmox_github_actions --ref fix/db07-safe-patroni-ha-20261103 -f operation=grafana-only
+cd ansible
+ansible-playbook -i /opt/meowcloud-iac/ansible/inventory.ini playbooks/06-setup-observer.yml
 ```
 
-Mở SSH tunnel tới Observer bằng tài khoản SSH được phép. Nếu phải đi qua CT120, thêm tùy chọn ProxyJump theo cấu hình SSH của lab.
+Nếu Observer đã là voter, playbook yêu cầu dịch vụ etcd đang active và cả ba endpoint khỏe trước khi cài. Sau lần cài, kể cả khi Grafana lỗi, playbook kiểm lại sức khỏe ba endpoint. Khi dựng mới bằng Workflow 01, chưa có marker etcd nên playbook cài dashboard sau khi cấu hình Prometheus và Workflow 06 sẽ dựng DCS sau đó.
+
+Grafana chạy bằng systemd với giới hạn 512 MiB RAM và 50% một CPU, lắng nghe trên loopback cổng 3000. Mở tunnel tới Observer rồi truy cập dashboard.
 
 ```sh
 ssh -N -L 127.0.0.1:13000:127.0.0.1:3000 root@192.168.150.21
 ```
 
-Mở [dashboard autoscale](http://127.0.0.1:13000/d/meow-autoscale). Kiểm CPU pool, tổng target và target UP, trạng thái pending/firing và run 03/04. Hai workflow scale cần replica streaming. Workflow 02 xóa CT121 cùng dữ liệu Grafana cục bộ. Bản dashboard trong Git được provision lại khi dựng mới.
+Mở [dashboard autoscale](http://127.0.0.1:13000/d/meow-autoscale). Quan sát CPU pool, tổng target, target UP và alert pending hoặc firing. Đối chiếu kết quả với run Workflow 03 hoặc 04.

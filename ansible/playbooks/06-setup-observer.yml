@@ -182,6 +182,65 @@
     - name: Flush handlers to apply Prometheus and Alertmanager changes immediately
       ansible.builtin.meta: flush_handlers
 
+    - name: Detect an existing DB06 etcd voter on Observer
+      ansible.builtin.stat:
+        path: /var/lib/meowcloud-etcd/.meowcloud-db06-owned
+      register: observer_etcd_marker
+
+    - name: Verify Observer etcd service before installing Grafana
+      ansible.builtin.command:
+        argv: [systemctl, is-active, meowcloud-etcd]
+      changed_when: false
+      when: observer_etcd_marker.stat.isreg | default(false)
+
+    - name: Verify three-voter consensus before installing Grafana
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/etcdctl
+          - --endpoints=https://192.168.150.71:2379,https://192.168.150.72:2379,https://192.168.150.21:2379
+          - --cacert=/etc/meowcloud/tls/ca.pem
+          - --cert=/etc/meowcloud/tls/etcd-server.pem
+          - --key=/etc/meowcloud/tls/etcd-server-key.pem
+          - endpoint
+          - health
+      environment:
+        ETCDCTL_API: "3"
+      changed_when: false
+      when: observer_etcd_marker.stat.isreg | default(false)
+
+    - name: Install Grafana without changing the etcd service
+      block:
+        - name: Copy versioned Grafana installer and dashboard
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../../monitoring/grafana/"
+            dest: /opt/meowcloud-grafana-config/
+            owner: root
+            group: root
+            mode: "0644"
+            directory_mode: "0755"
+
+        - name: Install or reconcile the resource-limited Grafana service
+          ansible.builtin.command:
+            argv: [bash, /opt/meowcloud-grafana-config/install.sh]
+          register: grafana_install
+          changed_when: "'changed=true' in grafana_install.stdout"
+
+      always:
+        - name: Recheck three-voter consensus after the Grafana attempt
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/etcdctl
+              - --endpoints=https://192.168.150.71:2379,https://192.168.150.72:2379,https://192.168.150.21:2379
+              - --cacert=/etc/meowcloud/tls/ca.pem
+              - --cert=/etc/meowcloud/tls/etcd-server.pem
+              - --key=/etc/meowcloud/tls/etcd-server-key.pem
+              - endpoint
+              - health
+          environment:
+            ETCDCTL_API: "3"
+          changed_when: false
+          when: observer_etcd_marker.stat.isreg | default(false)
+
   handlers:
     - name: Reload Prometheus
       ansible.builtin.service:
