@@ -191,16 +191,55 @@ def repair_missing_references():
     print("[PASS] Missing RBD references detached; retry Terraform destroy once")
 
 
+
+def is_meowcloud_workload_id(vmid):
+    return (vmid in {121, 131, 132, 133, 141, 142, 271, 272}
+            or 151 <= vmid <= 169 or 171 <= vmid <= 189)
+
+
+def verify_clean():
+    """Postflight: do not call destroy green when guests or RBD orphan remain."""
+    resources = remote_json("pvesh", "get", "/cluster/resources", "--type", "vm",
+                            "--output-format", "json")
+    leftovers = []
+    for guest in resources:
+        vmid = guest.get("vmid")
+        try:
+            number = int(vmid)
+        except (TypeError, ValueError):
+            continue
+        if is_meowcloud_workload_id(number):
+            leftovers.append(f"{guest.get('type')}:{number} ({guest.get('name')})")
+
+    images = rbd_images()
+    orphans = []
+    for pool, disks in images.items():
+        for disk in disks:
+            match = re.match(r"^vm-(\d+)-", disk)
+            if match and is_meowcloud_workload_id(int(match.group(1))):
+                orphans.append(f"{pool}:{disk}")
+
+    if leftovers or orphans:
+        raise RecoveryError(
+            "Residual MeowCloud guests or RBD images after Terraform: "
+            f"guests={sorted(leftovers)} disks={sorted(orphans)}; "
+            "do not delete volumes blindly"
+        )
+    print("[PASS] MeowCloud guest IDs and RBD volumes absent; templates untouched")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("preflight", "repair-missing-references"),
+    parser.add_argument("--mode", choices=("preflight", "repair-missing-references", "verify-clean"),
                         required=True)
     args = parser.parse_args()
     try:
         if args.mode == "preflight":
             preflight()
-        else:
+        elif args.mode == "repair-missing-references":
             repair_missing_references()
+        else:
+            verify_clean()
     except (RecoveryError, subprocess.TimeoutExpired) as exc:
         print(f"[STOP] {exc}", file=sys.stderr)
         return 1
