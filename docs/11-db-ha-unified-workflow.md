@@ -235,3 +235,37 @@ streaming and acceptable etcd membership before any takeover. A healthy
 existing replica is *not* reseeded, and existing etcd PKI is reused.
 If the ownership guard or replication verification fails, stop and
 use `diagnose` rather than manually deleting any PGDATA or etcd state.
+
+### Workflow 06 #20 false-green incident: skipped downstream HA jobs
+
+Run #19 completed physical streaming replication and etcd quorum but
+failed at SSH image transfer before Patroni ownership takeover. Run #20
+selected `bootstrap-ha` and found the already healthy DB02 streaming
+replica (`bootstrap_required=false`). This correctly skipped the three
+one-time physical-seeding jobs. However, the GitHub Actions DAG then
+propagated the skipped seed jobs through implicit `success()` checks:
+job 05 verified streaming, while **etcd, Patroni, writer VIP and final
+smoke were skipped**. GitHub nevertheless marked #20 Success. Do not
+treat run #20 as proof of a completed Patroni HA cutover.
+
+The repaired workflow explicitly uses `!cancelled()` plus required
+`needs.<job>.result == 'success'` on subsequent jobs. This avoids
+implicit skip propagation and prevents user-cancelled workflows from
+starting additional mutating database stages. For `bootstrap-ha`, a
+verified existing streaming replica can bypass stages 02–04 yet must
+still complete etcd verification, image stage, takeover, Patroni health,
+HBA checks, writer proxy and Backend VIP reconciliation.
+
+A final, read-only, mode-aware completion gate runs irrespective of
+dependency skips. It checks every required stage's GitHub job result
+and whether the physical-seeding branch was appropriately executed or
+skipped. Missing, skipped, failed, or cancelled required HA stages now
+cause a red workflow even when preceding jobs succeeded. This gate is
+also applied to health/adopt-vip/repair/resume/diagnose modes.
+
+**Safe recovery:** Existing streaming and no Patroni takeover were
+confirmed in #20, but verify those conditions again at the live
+preflight before a fresh `bootstrap-ha` run. Never reset PGDATA,
+reseed DB02, or destroy the cluster merely because #20 was misleadingly
+green. This change is validated offline and still requires live
+workflow execution before claiming complete DB HA.
