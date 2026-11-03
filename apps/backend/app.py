@@ -54,7 +54,7 @@ def require_demo_token(fn):
 def body_for(table):
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
-        raise ValueError('Body phải là JSON object')
+        raise ValueError('Body phải là JSON object.')
     fields = TABLES[table]['fields']
     if set(data) - set(fields):
         raise ValueError('Có trường dữ liệu không được hỗ trợ')
