@@ -5,6 +5,8 @@ on:
     paths:
       - "terraform/**"
       - "scripts/pve_cluster_policy.py"
+      - "scripts/destroy_db_rbd_recovery.py"
+      - "tests/test_destroy_db_rbd_recovery.py"
       - "tests/test_pve_cluster_policy.py"
       - ".github/workflows/01-provision-infra.yml"
       - ".github/workflows/02-destroy-infra.yml"
@@ -61,3 +63,5 @@ jobs:
           set -euo pipefail
           python3 -m py_compile scripts/pve_cluster_policy.py
           python3 -m unittest discover -s tests -p 'test_pve_cluster_policy.py' -v
+          python3 -m py_compile scripts/destroy_db_rbd_recovery.py
+          python3 -m unittest discover -s tests -p 'test_destroy_db_rbd_recovery.py' -v
