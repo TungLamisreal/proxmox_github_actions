@@ -15,6 +15,11 @@ resource "proxmox_virtual_environment_container" "loadbalancer" {
   # HA-managed Observer is started by PVE HA Manager instead.
   start_on_boot = true
 
+  # Preserve the node chosen by PVE HA after a host failover.
+  lifecycle {
+    ignore_changes = [node_name]
+  }
+
   initialization {
     hostname = count.index == 0 ? "lb-master" : "lb-backup"
 

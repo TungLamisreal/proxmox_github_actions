@@ -10,9 +10,14 @@ import pve_cluster_policy as ha
 
 class PveClusterPolicyTests(unittest.TestCase):
     def test_only_pets_are_ha_managed(self):
-        self.assertEqual({item[0] for item in ha.HA}, {"ct:121", "vm:271", "vm:272"})
+        self.assertEqual({item[0] for item in ha.HA},
+                         {"ct:121", "vm:271", "vm:272", "ct:141", "ct:142"})
         self.assertNotIn("ct:120", [item[0] for item in ha.HA])
         self.assertEqual(ha.HA[2], ("vm:272", "meow-db-02", "node3:2,node1:1,node2:1", "qemu", 272))
+        self.assertEqual(dict(ha.SPREAD_RULES)["meow-etcd-voter-spread"],
+                         ("ct:121", "vm:271", "vm:272"))
+        self.assertEqual(dict(ha.SPREAD_RULES)["meow-lb-spread"],
+                         ("ct:141", "ct:142"))
         for _, _, nodes, _, _ in ha.HA:
             self.assertEqual(set(ha.normalize_nodes(nodes)), set(ha.NODES))
 
@@ -96,12 +101,19 @@ class PveClusterPolicyTests(unittest.TestCase):
                 }
             elif args[:3] == ("pvesh", "create", "/cluster/ha/rules"):
                 name = args[args.index("--rule") + 1]
-                rules[name] = {
-                    "rule": name, "type": "node-affinity",
-                    "resources": args[args.index("--resources") + 1],
-                    "nodes": args[args.index("--nodes") + 1],
-                    "affinity": "positive", "strict": 0
-                }
+                if args[args.index("--type") + 1] == "resource-affinity":
+                    rules[name] = {
+                        "rule": name, "type": "resource-affinity",
+                        "resources": args[args.index("--resources") + 1],
+                        "affinity": "negative", "strict": 0
+                    }
+                else:
+                    rules[name] = {
+                        "rule": name, "type": "node-affinity",
+                        "resources": args[args.index("--resources") + 1],
+                        "nodes": args[args.index("--nodes") + 1],
+                        "affinity": "positive", "strict": 0
+                    }
             else:
                 self.fail(f"Unexpected write: {args}")
             return ""
@@ -111,15 +123,11 @@ class PveClusterPolicyTests(unittest.TestCase):
              mock.patch.object(ha, "ha_resources", side_effect=lambda: dict(resources)), \
              mock.patch.object(ha, "remote", side_effect=update):
             ha.apply_ha()
-            self.assertEqual(len(calls), 6)
+            self.assertEqual(len(calls), len(ha.HA) * 2 + len(ha.SPREAD_RULES))
             self.assertEqual(calls[0][:3], ("pvesh", "create", "/cluster/ha/resources"))
             self.assertEqual(calls[1][:3], ("pvesh", "create", "/cluster/ha/rules"))
-            self.assertEqual(calls[2][:3], ("pvesh", "create", "/cluster/ha/resources"))
-            self.assertEqual(calls[3][:3], ("pvesh", "create", "/cluster/ha/rules"))
-            self.assertEqual(calls[4][:3], ("pvesh", "create", "/cluster/ha/resources"))
-            self.assertEqual(calls[5][:3], ("pvesh", "create", "/cluster/ha/rules"))
             ha.apply_ha()
-            self.assertEqual(len(calls), 6)
+            self.assertEqual(len(calls), len(ha.HA) * 2 + len(ha.SPREAD_RULES))
             self.assertNotIn("ct:120", resources)
 
     def test_remove_ha_leaves_ct120_untouched(self):
@@ -128,6 +136,8 @@ class PveClusterPolicyTests(unittest.TestCase):
             "ct:121": {"state": "started", "failback": 0, "auto-rebalance": 0},
             "vm:271": {"state": "started", "failback": 0, "auto-rebalance": 0},
             "vm:272": {"state": "started", "failback": 0, "auto-rebalance": 0},
+            "ct:141": {"state": "started", "failback": 0, "auto-rebalance": 0},
+            "ct:142": {"state": "started", "failback": 0, "auto-rebalance": 0},
         }
         rules = {
             name: {"rule": name, "type": "node-affinity",
@@ -141,13 +151,15 @@ class PveClusterPolicyTests(unittest.TestCase):
              mock.patch.object(ha, "remote") as remote:
             ha.remove_ha()
             calls = [" ".join(str(v) for v in call.args) for call in remote.call_args_list]
-            self.assertEqual(len(calls), 6)
+            self.assertEqual(len(calls), len(ha.HA) * 2)
             self.assertIn("/cluster/ha/rules/meow-observer", calls[0])
             self.assertIn("/cluster/ha/resources/ct:121", calls[1])
             self.assertIn("/cluster/ha/rules/meow-db-primary", calls[2])
             self.assertIn("/cluster/ha/resources/vm:271", calls[3])
             self.assertIn("/cluster/ha/rules/meow-db-02", calls[4])
             self.assertIn("/cluster/ha/resources/vm:272", calls[5])
+            self.assertIn("/cluster/ha/resources/ct:141", calls[7])
+            self.assertIn("/cluster/ha/resources/ct:142", calls[9])
             self.assertTrue(all("ct:120" not in call for call in calls))
 
     def test_remove_empty_ha_is_a_noop(self):
@@ -166,6 +178,51 @@ class PveClusterPolicyTests(unittest.TestCase):
             with self.assertRaises(ha.PolicyError):
                 ha.remove_ha()
             remote.assert_not_called()
+
+    def test_legacy_destroy_requires_identity_proof_before_writes(self):
+        expected_resources = {
+            "vm:271": {"state": "started", "failback": 0, "auto-rebalance": 0}
+        }
+        with mock.patch.object(ha, "check_cluster"), \
+             mock.patch.object(ha, "ha_resources", return_value=expected_resources), \
+             mock.patch.object(ha, "ha_rules", return_value={}), \
+             mock.patch.object(ha, "prove_orphaned_ha_ownership") as prove, \
+             mock.patch.object(ha, "remote") as remote:
+            prove.side_effect = ha.PolicyError("Terraform state not verified")
+            with self.assertRaises(ha.PolicyError):
+                ha.remove_ha(allow_owned_missing_rule=True)
+            prove.assert_called_once_with({"vm:271"})
+            remote.assert_not_called()
+
+    def test_legacy_destroy_removes_verified_ruleless_db_without_ct120(self):
+        resources = {
+            "ct:120": {"state": "started"},
+            "vm:271": {"state": "started", "failback": 0, "auto-rebalance": 0},
+            "vm:272": {"state": "started", "failback": 0, "auto-rebalance": 0}
+        }
+        with mock.patch.object(ha, "check_cluster"), \
+             mock.patch.object(ha, "ha_resources", return_value=resources), \
+             mock.patch.object(ha, "ha_rules", return_value={}), \
+             mock.patch.object(ha, "prove_orphaned_ha_ownership") as prove, \
+             mock.patch.object(ha, "remote") as remote:
+            ha.remove_ha(allow_owned_missing_rule=True)
+            prove.assert_called_once_with({"vm:271", "vm:272"})
+            commands = [" ".join(str(v) for v in c.args) for c in remote.call_args_list]
+            self.assertEqual(len(commands), 2)
+            self.assertTrue(any("/cluster/ha/resources/vm:271" in v for v in commands))
+            self.assertTrue(any("/cluster/ha/resources/vm:272" in v for v in commands))
+            self.assertTrue(all("ct:120" not in v for v in commands))
+
+    def test_spread_rule_requires_correct_members_and_negative_preference(self):
+        base = {
+            "type": "resource-affinity", "affinity": "negative",
+            "strict": 0, "resources": "ct:141,ct:142",
+        }
+        members = ("ct:141", "ct:142")
+        self.assertTrue(ha.spread_rule_matches(base, members))
+        self.assertFalse(ha.spread_rule_matches({**base, "affinity": "positive"}, members))
+        self.assertFalse(ha.spread_rule_matches({**base, "strict": 1}, members))
+        self.assertFalse(ha.spread_rule_matches({**base, "resources": "ct:141,ct:120"}, members))
 
     def test_guest_startup_contains_only_previously_confirmed_db_values(self):
         self.assertEqual(ha.DB_GUEST_STARTUP, {

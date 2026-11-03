@@ -377,7 +377,7 @@ jobs:
           set -euo pipefail
           python3 scripts/pve_cluster_policy.py --mode set-guest-startup
 
-      - name: "12. Register HA Manager for Observer CT121 + both Patroni DB VMs 271/272"
+      - name: "12. Register HA Manager and non-strict affinity for Observer, both DBs and both LBs"
         run: |
           set -euo pipefail
           python3 scripts/pve_cluster_policy.py --mode apply-ha

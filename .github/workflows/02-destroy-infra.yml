@@ -64,7 +64,7 @@ jobs:
           fi
 
       - name: "3b. Unregister MeowCloud HA resources"
-        run: python3 scripts/pve_cluster_policy.py --mode remove-ha
+        run: python3 scripts/pve_cluster_policy.py --mode remove-ha --allow-owned-missing-rule
 
       - name: "4. Terraform Destroy"
         working-directory: ./terraform
