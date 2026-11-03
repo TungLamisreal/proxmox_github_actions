@@ -13,9 +13,9 @@ on:
         default: ""
         type: string
       tf_parallelism:
-        description: "Số luồng xóa song song (Khuyên dùng: 1 hoặc 2 để tránh cfs-lock)"
+        description: "Destroy concurrency: 1 or 2; default is 2"
         required: true
-        default: "1"
+        default: "2"
         type: string
 
 concurrency:
@@ -32,6 +32,8 @@ jobs:
     name: "Terraform Destroy Lab Workloads"
     runs-on: self-hosted
     timeout-minutes: 30
+    env:
+      TF_DESTROY_PARALLELISM: ${{ inputs.tf_parallelism || '2' }}
 
     steps:
       - name: "0. Abort if autoscale webhook is active"
@@ -63,6 +65,9 @@ jobs:
             echo "[STOP] Locked guest(s): $locked. Investigate backup/task before destroy."; exit 1
           fi
 
+      - name: "3a. Read-only RBD checks from DB host nodes"
+        run: python3 scripts/destroy_db_rbd_recovery.py --mode preflight
+
       - name: "3b. Unregister MeowCloud HA resources"
         run: python3 scripts/pve_cluster_policy.py --mode remove-ha --allow-owned-missing-rule
 
@@ -72,13 +77,42 @@ jobs:
           # Legacy Docker templates exist until after 02; never enable this in 00/01/03/04.
           MEOWCLOUD_ALLOW_LEGACY_TEMPLATE_FOR_DESTROY: "1"
         run: |
-          PARALLEL="${{ github.event.inputs.tf_parallelism || '1' }}"
+          set -euo pipefail
+          PARALLEL="$TF_DESTROY_PARALLELISM"
+          case "$PARALLEL" in
+            1|2) echo "[PASS] Parallelism=$PARALLEL" ;;
+            *) echo "::error::Only parallelism 1 or 2 is supported"; exit 1 ;;
+          esac
           terraform init -input=false
-          terraform destroy -auto-approve -input=false -parallelism=${PARALLEL}
+          if terraform destroy -auto-approve -input=false -parallelism="$PARALLEL"; then
+            echo "[PASS] Terraform destroy completed"
+          else
+            echo "::warning::Destroy failed; testing narrow DB RBD recovery"
+            python3 ../scripts/destroy_db_rbd_recovery.py --mode repair-missing-references || {
+              echo "::error::No provably safe DB RBD recovery; aborting"; exit 1;
+            }
+            echo "[RETRY] Terraform destroy once after DB missing-reference repair"
+            terraform destroy -auto-approve -input=false -parallelism="$PARALLEL"
+          fi
+          remaining="$(terraform state list)"
+          if [ -n "$remaining" ]; then
+            echo "::error::Terraform state is not empty after destroy"
+            printf "%s\n" "$remaining"
+            exit 1
+          fi
+          echo "[PASS] Terraform state is empty"
+
+      - name: "4b. Refuse residual MeowCloud guests or RBD disks"
+        run: python3 scripts/destroy_db_rbd_recovery.py --mode verify-clean
 
       - name: "5. Verify Golden Images Remain Intact"
         run: |
           SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
           echo "=== Xác nhận 3 Golden Images vẫn được bảo toàn nguyên vẹn ==="
           $SSH_CMD "ls -lh /mnt/pve/shared-fs/template/cache/meowcloud-lxc-*.tar.zst"
-          $SSH_CMD "qm list | grep -E '9001|9002|9003' || true"
+          for vmid in 9001 9002 9003; do
+            $SSH_CMD "ls /etc/pve/nodes/*/qemu-server/${vmid}.conf >/dev/null" || {
+              echo "::error::Missing golden DB template VMID ${vmid}"; exit 1;
+            }
+          done
+          echo "[PASS] All 3 golden DB templates still registered"

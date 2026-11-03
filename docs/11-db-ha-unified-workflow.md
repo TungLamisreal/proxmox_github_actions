@@ -150,3 +150,31 @@ reach live Proxmox, stop VM271, test genuine Patroni election under outage,
 or prove the current DB guest HBA is fixed. After merging, run Workflow 06
 `health` and `diagnose` against the working lab first. Existing live
 Patroni must remain installed throughout.
+
+## Workflow 02: partial RBD destroy recovery (2026-11-04)
+
+The destroy workflow defaults to Terraform `tf_parallelism=2` and **rejects
+values above 2** (parallelism 1 remains available). It first checks RBD
+storage listings from both DB hosts, verifies the cluster, unregisters only
+owned HA services, then executes Terraform destroy.
+
+If the first destroy fails, it does not blindly retry. The read-only scan
+of `general_pool` and `db_pool` must prove an exact VM271/VM272 RBD
+reference is missing. Before detaching that missing reference, the script
+also verifies the canonical local Terraform state, matching live guest
+type/name/tags, non-HA registration, stopped status, no lock, and no
+unexpected disks. Existing disks are **never detached** or deleted by
+the recovery helper. Only when these conditions pass is Terraform
+destroy retried once. Ceph or permission errors, mismatched identity,
+busy guest and unrelated Terraform failures remain red.
+
+After Terraform returns successfully, the workflow requires Terraform
+state to be empty and checks for remaining MeowCloud VM/CT IDs and RBD
+images (including orphan `general_pool:vm-171-disk-0`). Unexpected
+survivors keep workflow 02 red and need deliberate inspection; it never
+automatically removes orphan RBD images. DB golden templates remain
+outside the deletion scope and are verified afterward.
+
+This is a guarded recovery path, **not proof** that a new live destroy
+has succeeded. Do not run 01 until 02 finishes green and orphan
+investigation is complete.
