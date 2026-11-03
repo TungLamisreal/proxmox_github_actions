@@ -122,17 +122,21 @@
                     - '{{ hostvars[host]["ansible_host"] }}:9100'
           {% endfor %}
             # Separate cgroup CPU metrics: do not use node_cpu_seconds_total for LXC autoscaling.
+            # Expose dynamic per-host names so Grafana can display backend-01,
+            # frontend-01, etc. without hardcoding the number of replicas.
             - job_name: 'lxc_backends'
               static_configs:
-                - targets:
           {% for host in groups['backends'] %}
-                    - '{{ hostvars[host]["ansible_host"] }}:9101'
+                - targets: ['{{ hostvars[host]["ansible_host"] }}:9101']
+                  labels:
+                    machine: '{{ host }}'
           {% endfor %}
             - job_name: 'lxc_frontends'
               static_configs:
-                - targets:
           {% for host in groups['frontends'] %}
-                    - '{{ hostvars[host]["ansible_host"] }}:9101'
+                - targets: ['{{ hostvars[host]["ansible_host"] }}:9101']
+                  labels:
+                    machine: '{{ host }}'
           {% endfor %}
             - job_name: 'databases'
               static_configs:
