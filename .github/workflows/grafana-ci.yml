@@ -33,6 +33,7 @@ jobs:
           docker run -d --name test-prom --network host -v "$RUNNER_TEMP/prom.yml:/etc/prometheus/prometheus.yml:ro" prom/prometheus:v3.5.0 --config.file=/etc/prometheus/prometheus.yml --web.listen-address=:9090
       - name: Validate Observer playbook carries the Grafana and etcd guards
         run: |
+          grep -q 'GF_SERVER_HTTP_ADDR=0.0.0.0' monitoring/grafana/grafana.service
           grep -q 'Verify three-voter consensus before installing Grafana' ansible/playbooks/06-setup-observer.yml
           grep -q 'Recheck three-voter consensus after the Grafana attempt' ansible/playbooks/06-setup-observer.yml
           test ! -e ansible/playbooks/27-observer-grafana.yml
