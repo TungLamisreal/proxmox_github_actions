@@ -4,8 +4,14 @@ Grafana chạy trên runner CT120, giới hạn 0,5 CPU và 512 MiB RAM. Nguồn
 
 ## Cài đặt
 
-- Lab mới: chọn **install_grafana** trong Workflow 01. Mặc định tắt để giữ đường provision cũ.
-- Lab đang chạy: tại checkout của đúng commit trên **CT120**, bằng tài khoản runner có quyền Docker, chạy `bash monitoring/grafana/install.sh`. Cần Docker Compose v2, Python 3, cổng loopback 3000 còn trống và container truy cập được Prometheus. Script có thể chạy lại độc lập nếu datasource chưa sẵn sàng. Không cần chạy lại 01/06.
+- Lab mới: chọn **provision-with-grafana** trong Workflow 01. Mặc định **provision** giữ đường provision cũ.
+- Lab đang chạy: chọn đúng branch chứa thay đổi, Workflow 01, operation **grafana-only**. Job provision phải hiện **Skipped**. Nếu giao diện chưa hiện tham số của branch, dùng lệnh dưới đây hoặc cài từ checkout trên runner. Không bấm chạy 01 với mặc định provision trên lab hiện hữu.
+
+  ```sh
+  gh workflow run 01-provision-infra.yml -R TungLamisreal/proxmox_github_actions --ref fix/db07-safe-patroni-ha-20261103 -f operation=grafana-only
+  ```
+
+- Cài thủ công: tại checkout của đúng commit trên **CT120**, bằng tài khoản runner có quyền Docker, chạy `bash monitoring/grafana/install.sh`. Cần Docker Compose v2, Python 3, cổng loopback 3000 còn trống và container truy cập được Prometheus. Script có thể chạy lại độc lập nếu datasource chưa sẵn sàng. Không cần chạy lại 01/06.
 - Trên máy quay, mở SSH tunnel bằng tài khoản được phép vào CT120: `ssh -N -L 127.0.0.1:13000:127.0.0.1:3000 github-runner@192.168.150.20`. Mở [dashboard autoscale](http://127.0.0.1:13000/d/meow-autoscale). Trình duyệt có quyền Viewer qua tunnel. Nếu lab dùng tài khoản SSH khác, thay tên tài khoản trong lệnh.
 - Script smoke đòi tất cả exporter BE/FE UP và truy vấn ra mẫu CPU hợp lệ. Khi cần kiểm tra lại: `python3 monitoring/grafana/check.py` trên CT120.
 

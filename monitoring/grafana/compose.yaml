@@ -1,6 +1,7 @@
 services:
   grafana:
-    build: .
+    image: meowcloud-local/grafana:${MEOW_GRAFANA_REVISION:-unbuilt}
+    pull_policy: never
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"

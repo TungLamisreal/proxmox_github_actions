@@ -27,10 +27,11 @@ on:
         required: true
         default: "1"
         type: string
-      install_grafana:
-        description: "Install the autoscale dashboard on CT120 after provisioning"
-        type: boolean
-        default: false
+      operation:
+        description: "Provision the lab, include Grafana, or install only Grafana on the existing CT120"
+        type: choice
+        default: provision
+        options: [provision, provision-with-grafana, grafana-only]
       initial_app_release:
         description: "Day-0 application: baseline (clean demo) or pinned (resume a published release)"
         required: true
@@ -48,22 +49,21 @@ permissions:
   contents: read
   packages: read
 
-env:
-  TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
-  TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
-  TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
-  CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
-  ANSIBLE_FORCE_COLOR: "1"
-  GHCR_USERNAME: ${{ github.actor }}
-  GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  PVE_HOST: "192.168.150.49"
-
 jobs:
   provision-and-configure:
+    if: inputs.operation == 'provision' || inputs.operation == 'provision-with-grafana'
     name: "Deploy from Golden Images & Benchmark"
     runs-on: self-hosted
     timeout-minutes: 45
     env:
+      TF_VAR_proxmox_api_url: ${{ secrets.PROXMOX_API_URL }}
+      TF_VAR_proxmox_api_token_id: ${{ secrets.PROXMOX_API_TOKEN_ID }}
+      TF_VAR_proxmox_api_token_secret: ${{ secrets.PROXMOX_API_TOKEN_SECRET }}
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+      ANSIBLE_FORCE_COLOR: "1"
+      GHCR_USERNAME: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PVE_HOST: "192.168.150.49"
       INITIAL_APP_RELEASE: ${{ inputs.initial_app_release }}
 
     steps:
@@ -387,6 +387,23 @@ jobs:
           python3 scripts/pve_cluster_policy.py --mode apply-ha
           python3 scripts/pve_cluster_policy.py --mode audit
 
-      - name: "13. Install and verify Grafana dashboard on CT120"
-        if: inputs.install_grafana
+  grafana:
+    name: "Install viewer dashboard on CT120"
+    needs: provision-and-configure
+    if: >-
+      ${{ !cancelled() &&
+          ((inputs.operation == 'grafana-only' && needs.provision-and-configure.result == 'skipped') ||
+           (inputs.operation == 'provision-with-grafana' && needs.provision-and-configure.result == 'success')) }}
+    permissions:
+      contents: read
+    runs-on: self-hosted
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify runner address before installing Grafana
+        shell: bash
+        run: |
+          set -euo pipefail
+          ip -o -4 addr show | awk '{print $4}' | cut -d/ -f1 | grep -Fx '192.168.150.20'
+      - name: Start Grafana and verify the Observer datasource
         run: bash monitoring/grafana/install.sh
