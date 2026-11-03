@@ -15,15 +15,157 @@
   },
   "panels": [
     {
+      "id": 5,
+      "type": "bargauge",
+      "title": "CPU từng máy · Backend",
+      "description": "CPU mỗi Backend = rate(cpu.stat) / vCPU cấp cho LXC × 100. Hiện tự động mọi máy trong inventory sau khi Prometheus cập nhật; 80% là ngưỡng scale-out. Máy mất exporter sẽ không trả CPU: xem panel Targets UP.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "100 * sum by (machine) (rate(meowcloud_lxc_cpu_usage_seconds_total{job=\"lxc_backends\"}[1m])) / on(machine) sum by (machine) (meowcloud_lxc_cpu_capacity_cores{job=\"lxc_backends\"})",
+          "legendFormat": "{{machine}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 55
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "text": {
+          "titleSize": 14,
+          "valueSize": 20
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "bargauge",
+      "title": "CPU từng máy · Frontend",
+      "description": "CPU mỗi Frontend = rate(cpu.stat) / vCPU cấp cho LXC × 100. Hiện tự động mọi máy trong inventory sau khi Prometheus cập nhật; 80% là ngưỡng scale-out. Máy mất exporter sẽ không trả CPU: xem panel Targets UP.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "100 * sum by (machine) (rate(meowcloud_lxc_cpu_usage_seconds_total{job=\"lxc_frontends\"}[1m])) / on(machine) sum by (machine) (meowcloud_lxc_cpu_capacity_cores{job=\"lxc_frontends\"})",
+          "legendFormat": "{{machine}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 55
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "text": {
+          "titleSize": 14,
+          "valueSize": 20
+        }
+      }
+    },
+    {
       "id": 1,
       "type": "timeseries",
       "title": "CPU · Backend",
       "description": "CPU pool theo quota. Scale-out >80% trong 10s. Scale-in <10% trong 20s khi pool >3. Mọi exporter phải UP.",
       "gridPos": {
         "x": 0,
-        "y": 0,
+        "y": 9,
         "w": 12,
-        "h": 9
+        "h": 7
       },
       "datasource": {
         "type": "prometheus",
@@ -85,9 +227,9 @@
       "description": "CPU pool theo quota. Scale-out >80% trong 10s. Scale-in <20% trong 20s khi pool >3. Mọi exporter phải UP.",
       "gridPos": {
         "x": 12,
-        "y": 0,
+        "y": 9,
         "w": 12,
-        "h": 9
+        "h": 7
       },
       "datasource": {
         "type": "prometheus",
@@ -143,15 +285,191 @@
       }
     },
     {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Lịch sử CPU · Backend theo máy",
+      "description": "Lịch sử CPU theo từng máy Backend (mỗi đường một instance). Mức CPU đã chuẩn hóa theo vCPU LXC, không phải CPU của Proxmox node.",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "100 * sum by (machine) (rate(meowcloud_lxc_cpu_usage_seconds_total{job=\"lxc_backends\"}[1m])) / on(machine) sum by (machine) (meowcloud_lxc_cpu_capacity_cores{job=\"lxc_backends\"})",
+          "legendFormat": "{{machine}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 55
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 4,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisLabel": "CPU / vCPU (%)",
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Lịch sử CPU · Frontend theo máy",
+      "description": "Lịch sử CPU theo từng máy Frontend (mỗi đường một instance). Mức CPU đã chuẩn hóa theo vCPU LXC, không phải CPU của Proxmox node.",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "100 * sum by (machine) (rate(meowcloud_lxc_cpu_usage_seconds_total{job=\"lxc_frontends\"}[1m])) / on(machine) sum by (machine) (meowcloud_lxc_cpu_capacity_cores{job=\"lxc_frontends\"})",
+          "legendFormat": "{{machine}}",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 55
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "barAlignment": 0,
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 4,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisLabel": "CPU / vCPU (%)",
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
       "id": 3,
       "type": "timeseries",
       "title": "Số target trong pool",
       "description": "Tổng target trong cấu hình scrape và số target trả lời. Chênh lệch cho thấy có exporter DOWN.",
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 26,
         "w": 14,
-        "h": 8
+        "h": 7
       },
       "datasource": {
         "type": "prometheus",
@@ -201,9 +519,9 @@
       "description": "1 = alert đang pending hoặc firing. 0 = chưa có alert. Đối chiếu workflow 03/04 để xác nhận apply.",
       "gridPos": {
         "x": 14,
-        "y": 9,
+        "y": 26,
         "w": 10,
-        "h": 8
+        "h": 7
       },
       "datasource": {
         "type": "prometheus",
@@ -236,5 +554,6 @@
         }
       }
     }
-  ]
+  ],
+  "description": "Theo dõi CPU pool và CPU từng BE/FE LXC, tự nhận thêm máy khi autoscale cập nhật inventory; phục vụ demo workflows 03/04."
 }
