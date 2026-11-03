@@ -113,9 +113,9 @@ class PveClusterPolicyTests(unittest.TestCase):
                 self.fail(f"Unexpected write: {args}")
             return ""
 
-        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \\
-             mock.patch.object(ha, "ha_rules", side_effect=lambda: dict(rules)), \\
-             mock.patch.object(ha, "ha_resources", side_effect=lambda: dict(resources)), \\
+        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \
+             mock.patch.object(ha, "ha_rules", side_effect=lambda: dict(rules)), \
+             mock.patch.object(ha, "ha_resources", side_effect=lambda: dict(resources)), \
              mock.patch.object(ha, "remote", side_effect=update):
             ha.apply_ha()
             self.assertEqual(len(calls), len(ha.HA) + len(ha.SPREAD_RULES))
@@ -142,7 +142,7 @@ class PveClusterPolicyTests(unittest.TestCase):
 
         def update(*args):
             calls.append(args)
-            if args[:3] == ("pvesh", "delete", args[2]):
+            if args[:2] == ("pvesh", "delete") and args[2].startswith("/cluster/ha/rules/"):
                 rule_name = args[2].rsplit("/", 1)[-1]
                 self.assertIn(rule_name, rules)
                 del rules[rule_name]
@@ -156,9 +156,9 @@ class PveClusterPolicyTests(unittest.TestCase):
                 self.fail(f"Unexpected HA modification: {args}")
             return ""
 
-        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \\
-             mock.patch.object(ha, "ha_rules", side_effect=lambda: dict(rules)), \\
-             mock.patch.object(ha, "ha_resources", side_effect=lambda: dict(resources)), \\
+        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \
+             mock.patch.object(ha, "ha_rules", side_effect=lambda: dict(rules)), \
+             mock.patch.object(ha, "ha_resources", side_effect=lambda: dict(resources)), \
              mock.patch.object(ha, "remote", side_effect=update):
             ha.apply_ha()
             self.assertEqual(len(calls), len(ha.HA) + len(ha.SPREAD_RULES))
@@ -172,11 +172,11 @@ class PveClusterPolicyTests(unittest.TestCase):
             "vm:271": {"sid": "vm:271", "state": "started",
                        "failback": 0, "auto-rebalance": 0}
         }
-        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \\
-             mock.patch.object(ha, "ha_rules", return_value={}), \\
-             mock.patch.object(ha, "ha_resources", return_value=resources), \\
+        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \
+             mock.patch.object(ha, "ha_rules", return_value={}), \
+             mock.patch.object(ha, "ha_resources", return_value=resources), \
              mock.patch.object(ha, "prove_orphaned_ha_ownership",
-                               side_effect=ha.PolicyError("No ownership proof")), \\
+                               side_effect=ha.PolicyError("No ownership proof")), \
              mock.patch.object(ha, "remote") as remote:
             with self.assertRaisesRegex(ha.PolicyError, "No ownership proof"):
                 ha.apply_ha()
@@ -225,9 +225,9 @@ class PveClusterPolicyTests(unittest.TestCase):
                    "strict": 0, "resources": ",".join(members)}
             for name, members in ha.SPREAD_RULES
         }
-        with mock.patch.object(ha, "check_cluster"), \\
-             mock.patch.object(ha, "ha_rules", return_value=rules), \\
-             mock.patch.object(ha, "ha_resources", return_value=resources), \\
+        with mock.patch.object(ha, "check_cluster"), \
+             mock.patch.object(ha, "ha_rules", return_value=rules), \
+             mock.patch.object(ha, "ha_resources", return_value=resources), \
              mock.patch.object(ha, "remote") as remote:
             ha.remove_ha()
             commands = [" ".join(str(v) for v in c.args)
