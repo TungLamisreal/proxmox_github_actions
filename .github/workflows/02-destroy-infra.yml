@@ -13,9 +13,9 @@ on:
         default: ""
         type: string
       tf_parallelism:
-        description: "Số luồng xóa song song (Khuyên dùng: 1 hoặc 2 để tránh cfs-lock)"
+        description: "Destroy concurrency: 1 or 2; default is 2"
         required: true
-        default: "1"
+        default: "2"
         type: string
 
 concurrency:
