@@ -32,6 +32,8 @@ jobs:
     name: "Terraform Destroy Lab Workloads"
     runs-on: self-hosted
     timeout-minutes: 30
+    env:
+      TF_DESTROY_PARALLELISM: ${{ inputs.tf_parallelism || '2' }}
 
     steps:
       - name: "0. Abort if autoscale webhook is active"
@@ -75,9 +77,30 @@ jobs:
           # Legacy Docker templates exist until after 02; never enable this in 00/01/03/04.
           MEOWCLOUD_ALLOW_LEGACY_TEMPLATE_FOR_DESTROY: "1"
         run: |
-          PARALLEL="${{ github.event.inputs.tf_parallelism || '1' }}"
+          set -euo pipefail
+          PARALLEL="$TF_DESTROY_PARALLELISM"
+          case "$PARALLEL" in
+            1|2) echo "[PASS] Parallelism=$PARALLEL" ;;
+            *) echo "::error::Only parallelism 1 or 2 is supported"; exit 1 ;;
+          esac
           terraform init -input=false
-          terraform destroy -auto-approve -input=false -parallelism=${PARALLEL}
+          if terraform destroy -auto-approve -input=false -parallelism="$PARALLEL"; then
+            echo "[PASS] Terraform destroy completed"
+          else
+            echo "::warning::Destroy failed; testing narrow DB RBD recovery"
+            python3 ../scripts/destroy_db_rbd_recovery.py --mode repair-missing-references || {
+              echo "::error::No provably safe DB RBD recovery; aborting"; exit 1;
+            }
+            echo "[RETRY] Terraform destroy once after DB missing-reference repair"
+            terraform destroy -auto-approve -input=false -parallelism="$PARALLEL"
+          fi
+          remaining="$(terraform state list)"
+          if [ -n "$remaining" ]; then
+            echo "::error::Terraform state is not empty after destroy"
+            printf "%s\n" "$remaining"
+            exit 1
+          fi
+          echo "[PASS] Terraform state is empty"
 
       - name: "5. Verify Golden Images Remain Intact"
         run: |
