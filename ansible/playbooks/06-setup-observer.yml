@@ -225,6 +225,58 @@
           register: grafana_install
           changed_when: "'changed=true' in grafana_install.stdout"
 
+        # The installer can leave an older systemd drop-in in place, even when the
+        # packaged unit now says 0.0.0.0. Enforce the effective runtime setting.
+        - name: Create Grafana systemd override directory
+          ansible.builtin.file:
+            path: /etc/systemd/system/meowcloud-grafana.service.d
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Force Grafana to listen on Observer network interfaces
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/meowcloud-grafana.service.d/99-meowcloud-http-listen.conf
+            owner: root
+            group: root
+            mode: '0644'
+            content: |
+              [Service]
+              Environment="GF_SERVER_HTTP_ADDR=0.0.0.0"
+
+        - name: Reload systemd and restart Grafana with the enforced listener
+          ansible.builtin.systemd_service:
+            name: meowcloud-grafana
+            daemon_reload: true
+            enabled: true
+            state: restarted
+
+        - name: Verify Grafana API on Observer service IP, not just localhost
+          ansible.builtin.uri:
+            url: "http://{{ ansible_host | default('192.168.150.21') }}:3000/api/health"
+            status_code: 200
+            return_content: true
+            use_proxy: false
+          register: grafana_network_health
+          retries: 12
+          delay: 2
+          until: >-
+            (grafana_network_health.status | default(0)) == 200 and
+            (grafana_network_health.json.database | default('')) == 'ok'
+          changed_when: false
+
+        - name: Verify CT120 can reach Grafana TCP 3000 on Observer
+          ansible.builtin.wait_for:
+            host: "{{ ansible_host | default('192.168.150.21') }}"
+            port: 3000
+            state: started
+            connect_timeout: 3
+            timeout: 15
+          delegate_to: localhost
+          become: false
+          changed_when: false
+
       always:
         - name: Recheck three-voter consensus after the Grafana attempt
           ansible.builtin.command:
