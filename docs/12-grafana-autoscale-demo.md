@@ -24,13 +24,15 @@ Playbook `06-setup-observer.yml` chủ động tạo systemd drop-in `99-meowclo
 
 Dashboard `MeowCloud · Autoscale` nằm trong `monitoring/grafana/autoscale.json`, được Grafana file provisioning nạp tự động qua `monitoring/grafana/provider.yaml`. Đây không phải dashboard mặc định có sẵn của Grafana.
 
-- **Hàng 1:** Bar gauge CPU từng Backend và từng Frontend, mỗi máy một thanh với tên `backend-01`, `frontend-01`, v.v. Màu xanh/cam/đỏ tương ứng mức CPU dưới 55%, từ 55% đến dưới 80%, và từ 80% trở lên. Hiện tối thiểu 3 BE + 3 FE và tự bổ sung BE/FE mới theo inventory khi chạy scale-out.
-- **Hàng 2:** Biểu đồ CPU pool Backend và Frontend (logic autoscale đã có, giữ nguyên).
-- **Hàng 3:** Hai biểu đồ lịch sử 15 phút, mỗi máy một đường, dùng để chứng minh thời điểm CPU tăng/giảm trước/sau 03/04.
-- **Hàng 4:** Số lượng scrape targets và cảnh báo autoscale.
+- **Hàng 1:** Hai thẻ trạng thái **Alert · PENDING** (màu cam nếu có alert) và **Alert · FIRING** (màu đỏ nếu có alert), cùng biểu đồ số lượng exporter targets; giá trị là số alert hiện đang ở trạng thái tương ứng. Trạng thái được đọc trực tiếp từ Prometheus, mặc định 0.
+- **Hàng 2:** Bar gauge CPU từng Backend và từng Frontend, mỗi máy một thanh với tên `backend-01`, `frontend-01`, v.v. Màu xanh/cam/đỏ tương ứng mức CPU dưới 55%, từ 55% đến dưới 80%, và từ 80% trở lên. Hiện tối thiểu 3 BE + 3 FE và tự bổ sung BE/FE mới theo inventory khi chạy scale-out.
+- **Hàng 3:** Biểu đồ CPU pool Backend và Frontend (logic autoscale đã có, giữ nguyên).
+- **Hàng 4:** Hai biểu đồ lịch sử 15 phút, mỗi máy một đường, dùng để chứng minh thời điểm CPU tăng/giảm trước/sau 03/04.
 
 PromQL CPU theo máy: `100 * sum by(machine)(rate(meowcloud_lxc_cpu_usage_seconds_total{job="lxc_backends"}[1m])) / on(machine) sum by(machine)(meowcloud_lxc_cpu_capacity_cores{job="lxc_backends"})` (tương tự `lxc_frontends`). Vì chia cho số vCPU cấp cho LXC, đây là **% CPU theo quota của mỗi LXC**, không phải tổng CPU Proxmox node.
 
 Playbook Observer gắn label `machine` vào từng target Prometheus theo tên host trong Ansible inventory. Workflow 03 và 04 vốn đã chạy lại `06-setup-observer.yml` khi đổi danh sách máy; dashboard không cần sửa thủ công lúc scale. Nếu máy mất kết nối exporter, không coi ô CPU bị thiếu là 0%; hãy đối chiếu panel targets UP.
 
 Sau khi merge thay đổi dashboard, chỉ cần pull code trên CT120 rồi chạy lại playbook Observer như phần đầu tài liệu. Chạy khi không có workflow autoscale đang triển khai; playbook cũng cập nhật Prometheus/Alertmanager và kiểm tra etcd quorum.
+
+Dashboard đang được file-provisioning quản lý (`editable: false`, `allowUiUpdates: false`) và web UI chỉ bật Anonymous Viewer, do đó không kéo-thả/sắp xếp panel trực tiếp trên trình duyệt được. Cần sửa `gridPos` trong `monitoring/grafana/autoscale.json` rồi deploy qua Ansible để giữ layout ổn định giữa Workflow 01/03/04. Muốn tự chỉnh trong UI phải bật xác thực phù hợp, quyền Editor/Admin và thay đổi chính sách provisioning; không khuyến khích ngay trước buổi demo.
