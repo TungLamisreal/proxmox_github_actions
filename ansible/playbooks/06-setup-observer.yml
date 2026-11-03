@@ -248,13 +248,16 @@
             content: |
               [Service]
               Environment="GF_SERVER_HTTP_ADDR=0.0.0.0"
+          register: grafana_listener_override
 
-        - name: Reload systemd and restart Grafana with the enforced listener
+        # Workflow 03/04 re-run Observer provisioning after every scale operation.
+        # Avoid interrupting the dashboard when the effective listener did not change.
+        - name: Keep Grafana running and apply listener changes only when needed
           ansible.builtin.systemd_service:
             name: meowcloud-grafana
-            daemon_reload: true
+            daemon_reload: "{{ grafana_listener_override.changed }}"
             enabled: true
-            state: restarted
+            state: "{{ 'restarted' if grafana_listener_override.changed else 'started' }}"
 
         - name: Verify Grafana API on Observer service IP, not just localhost
           ansible.builtin.uri:
