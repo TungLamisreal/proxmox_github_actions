@@ -84,14 +84,19 @@ automate the security-group rule definitions.
 ## Proxmox HA (Observer, both DB VMs and LB pair)
 
 Workflow 01 manages HA services `ct:121`, `vm:271`, `vm:272`,
-`ct:141` (LB01) and `ct:142` (LB02). It creates soft positive
-node-affinity preferences:
+`ct:141` (LB01) and `ct:142` (LB02). Initial placement comes from
+Terraform, not weighted PVE HA node-affinity rules:
 
-- Observer `ct:121` prefers node1.
-- DB01 `vm:271` prefers node2; DB02 `vm:272` prefers node3.
-- LB01 `ct:141` prefers node1; LB02 `ct:142` prefers node2.
+- Observer `ct:121` starts on node1.
+- DB01 `vm:271` starts on node2; DB02 `vm:272` starts on node3.
+- LB01 `ct:141` starts on node1; LB02 `ct:142` starts on node2.
 
-It additionally creates non-strict **negative resource-affinity** rules
+A real PVE 9.2 01 run failed on
+`resources are in node affinity rules with multiple priorities`.
+The API rejected combining weighted node-affinity (`nodeX:2,nodeY:1`)
+with negative resource-affinity for the same guests. Workflow 01 now
+validates and removes exactly its *five owned legacy node rules* before
+creating non-strict **negative resource-affinity** rules
 `meow-etcd-voter-spread` for `ct:121,vm:271,vm:272` and
 `meow-lb-spread` for `ct:141,ct:142`. These are soft spread policies,
 **not enforced anti-affinity guarantees**: a node outage must not prevent
@@ -108,7 +113,12 @@ destroy. For legacy guests with missing owned node-affinity rules,
 `--allow-owned-missing-rule` is limited to destroy and requires exact
 matching Terraform state ownership plus live PVE guest type/name checks.
 Any unknown HA rule, conflicting policy or identity mismatch still blocks
-destroy. `ct:120` is never managed by the script. The Proxmox HA manager restarts/migrates
+destroy. The updated 01 can resume a previous failed HA-registration step:
+all five HA services are retained, owned weighted node rules are migrated
+away, and only two soft spread rules are created. A partially migrated,
+ruleless service requires canonical Terraform state + live PVE ownership
+proof before any write. This does not stop or restart any guest.
+`ct:120` is never managed by the script. The Proxmox HA manager restarts/migrates
 VMs; **Patroni** elects database Primary/Replica and protects the
 writer lease. Do not manually promote a VM due solely to its HA name.
 

@@ -25,9 +25,13 @@ DB_GUEST_STARTUP = {
     271: "order=5,up=60",  # DB-01, Patroni role can change (HA-managed)
     272: "order=4,up=60",  # DB-02, Patroni role can change (HA-managed)
 }
-# PVE 9.2: HA node-affinity rules replace the removed HA groups API.
-# Positive non-strict rules set node priority; failback=0 and auto-rebalance=0
-# on each HA service prevent automatic return/rebalancing (PVE 9.2 API).
+# Node-affinity descriptors are kept ONLY to validate and remove legacy rules
+# created by earlier 01 runs. Do not create prioritized node-affinity rules
+# together with resource-affinity: PVE 9 rejects the combination when the
+# node rules use multiple priorities ("resources are in node affinity rules
+# with multiple priorities"). Terraform chooses initial node placement;
+# non-strict negative resource-affinity handles HA spread during failover.
+# failback=0 and auto-rebalance=0 prevent automatic return/rebalancing.
 HA = (
     ("ct:121", "meow-observer", "node1:2,node2:1,node3:1", "lxc", 121),
     ("vm:271", "meow-db-primary", "node2:2,node1:1,node3:1", "qemu", 271),
@@ -213,6 +217,20 @@ def prove_orphaned_ha_ownership(sids):
         print(f"[PASS] Legacy HA ownership verified: {sid} ({guest_name})")
 
 
+def covered_by_spread(rules, sid):
+    return any(name in rules and sid in members for name, members in SPREAD_RULES)
+
+
+def unruled_owned_resources(rules, resources):
+    # Legacy partial 01 may have HA services but no completed spread rules.
+    # The caller must verify Terraform ownership before mutating these.
+    return {
+        sid for sid, node_rule, _, _, _ in HA
+        if sid in resources and node_rule not in rules
+        and not covered_by_spread(rules, sid)
+    }
+
+
 def resource_matches(resource):
     # Missing PVE fields have documented default=1 (unsafe for this policy).
     # Require explicit booleans off, including when evaluating existing HA.
@@ -251,9 +269,10 @@ def validate_owned_rules(rules, resources, allow_unruled=()):
                 raise PolicyError(
                     f"HA service {sid} has incompatible state or failback/rebalance policy"
                 )
-            if current_rule is None and sid not in allowed_unruled:
+            if (current_rule is None and not covered_by_spread(rules, sid)
+                    and sid not in allowed_unruled):
                 raise PolicyError(
-                    f"HA service {sid} exists without owned rule {name}; "
+                    f"HA service {sid} exists without owned node/spread rule; "
                     "refusing to claim or delete externally managed service"
                 )
         elif current_rule is not None:
@@ -323,11 +342,19 @@ def apply_ha():
     check_guests()
     rules = ha_rules()
     resources = ha_resources()
-    validate_owned_rules(rules, resources)
 
-    # PVE 9 node-affinity rules refer to HA-registered service IDs.
-    # Create resources before the corresponding rules.
-    for sid, name, nodes, _, _ in HA:
+    # The previous workflow 01 may have stopped after creating all node
+    # affinity rules but before creating resource anti-affinity rules. Validate
+    # all ownership/policy before modifying anything. Also support resume
+    # after a partially deleted legacy node rule, with independent proof.
+    unruled = unruled_owned_resources(rules, resources)
+    validate_owned_rules(rules, resources, allow_unruled=unruled)
+    if unruled:
+        prove_orphaned_ha_ownership(unruled)
+
+    # HA services are independent of placement rules. Keep existing services,
+    # create only missing ones, and NEVER touch CT120.
+    for sid, _, _, _, _ in HA:
         if sid not in resources:
             remote("pvesh", "create", "/cluster/ha/resources",
                    "--sid", sid, "--state", "started",
@@ -336,33 +363,39 @@ def apply_ha():
             print(f"[CREATE] HA service {sid}")
         else:
             print(f"[KEEP] HA service {sid}")
-        if name not in rules:
-            remote("pvesh", "create", "/cluster/ha/rules",
-                   "--rule", name, "--type", "node-affinity",
-                   "--resources", sid, "--nodes", nodes,
-                   "--affinity", "positive", "--strict", "0")
-            print(f"[CREATE] HA node-affinity rule {name}")
-        else:
-            print(f"[KEEP] HA node-affinity rule {name}")
 
-    # Create spread rules only after every referenced HA service exists.
+    # Proxmox 9 disallows resource spread when a member also belongs to a
+    # node-affinity rule with multiple priorities. Migrate EXACTLY the five
+    # validated MeowCloud legacy node rules, not foreign rules or services.
+    # This operation does not stop/reboot a guest.
+    for sid, name, _, _, _ in HA:
+        if name in rules:
+            remote("pvesh", "delete", f"/cluster/ha/rules/{name}")
+            print(f"[MIGRATE] Removed conflicting owned node rule {name} ({sid})")
+
+    # Soft negative resource-affinity works with the initial node placement
+    # from Terraform. Non-strict so 2 surviving nodes can host 3 etcd voters.
     for name, members in SPREAD_RULES:
         if name not in rules:
             remote("pvesh", "create", "/cluster/ha/rules",
                    "--rule", name, "--type", "resource-affinity",
-                   "--resources", ",".join(members), "--affinity", "negative")
+                   "--resources", ",".join(members), "--affinity", "negative",
+                   "--strict", "0")
             print(f"[CREATE] Non-strict HA resource anti-affinity {name}")
         else:
             print(f"[KEEP] Non-strict HA resource anti-affinity {name}")
 
     final_rules = ha_rules()
     final_resources = ha_resources()
-    for sid, name, nodes, _, _ in HA:
+    validate_owned_rules(final_rules, final_resources)
+    for sid, name, _, _, _ in HA:
         if sid not in final_resources or not resource_matches(final_resources[sid]):
             raise PolicyError(f"HA service policy verification failed: {sid}")
-        if name not in final_rules or not rule_matches(final_rules[name], sid, nodes):
-            raise PolicyError(f"HA rule verification failed: {name}")
-        print(f"[PASS] {sid}: HA rule={name}; failback=0; auto-rebalance=0")
+        if name in final_rules:
+            raise PolicyError(f"Conflicting legacy node-affinity survived: {name}")
+        if not covered_by_spread(final_rules, sid):
+            raise PolicyError(f"No owned spread rule covers HA service: {sid}")
+        print(f"[PASS] {sid}: HA managed; failback=0; auto-rebalance=0")
     for name, members in SPREAD_RULES:
         if name not in final_rules or not spread_rule_matches(final_rules[name], members):
             raise PolicyError(f"HA spread rule verification failed: {name}")
@@ -374,10 +407,7 @@ def remove_ha(allow_owned_missing_rule=False):
     check_cluster()
     resources = ha_resources()
     rules = ha_rules()
-    legacy = {
-        sid for sid, name, _, _, _ in HA
-        if sid in resources and name not in rules
-    }
+    legacy = unruled_owned_resources(rules, resources)
     if allow_owned_missing_rule and legacy:
         prove_orphaned_ha_ownership(legacy)
     validate_owned_rules(rules, resources,
@@ -407,7 +437,7 @@ def audit():
     rules = ha_rules()
     for sid, name, _, _, _ in HA:
         print(f"[READ] {sid}: {resources.get(sid, 'not registered')}")
-        print(f"[READ] HA rule {name}: {rules.get(name, 'missing')}")
+        print(f"[READ] legacy node-affinity rule {name}: {rules.get(name, 'absent (expected)')}")
     for name, _ in SPREAD_RULES:
         print(f"[READ] HA spread {name}: {rules.get(name, 'missing')}")
     print(f"[READ] ct:120: {'registered' if 'ct:120' in resources else 'not registered'} (not managed by script)")
