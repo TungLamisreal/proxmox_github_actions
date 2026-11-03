@@ -27,6 +27,10 @@ on:
         required: true
         default: "1"
         type: string
+      install_grafana:
+        description: "Install the autoscale dashboard on CT120 after provisioning"
+        type: boolean
+        default: false
       initial_app_release:
         description: "Day-0 application: baseline (clean demo) or pinned (resume a published release)"
         required: true
@@ -382,3 +386,7 @@ jobs:
           set -euo pipefail
           python3 scripts/pve_cluster_policy.py --mode apply-ha
           python3 scripts/pve_cluster_policy.py --mode audit
+
+      - name: "13. Install and verify Grafana dashboard on CT120"
+        if: inputs.install_grafana
+        run: bash monitoring/grafana/install.sh
