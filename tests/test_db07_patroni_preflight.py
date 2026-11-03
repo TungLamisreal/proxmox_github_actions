@@ -166,6 +166,25 @@ class PatroniPreflightTests(unittest.TestCase):
         self.assertIn("Proxmox HA still starts DB01", result)
         self.assertIn("writer proxy port 5432 not listening", result)
 
+    def test_workflow_06_patroni_image_transfer_uses_job_scoped_host_keys(self):
+        """Regression for run #19: rebuilt DB VM keys must not fail on stale runner keys."""
+        workflow = (ROOT / ".github/workflows/06-db-streaming-replication.yml").read_text()
+        transfer = workflow.split("Build exact commit image and import on both DB hosts", 1)[1]
+        transfer = transfer.split("Stage Patroni config without restarting legacy PostgreSQL", 1)[0]
+        self.assertIn('transfer_known_hosts="$(mktemp)"', transfer)
+        self.assertIn('chmod 0600 "$transfer_known_hosts"', transfer)
+        self.assertIn("trap 'rm -f \"$transfer_known_hosts\"' EXIT", transfer)
+        self.assertIn('for ip in 192.168.150.71 192.168.150.72; do', transfer)
+        self.assertIn('UserKnownHostsFile=$transfer_known_hosts', transfer)
+        self.assertIn('StrictHostKeyChecking=accept-new', transfer)
+        self.assertIn('BatchMode=yes', transfer)
+        self.assertIn('IdentitiesOnly=yes', transfer)
+        self.assertNotIn('StrictHostKeyChecking=no', transfer)
+        self.assertNotIn('UserKnownHostsFile=/dev/null', transfer)
+        self.assertNotIn('UserKnownHostsFile=/home/github-runner/.ssh/known_hosts', transfer)
+        self.assertIn('docker save "$image" | ssh', transfer)
+        self.assertIn('"root@$ip" docker load', transfer)
+
     def test_day0_workflow_publishes_inventory_and_canonical_key(self):
         provision = (ROOT / ".github/workflows/01-provision-infra.yml").read_text()
         build = (ROOT / ".github/workflows/00-build-golden-images.yml").read_text()

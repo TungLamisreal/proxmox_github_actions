@@ -207,3 +207,31 @@ the two resource-affinity rules. No 02/VM recreation is required.
 
 Offline CI does not demonstrate PVE runtime rule creation or its actual
 failover placement behavior; both must be verified on the live cluster.
+
+### Workflow 06 run #19: stale DB SSH host key during Patroni image transfer
+
+After a clean `02 → 01` rebuild, DB01 (`192.168.150.71`) and DB02
+(`192.168.150.72`) can have new SSH server host keys. Run #19 reached
+streaming replication, full 3/3 etcd mTLS quorum and the Patroni image
+build, but the image transfer in stage 08 failed against an old host key
+in CT120's persistent `/home/github-runner/.ssh/known_hosts`.
+**Stage 09 (PGDATA takeover) was skipped**; existing standalone DB01/02
+must be audited before resuming.
+
+The transfer now uses a temporary `known_hosts` file (mode 0600)
+created and removed inside stage 08. `StrictHostKeyChecking=accept-new`
+pins the first presented key for each DB *within that job* and does not
+rewrite the runner's persistent trust store. This is **trust on first
+use, not independent identity authentication**: appropriate only for
+the controlled lab network. For production, verify/pin DB SSH public
+host-key fingerprints through an authenticated Proxmox guest console or
+other trusted provisioning channel before the first SSH connection.
+
+**Recovery:** After merging the fix, dispatch a **fresh** workflow 06 on
+`main` with `mode=bootstrap-ha` and its confirmation, not GitHub's
+`Re-run jobs` on the old SHA. This remains subject to the existing
+read-only preflight: it must prove no Patroni ownership, valid physical
+streaming and acceptable etcd membership before any takeover. A healthy
+existing replica is *not* reseeded, and existing etcd PKI is reused.
+If the ownership guard or replication verification fails, stop and
+use `diagnose` rather than manually deleting any PGDATA or etcd state.
