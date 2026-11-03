@@ -100,7 +100,7 @@ class Db06WorkflowGateTests(unittest.TestCase):
                                   r":\n(?:(?!^  [a-z]).*\n)*?    if: ([^\n]+)",
                                   workflow)
                 self.assertIsNotNone(match, f"Missing conditional job: {job}")
-                self.assertIn("always()", match.group(1),
+                self.assertIn("!cancelled()", match.group(1),
                               f"Job {job} is exposed to implicit upstream skip propagation")
         self.assertIn("python3 scripts/db06_workflow_gate.py", workflow)
         self.assertIn("NEEDS_JSON: ${{ toJSON(needs) }}", workflow)
