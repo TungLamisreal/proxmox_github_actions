@@ -102,7 +102,8 @@ class PveClusterPolicyTests(unittest.TestCase):
             elif args[:3] == ("pvesh", "create", "/cluster/ha/rules"):
                 self.assertEqual(args[args.index("--type") + 1], "resource-affinity")
                 self.assertEqual(args[args.index("--affinity") + 1], "negative")
-                self.assertEqual(args[args.index("--strict") + 1], "0")
+                # PVE9 API rejects --strict for resource-affinity.
+                self.assertNotIn("--strict", args)
                 name = args[args.index("--rule") + 1]
                 rules[name] = {
                     "rule": name, "type": "resource-affinity",
@@ -148,6 +149,7 @@ class PveClusterPolicyTests(unittest.TestCase):
                 del rules[rule_name]
             elif args[:3] == ("pvesh", "create", "/cluster/ha/rules"):
                 self.assertEqual(args[args.index("--type") + 1], "resource-affinity")
+                self.assertNotIn("--strict", args)
                 name = args[args.index("--rule") + 1]
                 rules[name] = {"rule": name, "type": "resource-affinity",
                                "affinity": "negative", "strict": 0,
@@ -166,6 +168,42 @@ class PveClusterPolicyTests(unittest.TestCase):
             self.assertIn("ct:120", resources)
             ha.apply_ha()
             self.assertEqual(len(calls), len(ha.HA) + len(ha.SPREAD_RULES))
+
+    def test_resume_failed_01_when_all_five_rules_already_removed(self):
+        """Real incident #65: all five HA services remain with no rules."""
+        resources = {
+            sid: {"sid": sid, "state": "started", "failback": 0, "auto-rebalance": 0}
+            for sid, _, _, _, _ in ha.HA
+        }
+        resources["ct:120"] = {"sid": "ct:120", "state": "started"}
+        rules = {}
+        calls = []
+
+        def update(*args):
+            calls.append(args)
+            if args[:3] != ("pvesh", "create", "/cluster/ha/rules"):
+                self.fail(f"Unexpected write during recovery: {args}")
+            self.assertNotIn("--strict", args)
+            self.assertEqual(args[args.index("--type") + 1], "resource-affinity")
+            name = args[args.index("--rule") + 1]
+            rules[name] = {
+                "rule": name, "type": "resource-affinity",
+                "affinity": "negative",
+                "resources": args[args.index("--resources") + 1]
+            }
+            return ""
+
+        with mock.patch.object(ha, "check_cluster"), mock.patch.object(ha, "check_guests"), \
+             mock.patch.object(ha, "ha_rules", side_effect=lambda: dict(rules)), \
+             mock.patch.object(ha, "ha_resources", side_effect=lambda: dict(resources)), \
+             mock.patch.object(ha, "prove_orphaned_ha_ownership") as prove, \
+             mock.patch.object(ha, "remote", side_effect=update):
+            ha.apply_ha()
+            prove.assert_called_once_with({sid for sid, _, _, _, _ in ha.HA})
+            self.assertEqual(len(calls), len(ha.SPREAD_RULES))
+            self.assertIn("ct:120", resources)
+            ha.apply_ha()
+            self.assertEqual(len(calls), len(ha.SPREAD_RULES))
 
     def test_partial_01_without_owned_rules_requires_state_proof(self):
         resources = {
