@@ -102,9 +102,17 @@ jobs:
           fi
           echo "[PASS] Terraform state is empty"
 
+      - name: "4b. Refuse residual MeowCloud guests or RBD disks"
+        run: python3 scripts/destroy_db_rbd_recovery.py --mode verify-clean
+
       - name: "5. Verify Golden Images Remain Intact"
         run: |
           SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@192.168.150.49"
           echo "=== Xác nhận 3 Golden Images vẫn được bảo toàn nguyên vẹn ==="
           $SSH_CMD "ls -lh /mnt/pve/shared-fs/template/cache/meowcloud-lxc-*.tar.zst"
-          $SSH_CMD "qm list | grep -E '9001|9002|9003' || true"
+          for vmid in 9001 9002 9003; do
+            $SSH_CMD "ls /etc/pve/nodes/*/qemu-server/${vmid}.conf >/dev/null" || {
+              echo "::error::Missing golden DB template VMID ${vmid}"; exit 1;
+            }
+          done
+          echo "[PASS] All 3 golden DB templates still registered"
