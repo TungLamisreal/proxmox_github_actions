@@ -6,4 +6,4 @@ providers:
     disableDeletion: true
     allowUiUpdates: false
     options:
-      path: /usr/share/grafana/meowcloud
+      path: /etc/meowcloud-grafana/boards

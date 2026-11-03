@@ -28,7 +28,7 @@ on:
         default: "1"
         type: string
       operation:
-        description: "Provision the lab, include Grafana, or install only Grafana on the existing CT120"
+        description: "Provision the lab, include Grafana, or install only Grafana on the existing Observer"
         type: choice
         default: provision
         options: [provision, provision-with-grafana, grafana-only]
@@ -388,7 +388,7 @@ jobs:
           python3 scripts/pve_cluster_policy.py --mode audit
 
   grafana:
-    name: "Install viewer dashboard on CT120"
+    name: "Install Grafana on Observer CT121"
     needs: provision-and-configure
     if: >-
       ${{ !cancelled() &&
@@ -400,10 +400,13 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-      - name: Verify runner address before installing Grafana
-        shell: bash
+      - name: Install on the inventory Observer
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+          OPERATION: ${{ inputs.operation }}
+          HOME: /home/github-runner
         run: |
           set -euo pipefail
-          ip -o -4 addr show | awk '{print $4}' | cut -d/ -f1 | grep -Fx '192.168.150.20'
-      - name: Start Grafana and verify the Observer datasource
-        run: bash monitoring/grafana/install.sh
+          inventory=/opt/meowcloud-iac/ansible/inventory.ini
+          python3 scripts/db07_patroni_preflight.py --inventory "$inventory" --validate-inventory-only
+          /home/github-runner/.venvs/ansible-2.21/bin/ansible-playbook -i "$inventory" ansible/playbooks/27-observer-grafana.yml -e "grafana_operation=$OPERATION"

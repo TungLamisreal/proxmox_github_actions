@@ -1,0 +1,52 @@
+---
+- name: Protect the Observer voter while installing Grafana
+  hosts: observer
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Require the single expected Observer
+      ansible.builtin.assert:
+        that:
+          - groups['monitoring'] == ['observer']
+          - ansible_host == '192.168.150.21'
+          - grafana_operation in ['grafana-only', 'provision-with-grafana']
+    - name: Check for existing etcd data
+      ansible.builtin.stat:
+        path: /var/lib/meowcloud-etcd
+      register: etcd_data
+    - name: Decide if quorum must be verified
+      ansible.builtin.set_fact:
+        grafana_check_dcs: "{{ grafana_operation == 'grafana-only' or etcd_data.stat.exists }}"
+- name: Verify all voters and HTTPS gateways before install
+  ansible.builtin.import_playbook: 16-verify-etcd-quorum.yml
+  when: grafana_check_dcs | bool
+- name: Deploy native Grafana to the Observer
+  hosts: observer
+  become: true
+  gather_facts: false
+  tasks:
+    - block:
+        - name: Stage Grafana files
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../../monitoring/grafana/"
+            dest: /opt/meowcloud-grafana-config/
+            mode: '0644'
+            directory_mode: '0755'
+        - name: Install Grafana and verify dashboard queries
+          ansible.builtin.command: bash /opt/meowcloud-grafana-config/install.sh
+      always:
+        - name: Verify consensus on all three endpoints after the install attempt
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/etcdctl
+              - --endpoints=https://192.168.150.71:2379,https://192.168.150.72:2379,https://192.168.150.21:2379
+              - --cacert=/etc/meowcloud/tls/ca.pem
+              - --cert=/etc/meowcloud/tls/etcd-server.pem
+              - --key=/etc/meowcloud/tls/etcd-server-key.pem
+              - endpoint
+              - health
+          environment:
+            ETCDCTL_API: '3'
+          changed_when: false
+          when: grafana_check_dcs | bool
