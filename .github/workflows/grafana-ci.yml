@@ -37,6 +37,8 @@ jobs:
           grep -q '99-meowcloud-http-listen.conf' ansible/playbooks/06-setup-observer.yml
           grep -q 'Verify Grafana API on Observer service IP' ansible/playbooks/06-setup-observer.yml
           grep -q 'Verify CT120 can reach Grafana TCP 3000' ansible/playbooks/06-setup-observer.yml
+          # Avoid restarting Grafana while 03/04 refresh Observer scrape targets.
+          grep -q "grafana_listener_override.changed else 'started'" ansible/playbooks/06-setup-observer.yml
           grep -q 'Verify three-voter consensus before installing Grafana' ansible/playbooks/06-setup-observer.yml
           grep -q 'Recheck three-voter consensus after the Grafana attempt' ansible/playbooks/06-setup-observer.yml
           test ! -e ansible/playbooks/27-observer-grafana.yml
