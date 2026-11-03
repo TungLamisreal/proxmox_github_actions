@@ -47,7 +47,15 @@ jobs:
           import json
           from pathlib import Path
           panels = json.loads(Path("monitoring/grafana/autoscale.json").read_text())["panels"]
-          assert len(panels) == 8, "Expected per-machine gauges, trends, pools and alert/target panels"
+          assert len(panels) == 9, "Expected pending/firing alerts plus per-machine, pool and target panels"
+          assert [p["title"] for p in panels[:3]] == ["Alert · PENDING", "Alert · FIRING", "Số target trong pool"]
+          for panel, state in zip(panels[:2], ("pending", "firing")):
+              assert panel["type"] == "stat"
+              assert f'alertstate="{state}"' in panel["targets"][0]["expr"]
+              assert "or vector(0)" in panel["targets"][0]["expr"]
+              assert panel["gridPos"]["y"] == 0
+          assert panels[3]["title"] == "CPU từng máy · Backend"
+          assert panels[4]["title"] == "CPU từng máy · Frontend"
           for tier in ("Backend", "Frontend"):
               gauges = [p for p in panels if p["type"] == "bargauge" and p["title"] == f"CPU từng máy · {tier}"]
               trends = [p for p in panels if p["type"] == "timeseries" and p["title"] == f"Lịch sử CPU · {tier} theo máy"]
