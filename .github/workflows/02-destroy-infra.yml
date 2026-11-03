@@ -63,6 +63,9 @@ jobs:
             echo "[STOP] Locked guest(s): $locked. Investigate backup/task before destroy."; exit 1
           fi
 
+      - name: "3a. Read-only RBD checks from DB host nodes"
+        run: python3 scripts/destroy_db_rbd_recovery.py --mode preflight
+
       - name: "3b. Unregister MeowCloud HA resources"
         run: python3 scripts/pve_cluster_policy.py --mode remove-ha --allow-owned-missing-rule
 
