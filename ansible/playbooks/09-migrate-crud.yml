@@ -14,7 +14,7 @@
       ansible.builtin.assert:
         that:
           - meow_db_config.initialized | default(false) | bool
-          - meow_db_config.db_host == '192.168.150.71'
+          - meow_db_config.db_host == '192.168.150.100'
           - meow_db_config.db_name == 'meowcloud_demo'
           - meow_db_config.db_user == 'meowcrud'
           - meow_db_config.db_password | length > 0

@@ -4,7 +4,9 @@
 Schema is created and versioned exclusively by Alembic during workflow 05.
 
 NEVER formats, drops, truncates or replaces an existing PostgreSQL database.
-Targets existing DB primary KVM (192.168.150.71) via SSH / docker exec psql.
+Bootstraps via the Day-0 DB01 (192.168.150.71) Docker exec, but persists the
+stable application writer endpoint (192.168.150.100:5432). This endpoint is
+intentionally unavailable until unified DB06 HA completes.
 """
 import argparse
 import json
@@ -17,7 +19,8 @@ import sys
 import time
 
 STATE = pathlib.Path('/opt/meowcloud-iac/state/meowcrud.json')
-HOST = '192.168.150.71'
+HOST = '192.168.150.71'  # Day-0 SQL bootstrap transport only
+WRITER_VIP = '192.168.150.100'  # Application PostgreSQL writer endpoint
 DB = 'meowcloud_demo'
 ROLE = 'meowcrud'
 
@@ -89,7 +92,7 @@ def main():
         cfg = json.loads(STATE.read_text())
         if not all(cfg.get(x) for x in ('db_host', 'db_name', 'db_user', 'db_password', 'demo_token')):
             raise RuntimeError('Existing meowcrud.json has missing secrets; inspect manually')
-        if cfg['db_host'] != HOST or cfg['db_name'] != DB or cfg['db_user'] != ROLE:
+        if cfg['db_host'] not in (HOST, WRITER_VIP) or cfg['db_name'] != DB or cfg['db_user'] != ROLE:
             raise RuntimeError('Existing configuration belongs to unexpected DB/role; aborting')
     else:
         role_exists = psql(f"SELECT 1 FROM pg_roles WHERE rolname = '{ROLE}';")
@@ -97,7 +100,7 @@ def main():
         if role_exists or db_exists:
             raise RuntimeError('Role or DB already exists without local secret state. '
                                'Refusing to take ownership or rotate unknown passwords.')
-        cfg = dict(db_host=HOST, db_port=5432, db_name=DB, db_user=ROLE,
+        cfg = dict(db_host=WRITER_VIP, db_port=5432, db_name=DB, db_user=ROLE,
                    db_password=secrets.token_hex(24), demo_token=secrets.token_urlsafe(32),
                    initialized=False)
         persist(cfg)  # Persist before any SQL to allow safe retry after partial failure.
@@ -115,8 +118,12 @@ def main():
     # Bootstrap grants ownership only. Alembic is the sole writer of app schema.
     # initialized=True means the role/database/credentials exist, NOT that tables exist.
     cfg['initialized'] = True
+    # Workflow01 is Day-0 provisioning: every Backend must use the stable
+    # writer VIP, even while DB06 has not yet installed the proxy.
+    cfg['db_host'] = WRITER_VIP
     persist(cfg)
-    print(f'PASS: empty or existing isolated database {DB} and role {ROLE} ready on {HOST}.')
+    print(f'PASS: empty or existing isolated database {DB} and role {ROLE} ready on bootstrap DB01 {HOST}.')
+    print(f'Application writer endpoint: {cfg["db_host"]}:5432 (VIP readiness requires DB06 HA).')
     print('NEXT: run Alembic upgrade head once via workflow 05 migration job.')
     print(f'Credential state: {STATE}')
     print('Demo login token is intentionally not printed. '

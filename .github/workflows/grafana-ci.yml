@@ -1,0 +1,51 @@
+name: Grafana autoscale dashboard CI
+on:
+  pull_request:
+    paths:
+      - 'monitoring/grafana/**'
+      - 'ansible/playbooks/06-setup-observer.yml'
+      - '.github/workflows/grafana-ci.yml'
+      - '.github/workflows/01-provision-infra.yml'
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start a disposable Prometheus with BE and FE scrape targets
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/prom.yml" <<'YAML'
+          global:
+            scrape_interval: 2s
+          scrape_configs:
+            - job_name: lxc_backends
+              static_configs: [{targets: ['127.0.0.1:9090']}]
+              metric_relabel_configs: &metrics
+                - {source_labels: [__name__], regex: process_cpu_seconds_total, target_label: __name__, replacement: meowcloud_lxc_cpu_usage_seconds_total}
+                - {source_labels: [__name__], regex: prometheus_build_info, target_label: __name__, replacement: meowcloud_lxc_cpu_capacity_cores}
+            - job_name: lxc_frontends
+              static_configs: [{targets: ['127.0.0.1:9090']}]
+              metric_relabel_configs: *metrics
+          YAML
+          docker run -d --name test-prom --network host -v "$RUNNER_TEMP/prom.yml:/etc/prometheus/prometheus.yml:ro" prom/prometheus:v3.5.0 --config.file=/etc/prometheus/prometheus.yml --web.listen-address=:9090
+      - name: Validate Observer playbook carries the Grafana and etcd guards
+        run: |
+          grep -q 'Verify three-voter consensus before installing Grafana' ansible/playbooks/06-setup-observer.yml
+          grep -q 'Recheck three-voter consensus after the Grafana attempt' ansible/playbooks/06-setup-observer.yml
+          test ! -e ansible/playbooks/27-observer-grafana.yml
+      - name: Install twice and verify every panel query through Grafana
+        working-directory: monitoring/grafana
+        run: |
+          set -euo pipefail
+          sudo bash install.sh
+          before=$(systemctl show -p InvocationID --value meowcloud-grafana)
+          sudo bash install.sh
+          test -n "$before"
+          test "$before" = "$(systemctl show -p InvocationID --value meowcloud-grafana)"
+      - name: Show Grafana startup errors
+        if: failure()
+        working-directory: monitoring/grafana
+        run: sudo journalctl -u meowcloud-grafana -n 100 --no-pager

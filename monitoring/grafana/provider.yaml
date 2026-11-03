@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: MeowCloud
+    orgId: 1
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/meowcloud-grafana/boards

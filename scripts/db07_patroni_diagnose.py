@@ -16,8 +16,8 @@ SSH = [
     "-o", "BatchMode=yes",
     "-o", "IdentitiesOnly=yes",
     "-o", "ConnectTimeout=10",
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "StrictHostKeyChecking=yes",
+    "-o", "UserKnownHostsFile=/home/github-runner/.ssh/known_hosts",
 ]
 SENSITIVE = [
     # Strip a complete key/value instead of risky backreference substitution.
@@ -148,6 +148,14 @@ def main():
             ("PostgreSQL TCP readiness inside the Patroni container", [
                 "docker", "exec", "-u", "postgres", "meow-patroni",
                 "pg_isready", "-h", "127.0.0.1", "-p", "5432",
+            ]),
+            ("Actual PostgreSQL SQL recovery and streaming status", [
+                "docker", "exec", "-u", "postgres", "meow-patroni",
+                "psql", "-XAt", "-F", "|", "-v", "ON_ERROR_STOP=1",
+                "-U", "postgres", "-d", "postgres", "-c",
+                "SELECT pg_is_in_recovery(), "
+                "(SELECT count(*) FROM pg_stat_replication WHERE state='streaming'), "
+                "(SELECT count(*) FROM pg_stat_wal_receiver WHERE status='streaming');",
             ]),
             ("persistent PG_VERSION", ["cat", "/opt/pgdata/data/PG_VERSION"]),
             ("PGDATA and staged TLS directory ownership", [

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """MeowCloud day-0 PVE node boot staggering and narrowly scoped HA policy.
 
-Managed HA resources: ct:121 observer, vm:271 database primary only.
+Managed HA resources: ct:121 observer, vm:271 DB01 and vm:272 DB02.
+Both database VMs have Patroni-managed PostgreSQL roles that can switch
+on failover; Proxmox HA only controls their VM lifecycle, never promotes a DB.
 Never manages ct:120 (the separately configured Auto-VM), tunnels, LBs,
-backends, frontends, or vm:272. Uses PVE's cluster API via trusted SSH.
+backends or frontends. Uses PVE's cluster API via trusted SSH.
 All mutating operations are explicitly requested by workflow 01 or 02.
 """
 import argparse
@@ -19,8 +21,8 @@ BOOT_DELAYS = {"node1": 30, "node2": 30, "node3": 90}
 # Guest-level Start/Shutdown Order captured from live Proxmox configuration.
 # CT120 (order=1,up=60) is independently user-managed; NEVER edit that guest.
 DB_GUEST_STARTUP = {
-    271: "order=5,up=60",  # DB-01 Primary (HA-managed after Day-0)
-    272: "order=4,up=60",  # DB-02 (not HA-managed)
+    271: "order=5,up=60",  # DB-01, Patroni role can change (HA-managed)
+    272: "order=4,up=60",  # DB-02, Patroni role can change (HA-managed)
 }
 # PVE 9.2: HA node-affinity rules replace the removed HA groups API.
 # Positive non-strict rules set node priority; failback=0 and auto-rebalance=0
@@ -28,6 +30,9 @@ DB_GUEST_STARTUP = {
 HA = (
     ("ct:121", "meow-observer", "node1:2,node2:1,node3:1", "lxc", 121),
     ("vm:271", "meow-db-primary", "node2:2,node1:1,node3:1", "qemu", 271),
+    # Preferences only: do not pin a former Replica after Patroni promotes it.
+    # DB02 favors node3 so DB01/node2 and Observer/node1 remain separated.
+    ("vm:272", "meow-db-02", "node3:2,node1:1,node2:1", "qemu", 272),
 )
 
 
@@ -284,7 +289,7 @@ def remove_ha():
         if sid in resources:
             remote("pvesh", "delete", f"/cluster/ha/resources/{sid}")
             print(f"[REMOVE] HA service {sid} (guest remains)")
-    print("[PASS] Removed only owned ct:121/vm:271 HA policy; ct:120 untouched")
+    print("[PASS] Removed only owned ct:121/vm:271/vm:272 HA policy; ct:120 untouched")
 
 
 def audit():

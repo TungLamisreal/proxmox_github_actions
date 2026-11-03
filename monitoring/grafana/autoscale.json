@@ -1,0 +1,240 @@
+{
+  "uid": "meow-autoscale",
+  "title": "MeowCloud · Autoscale",
+  "schemaVersion": 39,
+  "editable": false,
+  "tags": [
+    "meowcloud",
+    "autoscale"
+  ],
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "CPU · Backend",
+      "description": "CPU pool theo quota. Scale-out >80% trong 10s. Scale-in <10% trong 20s khi pool >3. Mọi exporter phải UP.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job=\"lxc_backends\"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job=\"lxc_backends\"})",
+          "legendFormat": "CPU pool",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "blue",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "CPU · Frontend",
+      "description": "CPU pool theo quota. Scale-out >80% trong 10s. Scale-in <20% trong 20s khi pool >3. Mọi exporter phải UP.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "100 * sum(rate(meowcloud_lxc_cpu_usage_seconds_total{job=\"lxc_frontends\"}[1m])) / sum(meowcloud_lxc_cpu_capacity_cores{job=\"lxc_frontends\"})",
+          "legendFormat": "CPU pool",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "blue",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Số target trong pool",
+      "description": "Tổng target trong cấu hình scrape và số target trả lời. Chênh lệch cho thấy có exporter DOWN.",
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 14,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "count by (job) (up{job=~\"lxc_backends|lxc_frontends\"})",
+          "legendFormat": "{{job}} tổng",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "sum by (job) (up{job=~\"lxc_backends|lxc_frontends\"})",
+          "legendFormat": "{{job}} UP",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Alert autoscale",
+      "description": "1 = alert đang pending hoặc firing. 0 = chưa có alert. Đối chiếu workflow 03/04 để xác nhận apply.",
+      "gridPos": {
+        "x": 14,
+        "y": 9,
+        "w": 10,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "meow-prom"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "meow-prom"
+          },
+          "expr": "ALERTS{autoscale=\"true\",alertstate=~\"pending|firing\"} or on() vector(0)",
+          "legendFormat": "{{alertname}} {{alertstate}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      }
+    }
+  ]
+}

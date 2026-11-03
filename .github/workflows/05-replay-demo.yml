@@ -82,8 +82,8 @@ jobs:
             ansible -i "$REPLAY_INVENTORY" backends               -m ansible.builtin.command -a 'docker image inspect meow-backend:latest' >/dev/null
             ansible -i "$REPLAY_INVENTORY" frontends               -m ansible.builtin.command -a 'docker image inspect nginx:alpine' >/dev/null
           else
-            jq -e '.initialized == true and .db_host == "192.168.150.71" and .db_name == "meowcloud_demo"'               /opt/meowcloud-iac/state/meowcrud.json >/dev/null
-            ansible -i "$REPLAY_INVENTORY" backends               -m ansible.builtin.wait_for -a 'host=192.168.150.71 port=5432 timeout=8'
+            jq -e '.initialized == true and .db_host == "192.168.150.100" and .db_name == "meowcloud_demo"'               /opt/meowcloud-iac/state/meowcrud.json >/dev/null
+            ansible -i "$REPLAY_INVENTORY" backends               -m ansible.builtin.wait_for -a 'host=192.168.150.100 port=5432 timeout=8'
           fi
           echo "Target: $REPLAY_TARGET"
           echo "Backend: $BACKEND"

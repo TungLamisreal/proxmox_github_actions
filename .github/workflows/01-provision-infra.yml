@@ -167,6 +167,11 @@ jobs:
           BACKEND_CNT="${{ github.event.inputs.backend_count || '3' }}"
           FRONTEND_CNT="${{ github.event.inputs.frontend_count || '3' }}"
           DB_CNT="${{ github.event.inputs.db_count || '2' }}"
+          # Unified DB06 requires two persistent PGDATA owners and one Observer voter.
+          if [ "$DB_CNT" != "2" ]; then
+            echo "::error::Database HA needs db_count=2 in Workflow 01."
+            exit 1
+          fi
           PARALLEL="${{ github.event.inputs.tf_parallelism || '1' }}"
           SSH_CMD="ssh -o StrictHostKeyChecking=no -i /home/github-runner/.ssh/id_ed25519 root@${PVE_HOST}"
 
@@ -248,6 +253,9 @@ jobs:
           # Reuses protected CT120 credentials when present; creates role/database
           # on a newly provisioned DB VM without app tables or migrations.
           python3 scripts/bootstrap_meowcrud.py --confirm CREATE_MEOWCLOUD_DEMO_DB
+          # App state now points at writer VIP .100; :5432 becomes available
+          # only after the unified 06 DB HA pipeline deploys HAProxy.
+          python3 scripts/db_ha_vip.py --check
 
       - name: "6. [Tier 2] Configure Backend API Elastic Pool (03-setup-backend.yml)"
         working-directory: ./ansible
@@ -360,13 +368,16 @@ jobs:
           echo "| **1. Terraform Provisioning (Clone Golden Images + Firewall)** | **${TF_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
           echo "| **2. Ansible Service Configuration (6 Tiers + Wait SSH)** | **${ANS_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
           echo "| **Tổng thời gian hoàn tất (End-to-End)** | **${TOTAL_DURATION}s** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "NEXT: Run Workflow 06 mode bootstrap-ha (PostgreSQL replication -> etcd -> Patroni -> writer VIP), then Workflow 05/03/04." >> "$GITHUB_STEP_SUMMARY"
+          echo "The Day-0 Backend DB endpoint is .100 and may report DB DOWN until Workflow 06 completes." >> "$GITHUB_STEP_SUMMARY"
 
       - name: "11b. Restore DB VM-specific startup order without changing CT120"
         run: |
           set -euo pipefail
           python3 scripts/pve_cluster_policy.py --mode set-guest-startup
 
-      - name: "12. Register HA Manager for Observer CT121 + DB Primary VM271 only"
+      - name: "12. Register HA Manager for Observer CT121 + both Patroni DB VMs 271/272"
         run: |
           set -euo pipefail
           python3 scripts/pve_cluster_policy.py --mode apply-ha

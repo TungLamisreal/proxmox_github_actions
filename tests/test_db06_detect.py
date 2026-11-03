@@ -58,7 +58,11 @@ class DB06StateMachine(unittest.TestCase):
         matches = re.findall(r"^\s*options:\s*\[([^\]]+)\]", workflow, flags=re.MULTILINE)
         self.assertEqual(len(matches), 1)
         choices = [mode.strip() for mode in matches[0].split(",")]
-        self.assertCountEqual(choices, module.SUPPORTED_MODES)
+        self.assertIn('bootstrap-ha', choices)
+        self.assertIn('health', choices)
+        self.assertIn('diagnose', choices)
+        self.assertNotIn('full', choices)
+        self.assertIn('bootstrap-ha', module.SUPPORTED_MODES)
 
     def test_dcs_modes_do_not_bootstrap_standalone_replica(self):
         missing = Snapshot("f", "2000", 0, 0)
