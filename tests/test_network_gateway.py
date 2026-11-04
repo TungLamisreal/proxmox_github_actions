@@ -5,7 +5,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 TERRAFORM = ROOT / "terraform"
 PFSENSE_GATEWAY = "192.168.150.1"
-OLD_GATEWAY = "192.168.150.2"
+OLD_GATEWAY_PATTERN = r"192\.168\.150\.2(?!\d)"
 
 
 class NetworkGatewayTests(unittest.TestCase):
@@ -16,7 +16,7 @@ class NetworkGatewayTests(unittest.TestCase):
             f'condition     = var.network_gateway == "{PFSENSE_GATEWAY}"',
             variables,
         )
-        self.assertNotIn(OLD_GATEWAY, variables)
+        self.assertNotRegex(variables, OLD_GATEWAY_PATTERN)
 
     def test_every_routed_guest_uses_the_canonical_gateway_variable(self):
         routed_guest_files = [
@@ -31,7 +31,7 @@ class NetworkGatewayTests(unittest.TestCase):
             with self.subTest(name=name):
                 source = (TERRAFORM / name).read_text()
                 self.assertIn("gateway = var.network_gateway", source)
-                self.assertNotIn(OLD_GATEWAY, source)
+                self.assertNotRegex(source, OLD_GATEWAY_PATTERN)
 
     def test_ansible_inventory_renderers_preserve_the_gateway(self):
         terraform_inventory = (TERRAFORM / "07-ansible-generator.tf").read_text()
