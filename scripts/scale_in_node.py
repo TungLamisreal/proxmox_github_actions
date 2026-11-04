@@ -54,6 +54,7 @@ def render_inventory(be_count, fe_count, db_count=2):
         "ansible_user=root",
         "ansible_ssh_private_key_file=/home/github-runner/.ssh/id_ed25519",
         "ansible_python_interpreter=/usr/bin/python3",
+        "network_gateway=192.168.150.1",
         "# Bỏ qua xác thực fingerprint SSH lần đầu để CI/CD không bị đứng chờ prompt",
         "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'",
         ""
