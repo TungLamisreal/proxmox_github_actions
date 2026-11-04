@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - "terraform/**"
+      - "ansible/playbooks/01-setup-tunnels.yml"
+      - "ansible/inventory.ini"
+      - "scripts/scale_in_node.py"
+      - "tests/test_network_gateway.py"
       - "scripts/pve_cluster_policy.py"
       - "scripts/destroy_db_rbd_recovery.py"
       - "tests/test_destroy_db_rbd_recovery.py"
@@ -56,6 +60,7 @@ jobs:
           python3 -m unittest discover -s tests -p "test_db07_patroni_preflight.py" -v
           python3 -m unittest discover -s tests -p "test_scale_in_provider_lock.py" -v
           python3 -m unittest discover -s tests -p "test_alert_batching.py" -v
+          python3 -m unittest discover -s tests -p "test_network_gateway.py" -v
 
       - name: PVE HA/startup script unit tests
         shell: bash

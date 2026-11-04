@@ -7,6 +7,43 @@
     cf_token: "{{ lookup('env', 'CLOUDFLARE_TUNNEL_TOKEN') }}"
 
   tasks:
+    - name: Require the canonical pfSense LAN gateway
+      ansible.builtin.assert:
+        that:
+          - network_gateway | default('') == '192.168.150.1'
+        fail_msg: "Tunnel inventory must set network_gateway=192.168.150.1."
+
+    - name: Read the current default route
+      ansible.builtin.command: ip -4 route show default
+      register: tunnel_default_route
+      changed_when: false
+
+    - name: Converge the running default route to pfSense
+      ansible.builtin.command:
+        argv:
+          - ip
+          - -4
+          - route
+          - replace
+          - default
+          - via
+          - "{{ network_gateway }}"
+          - dev
+          - eth0
+      when: ("via " ~ network_gateway ~ " dev eth0") not in tunnel_default_route.stdout
+
+    - name: Verify Cloudflare egress uses pfSense
+      ansible.builtin.command: ip -4 route get 1.1.1.1
+      register: tunnel_egress_route
+      changed_when: false
+
+    - name: Abort before cloudflared when the route is incorrect
+      ansible.builtin.assert:
+        that:
+          - ("via " ~ network_gateway) in tunnel_egress_route.stdout
+          - "'dev eth0' in tunnel_egress_route.stdout"
+        fail_msg: "Cloudflare Tunnel egress is not using pfSense 192.168.150.1."
+
     - name: Ensure Node Exporter is running and enabled (Baked in Golden Image)
       ansible.builtin.service:
         name: prometheus-node-exporter

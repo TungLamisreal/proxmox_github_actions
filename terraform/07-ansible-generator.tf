@@ -43,6 +43,7 @@ resource "local_file" "ansible_inventory" {
     ansible_user=root
     ansible_ssh_private_key_file=${var.ssh_private_key_path}
     ansible_python_interpreter=/usr/bin/python3
+    network_gateway=${var.network_gateway}
     # Bỏ qua xác thực fingerprint SSH lần đầu để CI/CD không bị đứng chờ prompt
     ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
   EOT

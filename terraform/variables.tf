@@ -44,8 +44,13 @@ variable "pve_nodes" {
 
 variable "network_gateway" {
   type        = string
-  description = "Gateway dải mạng 192.168.150.0/24"
-  default     = "192.168.150.2"
+  description = "Default gateway pfSense LAN cho dải 192.168.150.0/24"
+  default     = "192.168.150.1"
+
+  validation {
+    condition     = var.network_gateway == "192.168.150.1"
+    error_message = "MeowCloud LAN gateway must be pfSense at 192.168.150.1."
+  }
 }
 
 variable "network_bridge" {
