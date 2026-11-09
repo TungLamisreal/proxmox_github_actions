@@ -5,7 +5,12 @@ const assert = require('node:assert/strict');
   const page = await browser.newPage({viewport:{width:920,height:940}});
   const errors = [];
   page.on('pageerror', e => { errors.push(e.message); console.log('PAGEERROR', e.message); });
-  page.on('console', msg => { if (msg.type() === 'error') console.log('CONSOLE', msg.text()); });
+  page.on('console', async msg => { if (msg.type() === 'error') {
+    console.log('CONSOLE', msg.text());
+    for (const arg of msg.args()) console.log('DETAIL', await arg.evaluate(v => v instanceof Error ? {message:v.message, stack:v.stack, cause:String(v.cause), causeStack:v.cause?.stack} : String(v)).catch(()=>'?'));
+  }});
+  page.on('requestfailed', r => console.log('REQUESTFAILED', r.url(), r.failure()));
+  page.on('response', r => { if(r.status()>=400) console.log('HTTPERROR',r.status(),r.url()); });
   await page.goto('http://127.0.0.1:3000/d/meow-autoscale?from=now-15m&to=now&refresh=10s');
   const panel = page.getByTestId('meow-alertlog');
   await panel.waitFor({timeout:30000}).catch(async e => {

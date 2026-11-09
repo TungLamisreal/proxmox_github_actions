@@ -111,6 +111,15 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/browser" playwright@1.56.1
           "$RUNNER_TEMP/browser/node_modules/.bin/playwright" install --with-deps chromium
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in Path("/opt/meowcloud-grafana-13.3.0/public/build").glob("*.js"):
+              text = p.read_text()
+              i = text.find("Could not load plugin")
+              if i >= 0:
+                  print("PLUGIN LOADER", text[max(0, i-1800):i+500])
+                  break
+          PY
           NODE_PATH="$RUNNER_TEMP/browser/node_modules" node monitoring/grafana/test-browser.cjs
       - uses: actions/upload-artifact@v4
         if: always()
