@@ -1,0 +1,22 @@
+[Unit]
+Description=Read-only MeowCloud webhook journal for Grafana
+After=network.target
+
+[Service]
+User=meow-journal
+Group=meow-journal
+SupplementaryGroups=systemd-journal
+ExecStart=/usr/bin/python3 /opt/meowcloud-journal/server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+MemoryMax=128M
+CPUQuota=20%
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

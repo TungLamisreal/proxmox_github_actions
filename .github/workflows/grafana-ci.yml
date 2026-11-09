@@ -4,6 +4,7 @@ on:
     paths:
       - 'monitoring/grafana/**'
       - 'ansible/playbooks/06-setup-observer.yml'
+      - 'ansible/playbooks/28-setup-webhook-journal.yml'
       - '.github/workflows/grafana-ci.yml'
       - '.github/workflows/01-provision-infra.yml'
 permissions:
@@ -22,12 +23,22 @@ jobs:
             scrape_interval: 2s
           scrape_configs:
             - job_name: lxc_backends
-              static_configs: [{targets: ['127.0.0.1:9090'], labels: {machine: backend-01}}]
+              static_configs:
+                - {targets: ['127.0.0.1:9090'], labels: {machine: backend-01}}
+                - {targets: ['127.0.0.1:9090'], labels: {machine: backend-02}}
+                - {targets: ['127.0.0.1:9090'], labels: {machine: backend-03}}
+                - {targets: ['127.0.0.1:9090'], labels: {machine: backend-04}}
+                - {targets: ['127.0.0.1:9090'], labels: {machine: backend-05}}
               metric_relabel_configs: &metrics
                 - {source_labels: [__name__], regex: process_cpu_seconds_total, target_label: __name__, replacement: meowcloud_lxc_cpu_usage_seconds_total}
                 - {source_labels: [__name__], regex: prometheus_build_info, target_label: __name__, replacement: meowcloud_lxc_cpu_capacity_cores}
             - job_name: lxc_frontends
-              static_configs: [{targets: ['127.0.0.1:9090'], labels: {machine: frontend-01}}]
+              static_configs:
+                - {targets: ['127.0.0.1:9090'], labels: {machine: frontend-01}}
+                - {targets: ['127.0.0.1:9090'], labels: {machine: frontend-02}}
+                - {targets: ['127.0.0.1:9090'], labels: {machine: frontend-03}}
+                - {targets: ['127.0.0.1:9090'], labels: {machine: frontend-04}}
+                - {targets: ['127.0.0.1:9090'], labels: {machine: frontend-05}}
               metric_relabel_configs: *metrics
           YAML
           docker run -d --name test-prom --network host -v "$RUNNER_TEMP/prom.yml:/etc/prometheus/prometheus.yml:ro" prom/prometheus:v3.5.0 --config.file=/etc/prometheus/prometheus.yml --web.listen-address=:9090
@@ -47,26 +58,43 @@ jobs:
           import json
           from pathlib import Path
           panels = json.loads(Path("monitoring/grafana/autoscale.json").read_text())["panels"]
-          assert len(panels) == 9, "Expected pending/firing alerts plus per-machine, pool and target panels"
-          assert [p["title"] for p in panels[:3]] == ["Alert · PENDING", "Alert · FIRING", "Số target trong pool"]
-          for panel, state in zip(panels[:2], ("pending", "firing")):
-              assert panel["type"] == "stat"
-              assert f'alertstate="{state}"' in panel["targets"][0]["expr"]
-              assert "or vector(0)" in panel["targets"][0]["expr"]
-              assert panel["gridPos"]["y"] == 0
-          assert panels[3]["title"] == "CPU từng máy · Backend"
-          assert panels[4]["title"] == "CPU từng máy · Frontend"
-          for tier in ("Backend", "Frontend"):
-              gauges = [p for p in panels if p["type"] == "bargauge" and p["title"] == f"CPU từng máy · {tier}"]
-              trends = [p for p in panels if p["type"] == "timeseries" and p["title"] == f"Lịch sử CPU · {tier} theo máy"]
-              assert len(gauges) == len(trends) == 1, f"Missing per-machine CPU view for {tier}"
-              for panel in gauges + trends:
-                  query = panel["targets"][0]["expr"]
-                  assert "sum by (machine)" in query and "/ on(machine)" in query, query
-                  assert "{{machine}}" == panel["targets"][0]["legendFormat"], panel["title"]
+          assert len(panels) == 3
+          assert panels[0]["type"] == "meowcloud-alertlog-panel"
+          assert panels[0]["gridPos"] == {"x": 0, "y": 0, "w": 24, "h": 10}
+          for target, state in zip(panels[0]["targets"], ("pending", "firing")):
+              assert f'alertstate="{state}"' in target["expr"]
+              assert "or vector(0)" in target["expr"]
+          for panel in panels[1:]:
+              assert panel["type"] == "bargauge"
+              assert panel["gridPos"]["y"] == 10
+              assert panel["gridPos"]["h"] == 7
+              query = panel["targets"][0]["expr"]
+              assert "sum by (machine)" in query and "/ on(machine)" in query
+              assert panel["targets"][0]["legendFormat"] == "{{machine}}"
+              assert panel["fieldConfig"]["defaults"]["thresholds"]["steps"][-1]["value"] == 75
           playbook = Path("ansible/playbooks/06-setup-observer.yml").read_text()
+          assert playbook.count("> 75)") == 2
+          assert "> 80)" not in playbook
           assert playbook.count("machine: '{{ host }}'") == 2
           PY
+      - name: Test read-only journal and start disposable source
+        run: |
+          python3 -m unittest discover -s monitoring/grafana/journal -p 'test_*.py' -v
+          python3 monitoring/grafana/journal/fixture.py > /tmp/journal-fixture.log 2>&1 &
+          sudo mkdir -p /etc/meowcloud-grafana/datasources
+          sudo tee /etc/meowcloud-grafana/datasources/webhook-journal.yaml > /dev/null <<'YAML'
+          apiVersion: 1
+          datasources:
+            - name: CI Webhook Journal
+              uid: meow-journal
+              type: loki
+              access: proxy
+              url: http://127.0.0.1:5011
+              jsonData:
+                httpHeaderName1: Authorization
+              secureJsonData:
+                httpHeaderValue1: Bearer ci-journal-token
+          YAML
       - name: Install twice and verify every panel query through Grafana
         working-directory: monitoring/grafana
         run: |
@@ -76,6 +104,16 @@ jobs:
           sudo bash install.sh
           test -n "$before"
           test "$before" = "$(systemctl show -p InvocationID --value meowcloud-grafana)"
+      - name: Verify half-screen dashboard with five machines per tier and long logs
+        run: |
+          npm install --prefix "$RUNNER_TEMP/browser" playwright@1.56.1
+          "$RUNNER_TEMP/browser/node_modules/.bin/playwright" install --with-deps chromium
+          NODE_PATH="$RUNNER_TEMP/browser/node_modules" node monitoring/grafana/test-browser.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grafana-half-screen
+          path: /tmp/meow-dashboard.png
       - name: Show Grafana startup errors
         if: failure()
         working-directory: monitoring/grafana
