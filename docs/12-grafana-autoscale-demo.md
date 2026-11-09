@@ -6,7 +6,7 @@ Dashboard `meow-autoscale` có đúng ba panel:
 
 Bảng log cuộn riêng; mỗi lần refresh đưa dòng mới nhất lên đầu. Pending/Firing vẫn lấy từ Prometheus. Log trống và lỗi nguồn log có thông báo riêng, không giả thành số alert bằng 0. CPU giữ nguyên PromQL theo quota LXC và tự cập nhật danh sách máy từ inventory. Màu đỏ đổi sang 75% đồng bộ ngưỡng scale-out. Không còn biểu đồ targets, CPU pool hoặc lịch sử trong dashboard này.
 
-Mục tiêu quay video: màn 1920×1080 chia đôi, browser zoom 100%, cửa sổ Grafana khoảng 920×940 CSS px. CI mở Grafana thật với 5 BE + 5 FE và 200 dòng log dài để kiểm tra vị trí và cuộn. Số máy lớn hơn hoặc cửa sổ thấp hơn có thể cần chế độ kiosk; không thể đảm bảo mọi số lượng máy trên mọi màn hình. Chọn Last 15 minutes và refresh 10s khi quay.
+Mục tiêu quay video: màn 1920×1080 chia đôi, browser zoom 100%, cửa sổ Grafana 820–920×940 CSS px. CI mở Grafana thật với 5 BE + 5 FE và 200 dòng log dài để kiểm tra vị trí, cuộn, trạng thái log trống và lỗi nguồn log. Số máy lớn hơn hoặc cửa sổ thấp hơn có thể cần chế độ kiosk; không thể đảm bảo mọi số lượng máy trên mọi màn hình. Chọn Last 15 minutes và refresh 10s khi quay.
 
 ## Thay đổi autoscale duy nhất
 

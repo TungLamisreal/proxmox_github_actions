@@ -30,7 +30,21 @@ const assert = require('node:assert/strict');
   await scroll.evaluate(e => e.scrollTop = e.scrollHeight);
   await page.waitForTimeout(12000);
   assert.equal(await scroll.evaluate(e => e.scrollTop), 0, 'Refresh returns to newest logs');
+  await page.setViewportSize({width:820,height:940});
+  await page.waitForTimeout(1000);
+  for (const name of ['backend-05','frontend-05']) {
+    const bounds = await page.getByText(name,{exact:true}).boundingBox();
+    assert(bounds.y + bounds.height < 940 && bounds.x + bounds.width < 820, name + ' outside 820px viewport');
+  }
   await page.screenshot({path:'/tmp/meow-dashboard.png',fullPage:true});
+  await page.route('**/api/datasources/proxy/uid/meow-journal/**', route => route.fulfill({status:503,contentType:'application/json',body:'{"error":"fixture unavailable"}'}));
+  await page.reload();
+  await page.getByText('Không đọc được log. Kiểm tra dịch vụ journal và datasource meow-journal.',{exact:true}).waitFor();
+  await page.getByText('backend-05',{exact:true}).waitFor();
+  await page.unroute('**/api/datasources/proxy/uid/meow-journal/**');
+  await page.route('**/api/datasources/proxy/uid/meow-journal/**', route => route.fulfill({status:200,contentType:'application/json',body:'{"status":"success","data":{"resultType":"streams","result":[]}}'}));
+  await page.reload();
+  await page.getByText('Không có log trong khoảng thời gian đã chọn.',{exact:true}).waitFor();
   assert(!errors.some(e => /meowcloud|PanelPlugin|useTheme2|createElement/.test(e)), errors.join('\n'));
   await browser.close();
 })().catch(e => { console.error(e); process.exit(1); });
