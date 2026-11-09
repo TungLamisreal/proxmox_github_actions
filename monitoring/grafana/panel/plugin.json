@@ -1,0 +1,26 @@
+{
+  "type": "panel",
+  "name": "MeowCloud Alert & Log",
+  "id": "meowcloud-alertlog-panel",
+  "info": {
+    "author": {
+      "name": "MeowCloud"
+    },
+    "description": "Read-only autoscale alerts and webhook journal",
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "version": "1.0.0",
+    "updated": "2026-11-09",
+    "keywords": [
+      "logs"
+    ],
+    "links": [],
+    "screenshots": []
+  },
+  "dependencies": {
+    "grafanaDependency": ">=13.3.0",
+    "plugins": []
+  }
+}

@@ -42,6 +42,12 @@ sync_file datasource.yaml "$config/datasources/meowcloud.yaml"
 sync_file provider.yaml "$config/dashboards/meowcloud.yaml"
 sync_file autoscale.json "$config/boards/autoscale.json"
 sync_file grafana.service "$unit"
+plugin=/var/lib/meowcloud-grafana/plugins/meowcloud-alertlog-panel
+install -d -m 0755 "$plugin/img"
+sync_file panel/plugin.json "$plugin/plugin.json"
+sync_file panel/module.js "$plugin/module.js"
+sync_file panel/img/logo.svg "$plugin/img/logo.svg"
+chown -R meow-grafana:meow-grafana "$plugin"
 systemctl daemon-reload
 systemctl enable meowcloud-grafana
 if [[ "$changed" == true ]]; then

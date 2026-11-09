@@ -1,0 +1,145 @@
+---
+# Run explicitly FROM CT120. Never included by autoscale workflows.
+- name: Install read-only webhook journal bridge on the Ansible controller
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars:
+    webhook_journal_unit: meowcloud-webhook.service
+    webhook_journal_bind: "192.168.150.20"
+  tasks:
+    - name: Require the operator-selected webhook service
+      ansible.builtin.assert:
+        that:
+          - webhook_journal_unit is defined
+          - webhook_journal_unit | default('') is match('^[A-Za-z0-9_.@-]+\\.service$')
+        fail_msg: "Pass -e webhook_journal_unit=YOUR_ACTUAL_WEBHOOK.service on CT120."
+    - name: Inspect only the selected service command
+      ansible.builtin.command:
+        argv: [systemctl, show, --property=ExecStart, --value, "{{ webhook_journal_unit }}"]
+      register: webhook_command
+      changed_when: false
+      no_log: true
+    - name: Require a webhook listener service
+      ansible.builtin.assert:
+        that: "'webhook_listener.py' in webhook_command.stdout"
+        fail_msg: "The selected unit does not run webhook_listener.py. No service was changed."
+    - name: Create journal reader account
+      ansible.builtin.user:
+        name: meow-journal
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+        groups: systemd-journal
+        append: true
+    - name: Create private configuration directory
+      ansible.builtin.file:
+        path: /etc/meowcloud-journal
+        state: directory
+        owner: root
+        group: meow-journal
+        mode: '0750'
+    - name: Generate a stable journal token only if missing
+      ansible.builtin.shell: |
+        umask 077
+        python3 -c 'import secrets; print(secrets.token_hex(32))' > /etc/meowcloud-journal/token
+      args:
+        creates: /etc/meowcloud-journal/token
+      no_log: true
+    - name: Read token for datasource provisioning
+      ansible.builtin.slurp:
+        src: /etc/meowcloud-journal/token
+      register: journal_token
+      no_log: true
+    - name: Configure the selected read-only journal
+      ansible.builtin.copy:
+        dest: /etc/meowcloud-journal/config.json
+        owner: root
+        group: meow-journal
+        mode: '0640'
+        content: "{{ {'bind': webhook_journal_bind, 'unit': webhook_journal_unit, 'token': (journal_token.content | b64decode | trim)} | to_nice_json }}"
+      no_log: true
+      notify: Restart journal bridge
+    - name: Create journal bridge program directory
+      ansible.builtin.file:
+        path: /opt/meowcloud-journal
+        state: directory
+        mode: '0755'
+    - name: Install read-only journal program
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../monitoring/grafana/journal/server.py"
+        dest: /opt/meowcloud-journal/server.py
+        mode: '0644'
+      notify: Restart journal bridge
+    - name: Install journal unit
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../monitoring/grafana/journal/meowcloud-journal.service"
+        dest: /etc/systemd/system/meowcloud-journal.service
+        mode: '0644'
+      notify: Restart journal bridge
+    - name: Start journal reader without touching the listener
+      ansible.builtin.systemd_service:
+        name: meowcloud-journal
+        daemon_reload: true
+        enabled: true
+        state: started
+    - ansible.builtin.meta: flush_handlers
+  handlers:
+    - name: Restart journal bridge
+      ansible.builtin.systemd_service:
+        name: meowcloud-journal
+        state: restarted
+        daemon_reload: true
+
+- name: Provision Grafana access to the webhook journal
+  hosts: monitoring
+  become: true
+  gather_facts: false
+  vars:
+    webhook_journal_bind: "192.168.150.20"
+  tasks:
+    - name: Require Grafana provisioning directory from Observer installation
+      ansible.builtin.stat:
+        path: /etc/meowcloud-grafana/datasources
+      register: grafana_datasources
+    - ansible.builtin.assert:
+        that: grafana_datasources.stat.isdir | default(false)
+        fail_msg: "Install Grafana through 06-setup-observer.yml first."
+    - name: Verify journal access from Observer before provisioning
+      ansible.builtin.uri:
+        url: "http://{{ webhook_journal_bind }}:5011/ready"
+        headers:
+          Authorization: "Bearer {{ hostvars['localhost'].journal_token.content | b64decode | trim }}"
+        use_proxy: false
+        status_code: 200
+      no_log: true
+      changed_when: false
+    - name: Provision authenticated journal datasource
+      ansible.builtin.copy:
+        dest: /etc/meowcloud-grafana/datasources/webhook-journal.yaml
+        owner: root
+        group: meow-grafana
+        mode: '0640'
+        content: |
+          apiVersion: 1
+          datasources:
+            - name: MeowCloud Webhook Journal
+              uid: meow-journal
+              type: loki
+              access: proxy
+              url: http://{{ webhook_journal_bind }}:5011
+              editable: false
+              jsonData:
+                httpHeaderName1: Authorization
+                timeout: 6
+              secureJsonData:
+                httpHeaderValue1: "Bearer {{ hostvars['localhost'].journal_token.content | b64decode | trim }}"
+      no_log: true
+      notify: Restart Grafana for journal provisioning
+    - ansible.builtin.meta: flush_handlers
+  handlers:
+    - name: Restart Grafana for journal provisioning
+      ansible.builtin.systemd_service:
+        name: meowcloud-grafana
+        state: restarted
