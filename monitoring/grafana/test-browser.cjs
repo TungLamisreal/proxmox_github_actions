@@ -4,10 +4,15 @@ const assert = require('node:assert/strict');
   const browser = await chromium.launch({headless:true});
   const page = await browser.newPage({viewport:{width:920,height:940}});
   const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
+  page.on('pageerror', e => { errors.push(e.message); console.log('PAGEERROR', e.message); });
+  page.on('console', msg => { if (msg.type() === 'error') console.log('CONSOLE', msg.text()); });
   await page.goto('http://127.0.0.1:3000/d/meow-autoscale?from=now-15m&to=now&refresh=10s');
   const panel = page.getByTestId('meow-alertlog');
-  await panel.waitFor({timeout:60000});
+  await panel.waitFor({timeout:30000}).catch(async e => {
+    console.log('PAGE TEXT', await page.locator('body').innerText());
+    await page.screenshot({path:'/tmp/meow-dashboard.png',fullPage:true});
+    throw e;
+  });
   await page.getByText('200 dòng · tối đa 200 dòng mới nhất', {exact:true}).waitFor({timeout:30000});
   await page.getByText('backend-05',{exact:true}).waitFor({timeout:30000});
   await page.getByText('frontend-05',{exact:true}).waitFor({timeout:30000});
