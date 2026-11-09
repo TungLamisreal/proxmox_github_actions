@@ -35,3 +35,23 @@ terraform/tfplan_scale_in.json
 
 # Commit the Terraform dependency lockfile for repeatable provider resolution.
 !terraform/.terraform.lock.hcl
+
+# Ansible Inventory
+inventory.ini
+inventory.ini.*
+*.inventory.ini
+
+# Backup Files
+*.bak
+*.bak.*
+*.backup
+*.backup.*
+*.old
+*.orig
+*.save
+*~
+
+# Editor Temporary Files
+*.swp
+*.swo
+*.tmp
