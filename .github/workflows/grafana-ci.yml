@@ -68,6 +68,8 @@ jobs:
               assert panel["type"] == "bargauge"
               assert panel["gridPos"]["y"] == 10
               assert panel["gridPos"]["h"] == 7
+          assert [p["gridPos"]["x"] for p in panels[1:]] == [0, 11]
+          assert [p["gridPos"]["w"] for p in panels[1:]] == [11, 11]
               query = panel["targets"][0]["expr"]
               assert "sum by (machine)" in query and "/ on(machine)" in query
               assert panel["targets"][0]["legendFormat"] == "{{machine}}"
