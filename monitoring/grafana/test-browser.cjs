@@ -2,7 +2,7 @@ const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
 (async () => {
   const browser = await chromium.launch({headless:true});
-  const page = await browser.newPage({viewport:{width:920,height:940}});
+  const page = await browser.newPage({locale:'en-US',viewport:{width:920,height:940}});
   const errors = [];
   page.on('pageerror', e => { errors.push(e.message); console.log('PAGEERROR', e.message); });
   page.on('console', async msg => { if (msg.type() === 'error') {

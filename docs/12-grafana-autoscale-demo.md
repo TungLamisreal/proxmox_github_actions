@@ -29,14 +29,14 @@ PR không tự deploy. Chờ các workflow IaC đang chạy kết thúc. Pull ma
 ```sh
 cd ansible
 ansible-playbook -i /opt/meowcloud-iac/ansible/inventory.ini playbooks/06-setup-observer.yml
-ansible-playbook -i /opt/meowcloud-iac/ansible/inventory.ini playbooks/28-setup-webhook-journal.yml -e webhook_journal_unit=TEN_DICH_VU_WEBHOOK_THUC_TE.service
+ansible-playbook -i /opt/meowcloud-iac/ansible/inventory.ini playbooks/28-setup-webhook-journal.yml -e webhook_journal_unit=meowcloud-webhook.service
 ```
 
-Thay placeholder bằng unit thật có ExecStart chứa `webhook_listener.py`. Playbook 28 kiểm tra unit trước khi cài, tạo token idempotent, cài dịch vụ đọc journal trên chính máy chạy Ansible và datasource trên Observer. Vì vậy **chỉ chạy playbook 28 từ CT120**, không từ laptop hoặc runner khác. Không đưa playbook này vào workflows 03/04.
+Người vận hành đã xác nhận unit trên VM120 là `meowcloud-webhook.service`; đây là mặc định của playbook. Unit phải có ExecStart chứa `webhook_listener.py`. Playbook 28 kiểm tra unit trước khi cài, tạo token idempotent, cài dịch vụ đọc journal trên chính máy chạy Ansible và datasource trên Observer. Vì vậy **chỉ chạy playbook 28 từ CT120**, không từ laptop hoặc runner khác. Không đưa playbook này vào workflows 03/04.
 
 Playbook 06 vẫn giữ các kiểm tra etcd quorum trước/sau Grafana. Nó cập nhật rule 75%, panel và dashboard; lần đầu đổi panel sẽ restart Grafana. Playbook 28 restart Grafana một lần nếu datasource thay đổi. Các lần chạy lại không thay đổi cấu hình sẽ không restart Grafana. Trước khi có datasource, panel báo nguồn log không khả dụng; CPU và Prometheus alert vẫn hoạt động.
 
-Sau triển khai: mở dashboard, xác nhận cả ba panel nằm trong viewport, so sánh log với `journalctl -u TEN_DICH_VU_WEBHOOK_THUC_TE.service`, xác nhận Pending/Firing thay đổi và máy mới xuất hiện. Thử mất kết nối dịch vụ journal phải hiển thị lỗi riêng; không gây dispatch hay thay đổi autoscale.
+Sau triển khai: mở dashboard, xác nhận cả ba panel nằm trong viewport, so sánh log với `journalctl -u meowcloud-webhook.service`, xác nhận Pending/Firing thay đổi và máy mới xuất hiện. Thử mất kết nối dịch vụ journal phải hiển thị lỗi riêng; không gây dispatch hay thay đổi autoscale.
 
 ## Hoàn tác
 

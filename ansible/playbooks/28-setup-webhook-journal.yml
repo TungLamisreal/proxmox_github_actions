@@ -6,6 +6,7 @@
   become: true
   gather_facts: false
   vars:
+    webhook_journal_unit: meowcloud-webhook.service
     webhook_journal_bind: "192.168.150.20"
   tasks:
     - name: Require the operator-selected webhook service
