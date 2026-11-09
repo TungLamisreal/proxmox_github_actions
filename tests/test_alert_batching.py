@@ -17,13 +17,13 @@ class AlertBatchingContracts(unittest.TestCase):
         self.assertIn('scale_target: "backend"', observer)
         self.assertIn('scale_target: "frontend"', observer)
 
-    def test_high_cpu_thresholds_are_80_percent_for_both_tiers(self):
+    def test_high_cpu_thresholds_are_75_percent_for_both_tiers(self):
         observer = (ROOT / "ansible/playbooks/06-setup-observer.yml").read_text()
         for tier in ("Backend", "Frontend"):
             with self.subTest(tier=tier):
                 self.assertRegex(
                     observer,
-                    rf"(?m)^\s+- alert: {tier}PoolHighCPU\n\s+expr: [^\n]* > 80\) and on\(\)",
+                    rf"(?m)^\s+- alert: {tier}PoolHighCPU\n\s+expr: [^\n]* > 75\) and on\(\)",
                 )
 
     def test_webhook_dispatches_one_per_tier_when_alerts_arrive_together(self):

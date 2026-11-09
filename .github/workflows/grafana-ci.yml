@@ -79,6 +79,9 @@ jobs:
           PY
       - name: Test read-only journal and start disposable source
         run: |
+          pip install ansible-core==2.19.3
+          ansible-playbook --syntax-check -i 'localhost,' ansible/playbooks/28-setup-webhook-journal.yml
+          python3 -m unittest discover -s tests -p 'test_alert_batching.py' -v
           python3 -m unittest discover -s monitoring/grafana/journal -p 'test_*.py' -v
           python3 monitoring/grafana/journal/fixture.py > /tmp/journal-fixture.log 2>&1 &
           sudo mkdir -p /etc/meowcloud-grafana/datasources
