@@ -42,6 +42,27 @@ Verify CT121:
     curl -fsS http://127.0.0.1:3100/ready
     curl -fsS http://127.0.0.1:3000/api/dashboards/uid/meow-security >/dev/null
 
+## Readable Proxmox DROP dashboard (optional dashboard-only update)
+
+The dashboard file `monitoring/security/security-dashboard.json` now includes a human-readable **DROP | source -> destination:port | protocol** log panel, top blocked source IPs and top blocked destination TCP ports over 5 minutes, plus the **original raw logs** for forensic review. The LogQL `regexp` and `line_format` stages only change **query presentation**; Loki retains the original unmodified syslog line. Parsed DROP panel intentionally excludes lines without source/destination/TCP destination port; those remain in the raw panel. pfSense raw logs remain unparsed until an actual pfSense `filterlog` example is captured.
+
+To test before deploying a dashboard change, run a read-only query from CT121:
+```bash
+curl --noproxy '*' -fsSG --max-time 10 \
+  --data-urlencode 'query={job="firewall",firewall="proxmox"} |= "policy DROP:" | regexp "SRC=(?P<src>[^ ]+) DST=(?P<dst>[^ ]+).*PROTO=(?P<proto>[^ ]+).*DPT=(?P<dpt>[0-9]+)" | __error__="" | line_format "DROP | {{.src}} -> {{.dst}}:{{.dpt}} | {{.proto}}"' \
+  --data-urlencode 'limit=5' \
+  http://127.0.0.1:3100/loki/api/v1/query_range
+```
+
+For a **dashboard-only apply** after merge, do not rerun workflow 01, do not restart Loki/Alloy, and do not reconfigure PVE firewall:
+```bash
+cd /opt/meowcloud-iac
+git pull --ff-only origin main
+ansible -i ansible/inventory.ini monitoring -b -m copy \
+  -a 'src=/opt/meowcloud-iac/monitoring/security/security-dashboard.json dest=/etc/meowcloud-grafana/boards/security.json owner=root group=root mode=0644'
+```
+The existing Grafana file provider should re-read the changed JSON; check the dashboard and its query errors, then reload the page. If no update appears, inspect the Grafana file provisioning logs before restarting any service.
+
 Grafana Explore LogQL:
     {job="firewall",firewall="proxmox"}
     {job="firewall",firewall="pfsense"}
