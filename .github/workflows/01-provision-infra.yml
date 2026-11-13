@@ -426,7 +426,7 @@ jobs:
       - name: "Checkout security monitoring code"
         uses: actions/checkout@v4
 
-      - name: "Idempotently install Loki and Alloy on Observer only"
+      - name: "Reinstall Loki/Alloy dashboard and PVE firewall syslog forwarders"
         working-directory: ./ansible
         shell: bash
         run: |
@@ -439,10 +439,13 @@ jobs:
             echo "### Security Monitoring: NOT installed (inventory missing)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          # Optional post-deploy action: never change PVE/pfSense forwarding or HA.
-          if ansible-playbook -i "$inventory" playbooks/29-setup-security-monitoring.yml --limit observer; then
-            echo "### Security Monitoring: Loki/Alloy deployed on CT121" >> "$GITHUB_STEP_SUMMARY"
+          # Install on CT121; also opt into existing 3 PVE firewall-log
+          # forwarders. Never change PVE firewall policies, Ceph or HA.
+          if ansible-playbook -i "$inventory" playbooks/29-setup-security-monitoring.yml \
+            -e security_install_pve_forwarders=true; then
+            echo "### Security Monitoring: Loki/Alloy/dashboard + 3 PVE log forwarders configured" >> "$GITHUB_STEP_SUMMARY"
+            echo "Verify UDP 5514/5515 sg_observer allows and pfSense Remote Syslog still exist." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning::Security Monitoring installation failed; 01 core provisioning remains unaffected. Review this job before recording Security demo."
-            echo "### Security Monitoring: install FAILED; rerun playbook 29 after diagnosis" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Security Monitoring setup FAILED or partially completed; core 01 provisioning is unaffected. Inspect this job and playbook 29 before relying on Security Dashboard."
+            echo "### Security Monitoring: FAILED / partially installed; check logs and rerun playbook 29 after diagnosis" >> "$GITHUB_STEP_SUMMARY"
           fi
