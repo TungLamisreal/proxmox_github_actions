@@ -18,6 +18,24 @@ spec.loader.exec_module(module)
 
 
 class PatroniPreflightTests(unittest.TestCase):
+    def make_inventory(self):
+        """Create an isolated Terraform-like fixture; CI has no runtime inventory."""
+        directory = tempfile.TemporaryDirectory(prefix="meow-db07-inventory-")
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "inventory.ini"
+        path.write_text(
+            "[databases]\n"
+            "db-01 ansible_host=192.168.150.71\n"
+            "db-02 ansible_host=192.168.150.72\n"
+            "[loadbalancers]\n"
+            "lb-01 ansible_host=192.168.150.61\n"
+            "lb-02 ansible_host=192.168.150.62\n"
+            "[monitoring]\n"
+            "observer ansible_host=192.168.150.21\n",
+            encoding="utf-8",
+        )
+        return path
+
     def sample(self):
         containers = {
             db: {"running": True, "restart_policy": "always",
@@ -102,7 +120,7 @@ class PatroniPreflightTests(unittest.TestCase):
                 self.assertNotIn("WARNING:", str(ctx.exception))
 
     def test_runtime_inventory_matches_day0_generated_host_contract(self):
-        good = ROOT / "ansible/inventory.ini"
+        good = self.make_inventory()
         module.verify_runtime_inventory(good)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "inventory.ini"
@@ -115,7 +133,7 @@ class PatroniPreflightTests(unittest.TestCase):
                 module.verify_runtime_inventory(path)
 
     def test_inventory_only_mode_never_connects_or_requires_private_key(self):
-        good = ROOT / "ansible/inventory.ini"
+        good = self.make_inventory()
         argv = ["db07_patroni_preflight.py", "--inventory", str(good),
                 "--validate-inventory-only"]
         output = StringIO()
@@ -150,7 +168,7 @@ class PatroniPreflightTests(unittest.TestCase):
             key = Path(directory) / "id_ed25519"
             key.write_text("mock-key-for-offline-test")
             argv = ["db07_patroni_preflight.py", "--inventory",
-                    str(ROOT / "ansible/inventory.ini")]
+                    str(self.make_inventory())]
             output = StringIO()
             with patch.object(module, "SSH_IDENTITY", str(key)), patch.object(
                 module.subprocess, "run", side_effect=fake_remote
