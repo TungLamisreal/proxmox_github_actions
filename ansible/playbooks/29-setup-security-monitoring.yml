@@ -10,9 +10,18 @@
         set -eu
         limit=$(cat /sys/fs/cgroup/memory.max)
         current=$(cat /sys/fs/cgroup/memory.current)
-        test "$limit" != max
-        echo "limit_mib=$((limit/1048576))"
-        echo "headroom_mib=$(((limit-current)/1048576))"
+        total_mib=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)
+        available_mib=$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+        headroom_mib=$available_mib
+        # In this LXC memory.max can be "max"; honor guest MemTotal/MemAvailable.
+        if [ "$limit" != max ]; then
+          cgroup_headroom_mib=$(((limit-current)/1048576))
+          if [ "$cgroup_headroom_mib" -lt "$headroom_mib" ]; then
+            headroom_mib=$cgroup_headroom_mib
+          fi
+        fi
+        echo "limit_mib=$total_mib"
+        echo "headroom_mib=$headroom_mib"
         echo "disk_mib=$(df -Pm /var/lib | awk 'END {print $4}')"
       args:
         executable: /bin/bash
