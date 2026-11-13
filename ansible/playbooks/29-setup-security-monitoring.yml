@@ -82,6 +82,19 @@
         mode: '0644'
         content: |
           deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main
+    - name: Check whether Loki and Alloy were already installed
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/bin/loki
+        - /usr/bin/alloy
+      register: security_preinstall_bin
+    - name: Prevent package post-install auto-start of previously absent services
+      ansible.builtin.systemd_service:
+        name: "{{ item.item | basename }}"
+        masked: true
+      loop: "{{ security_preinstall_bin.results }}"
+      when: not (item.stat.exists | default(false))
     - name: Install Loki and Alloy without replacing existing Grafana tarball
       ansible.builtin.apt:
         name: [loki, alloy]
@@ -166,6 +179,26 @@
           Nice=10
           OOMScoreAdjust=500
       register: security_alloy_unit
+    - name: Validate Loki configuration before unmasking or starting services
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/loki
+          - -config.file=/etc/meowcloud-security/loki.yaml
+          - -verify-config=true
+      changed_when: false
+    - name: Validate Alloy configuration before unmasking or starting services
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/alloy
+          - validate
+          - /etc/alloy/config.alloy
+      changed_when: false
+    - name: Unmask security services after validation
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        masked: false
+        daemon_reload: true
+      loop: [loki, alloy]
     - name: Start Loki without touching old services
       ansible.builtin.systemd_service:
         name: loki
