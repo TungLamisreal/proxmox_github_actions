@@ -22,18 +22,17 @@
         fi
         echo "limit_mib=$total_mib"
         echo "headroom_mib=$headroom_mib"
-        echo "disk_mib=$(df -Pm /var/lib | awk 'END {print $4}')"
+        disk_mib=$(df -Pm /var/lib | awk 'END {print $4}')
+        echo "disk_mib=$disk_mib"
+        # Fail on the remote host, avoiding Jinja regex backreference parsing.
+        if [ "$total_mib" -lt 2048 ] || [ "$headroom_mib" -lt 768 ] || [ "$disk_mib" -lt 3072 ]; then
+          echo "Insufficient CT121 resources: require >=2048 MiB RAM, >=768 MiB available RAM, and >=3072 MiB free disk" >&2
+          exit 1
+        fi
       args:
         executable: /bin/bash
       register: security_capacity
       changed_when: false
-    - name: Refuse if the etcd voter lacks memory or disk headroom
-      ansible.builtin.assert:
-        that:
-          - "(security_capacity.stdout | regex_search('limit_mib=(\\d+)', '\\1') | first | int) >= 2048"
-          - "(security_capacity.stdout | regex_search('headroom_mib=(\\d+)', '\\1') | first | int) >= 768"
-          - "(security_capacity.stdout | regex_search('disk_mib=(\\d+)', '\\1') | first | int) >= 3072"
-        fail_msg: "CT121 has insufficient memory headroom/disk; do not bypass this preflight."
     - name: Require currently healthy Grafana
       ansible.builtin.uri:
         url: http://127.0.0.1:3000/api/health
