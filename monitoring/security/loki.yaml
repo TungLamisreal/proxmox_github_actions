@@ -4,7 +4,9 @@ analytics:
 server:
   http_listen_address: 127.0.0.1
   http_listen_port: 3100
-  grpc_listen_address: 127.0.0.1
+  # Loki advertises CT121's management IP for its internal gRPC services.
+  # Listen on that same IP; no inbound gRPC firewall rule is needed.
+  grpc_listen_address: 192.168.150.21
   grpc_listen_port: 9096
   log_level: warn
 common:
