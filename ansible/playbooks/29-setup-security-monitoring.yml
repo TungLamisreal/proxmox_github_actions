@@ -1,0 +1,274 @@
+---
+# Optional post-deployment; DO NOT import into site.yml, Workflow 01 or 06.
+- name: Add isolated Loki and Alloy logging to existing Observer
+  hosts: monitoring
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Inspect real cgroup headroom and disk capacity (MiB)
+      ansible.builtin.shell: |
+        set -eu
+        limit=$(cat /sys/fs/cgroup/memory.max)
+        current=$(cat /sys/fs/cgroup/memory.current)
+        test "$limit" != max
+        echo "limit_mib=$((limit/1048576))"
+        echo "headroom_mib=$(((limit-current)/1048576))"
+        echo "disk_mib=$(df -Pm /var/lib | awk 'END {print $4}')"
+      args:
+        executable: /bin/bash
+      register: security_capacity
+      changed_when: false
+    - name: Refuse if the etcd voter lacks memory or disk headroom
+      ansible.builtin.assert:
+        that:
+          - "(security_capacity.stdout | regex_search('limit_mib=(\\d+)', '\\1') | first | int) >= 2048"
+          - "(security_capacity.stdout | regex_search('headroom_mib=(\\d+)', '\\1') | first | int) >= 768"
+          - "(security_capacity.stdout | regex_search('disk_mib=(\\d+)', '\\1') | first | int) >= 3072"
+        fail_msg: "CT121 has insufficient memory headroom/disk; do not bypass this preflight."
+    - name: Require currently healthy Grafana
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3000/api/health
+        use_proxy: false
+        status_code: 200
+      changed_when: false
+    - name: Check for DB06 etcd voter ownership marker
+      ansible.builtin.stat:
+        path: /var/lib/meowcloud-etcd/.meowcloud-db06-owned
+      register: security_etcd_marker
+    - name: Require currently active etcd voter
+      ansible.builtin.command: systemctl is-active meowcloud-etcd
+      changed_when: false
+      when: security_etcd_marker.stat.isreg | default(false)
+  tasks:
+    - name: Ensure APT keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+    - name: Ensure GPG fingerprint checker
+      ansible.builtin.apt:
+        name: gpg
+        state: present
+    - name: Get Grafana APT signing key
+      ansible.builtin.get_url:
+        url: https://apt.grafana.com/gpg.key
+        dest: /etc/apt/keyrings/grafana.asc
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Inspect Grafana signing key fingerprint
+      ansible.builtin.command: gpg --show-keys --with-colons /etc/apt/keyrings/grafana.asc
+      register: security_key
+      changed_when: false
+    - name: Require known official key
+      ansible.builtin.assert:
+        that:
+          - "'B53AE77BADB630A683046005963FA27710458545' in security_key.stdout"
+        fail_msg: "Unknown Grafana repository key; verify the official fingerprint before proceeding."
+    - name: Add separate signed APT repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/meowcloud-security.list
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main
+    - name: Install Loki and Alloy without replacing existing Grafana tarball
+      ansible.builtin.apt:
+        name: [loki, alloy]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - name: Inspect expected package binaries
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: [/usr/bin/loki, /usr/bin/alloy]
+      register: security_bin
+    - name: Refuse unexpected package layout
+      ansible.builtin.assert:
+        that: "security_bin.results | map(attribute='stat.exists') | min"
+    - name: Create Loki local data paths
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: loki
+        group: loki
+        mode: '0750'
+      loop:
+        - /var/lib/meowcloud-loki
+        - /var/lib/meowcloud-loki/chunks
+        - /var/lib/meowcloud-loki/rules
+        - /var/lib/meowcloud-loki/compactor
+    - name: Create independent security configuration directory
+      ansible.builtin.file:
+        path: /etc/meowcloud-security
+        state: directory
+        mode: '0755'
+    - name: Install local Loki configuration with 72h retention
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../monitoring/security/loki.yaml"
+        dest: /etc/meowcloud-security/loki.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      register: security_loki_config
+    - name: Install dedicated PVE and pfSense receivers
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../monitoring/security/alloy.alloy"
+        dest: /etc/alloy/config.alloy
+        owner: root
+        group: root
+        mode: '0644'
+      register: security_alloy_config
+    - name: Create service override directories
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.service.d"
+        state: directory
+        mode: '0755'
+      loop: [loki, alloy]
+    - name: Keep Loki localhost-only and resource limited
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/loki.service.d/90-meowcloud-security.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Service]
+          User=loki
+          Group=loki
+          ExecStart=
+          ExecStart=/usr/bin/loki -config.file=/etc/meowcloud-security/loki.yaml
+          MemoryMax=512M
+          CPUQuota=45%
+          Nice=10
+          OOMScoreAdjust=500
+          NoNewPrivileges=true
+      register: security_loki_unit
+    - name: Limit Alloy resources
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/alloy.service.d/90-meowcloud-security.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Service]
+          MemoryMax=192M
+          CPUQuota=20%
+          Nice=10
+          OOMScoreAdjust=500
+      register: security_alloy_unit
+    - name: Start Loki without touching old services
+      ansible.builtin.systemd_service:
+        name: loki
+        enabled: true
+        daemon_reload: true
+        state: "{{ 'restarted' if (security_loki_config.changed or security_loki_unit.changed) else 'started' }}"
+    - name: Verify Loki HTTP readiness
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3100/ready
+        use_proxy: false
+        status_code: 200
+      register: security_loki_ready
+      retries: 15
+      delay: 2
+      until: security_loki_ready.status | default(0) == 200
+      changed_when: false
+    - name: Start Alloy on the observer
+      ansible.builtin.systemd_service:
+        name: alloy
+        enabled: true
+        daemon_reload: true
+        state: "{{ 'restarted' if (security_alloy_config.changed or security_alloy_unit.changed) else 'started' }}"
+    - name: Provision extra Loki datasource without modifying Prometheus
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../monitoring/security/loki-datasource.yaml"
+        dest: /etc/meowcloud-grafana/datasources/meowcloud-security.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      register: security_loki_datasource
+    - name: Provision separate security dashboard without altering autoscaling
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../monitoring/security/security-dashboard.json"
+        dest: /etc/meowcloud-grafana/boards/security.json
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Reload Grafana provisioning only when datasource was added
+      ansible.builtin.systemd_service:
+        name: meowcloud-grafana
+        state: "{{ 'restarted' if security_loki_datasource.changed else 'started' }}"
+    - name: Ensure existing Prometheus datasource remains available
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3000/api/datasources/uid/meow-prom
+        use_proxy: false
+        status_code: 200
+      register: security_original_ds
+      retries: 15
+      delay: 2
+      until: security_original_ds.status | default(0) == 200
+      changed_when: false
+    - name: Verify new security dashboard is provisioned
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3000/api/dashboards/uid/meow-security
+        use_proxy: false
+        status_code: 200
+      register: security_dashboard_health
+      retries: 15
+      delay: 2
+      until: security_dashboard_health.status | default(0) == 200
+      changed_when: false
+    - name: Check that etcd is still running
+      ansible.builtin.command: systemctl is-active meowcloud-etcd
+      changed_when: false
+      when: security_etcd_marker.stat.isreg | default(false)
+- name: Register optional PVE logging targets
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Opt in to existing 3 PVE management IPs
+      ansible.builtin.add_host:
+        name: "pve-security-{{ item }}"
+        groups: meow_pve_security_forwarders
+        ansible_host: "192.168.150.{{ item + 9 }}"
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ hostvars[groups['monitoring'][0]].ansible_ssh_private_key_file | default('/home/github-runner/.ssh/id_ed25519') }}"
+        ansible_python_interpreter: /usr/bin/python3
+      loop: [1, 2, 3]
+      when: security_install_pve_forwarders | default(false) | bool
+- name: Optionally forward the PVE firewall logfile (never change PVE policies)
+  hosts: meow_pve_security_forwarders
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require real firewall logfile on this node
+      ansible.builtin.stat:
+        path: /var/log/pve-firewall.log
+      register: security_pve_log
+    - name: Abort on unknown firewall backend
+      ansible.builtin.assert:
+        that:
+          - security_pve_log.stat.isreg | default(false)
+        fail_msg: "PVE firewall log file missing; inspect active firewall backend, do not create a dummy logfile."
+  tasks:
+    - name: Install rsyslog only on explicitly opted-in PVE nodes
+      ansible.builtin.apt:
+        name: rsyslog
+        state: present
+    - name: Forward only PVE firewall logfile to Observer
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../monitoring/security/pve-rsyslog.conf"
+        dest: /etc/rsyslog.d/35-meowcloud-pve-firewall.conf
+        owner: root
+        group: root
+        mode: '0644'
+        backup: true
+      register: security_pve_rsyslog
+    - name: Validate rsyslog config
+      ansible.builtin.command: rsyslogd -N1
+      changed_when: false
+    - name: Reconcile rsyslog on change only
+      ansible.builtin.systemd_service:
+        name: rsyslog
+        enabled: true
+        state: "{{ 'restarted' if security_pve_rsyslog.changed else 'started' }}"
