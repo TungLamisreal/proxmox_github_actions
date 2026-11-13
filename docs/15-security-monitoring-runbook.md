@@ -4,6 +4,14 @@ Run this playbook by itself; never import into day-0 site.yml. CT121 is an etcd 
 
 On first install, the playbook temporarily masks absent Loki/Alloy services to avoid package post-install auto-start. It validates their configuration before unmasking. A validation or package failure may leave new services masked; inspect the failed task and runbook before retrying, rather than removing masks blindly. Config validation is not a guarantee of operational health.
 
+## Automatic rebuild behavior (requires the workflow integration PR to be merged)
+
+Workflow 01 now runs a **separate, non-blocking** `security-monitoring` job after the original `provision-and-configure` job succeeds. By default it calls playbook 29 on **Observer only** using the freshly published canonical inventory; the main provision job and HA policy steps remain unchanged. For emergency exclusion, enable the `skip_security_monitoring` workflow-dispatch input.
+
+After Workflow 02 destroys CT121, a subsequent Workflow 01 can therefore reinstall Loki/Alloy and re-provision the Security datasource/dashboard. **Installation is not guaranteed**: a package/config/network failure produces a warning and job summary, while the core workflow can still succeed. Check the `Optional Security Monitoring (CT121)` job and `systemctl is-active loki alloy` after every clean rebuild. Security logs stored only on CT121 are lost when that CT is destroyed; old logs require independent backup/remote storage.
+
+PVE forwarding is a separate opt-in on the PVE hosts, pfSense forwarding uses its GUI, and the CT121 firewall still requires the narrow UDP allow rules described below. These are NOT silently enabled by Workflow 01.
+
 On CT120 after updating the repo:
     cd /opt/meowcloud-iac/ansible
     ansible-playbook -i inventory.ini playbooks/29-setup-security-monitoring.yml --syntax-check
