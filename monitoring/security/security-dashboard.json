@@ -173,7 +173,8 @@
         {
           "refId": "A",
           "expr": "topk(8, sum by (src) (count_over_time({job=\"firewall\",firewall=\"proxmox\"} |= \"policy DROP:\" | regexp \"SRC=(?P<src>[0-9.]+)\" | __error__=\"\" [5m])))",
-          "queryType": "instant"
+          "queryType": "instant",
+          "legendFormat": "{{src}}"
         }
       ],
       "options": {
@@ -214,7 +215,8 @@
         {
           "refId": "A",
           "expr": "topk(8, sum by (dpt) (count_over_time({job=\"firewall\",firewall=\"proxmox\"} |= \"policy DROP:\" | regexp \"DPT=(?P<dpt>[0-9]+)\" | __error__=\"\" [5m])))",
-          "queryType": "instant"
+          "queryType": "instant",
+          "legendFormat": "{{dpt}}"
         }
       ],
       "options": {
