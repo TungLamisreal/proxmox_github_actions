@@ -435,9 +435,9 @@ jobs:
           export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
           inventory=/opt/meowcloud-iac/ansible/inventory.ini
           if [ ! -s "$inventory" ]; then
-            echo "::warning::Security Monitoring skipped: canonical Terraform inventory missing."
-            echo "### Security Monitoring: NOT installed (inventory missing)" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "::error::Security Monitoring not installed: canonical Terraform inventory missing."
+            echo "### Security Monitoring: FAILED (inventory missing)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           # Install on CT121; also opt into existing 3 PVE firewall-log
           # forwarders. Never change PVE firewall policies, Ceph or HA.
@@ -448,4 +448,5 @@ jobs:
           else
             echo "::warning::Security Monitoring setup FAILED or partially completed; core 01 provisioning is unaffected. Inspect this job and playbook 29 before relying on Security Dashboard."
             echo "### Security Monitoring: FAILED / partially installed; check logs and rerun playbook 29 after diagnosis" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
