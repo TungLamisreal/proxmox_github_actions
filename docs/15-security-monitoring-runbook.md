@@ -4,6 +4,16 @@ Run this playbook by itself; never import into day-0 site.yml. CT121 is an etcd 
 
 On first install, the playbook temporarily masks absent Loki/Alloy services to avoid package post-install auto-start. It validates their configuration before unmasking. A validation or package failure may leave new services masked; inspect the failed task and runbook before retrying, rather than removing masks blindly. Config validation is not a guarantee of operational health.
 
+## Automatic rebuild behavior (requires the workflow integration PR to be merged)
+
+Workflow 01 now runs a **separate, non-blocking** `security-monitoring` job after the original `provision-and-configure` job succeeds. By default it calls playbook 29 on **Observer plus the 3 PVE firewall syslog forwarders** (`-e security_install_pve_forwarders=true`) using the freshly published canonical inventory; the main provision job and HA policy steps remain unchanged. For emergency exclusion, enable the `skip_security_monitoring` workflow-dispatch input. These optional PVE steps install/validate rsyslog and can restart rsyslog on configuration change, but do not change any Proxmox firewall rules.
+
+After Workflow 02 destroys CT121, a subsequent Workflow 01 can therefore reinstall Loki/Alloy and re-provision the Security datasource/dashboard. **Installation is not guaranteed**: a package/config/network failure produces a warning and job summary, while the core workflow can still succeed. Check the `Optional Security Monitoring (CT121)` job and `systemctl is-active loki alloy` after every clean rebuild. Security logs stored only on CT121 are lost when that CT is destroyed; old logs require independent backup/remote storage.
+
+IMPORTANT: The 4 narrowly scoped UDP allow rules inside the pre-existing Proxmox Datacenter security group `sg_observer` are **external persistent cluster configuration**, not managed by Workflow 01/02 or Terraform in this repository. The user has already applied them to the existing cluster: 192.168.150.10/.11/.12 -> CT121:5514/udp, and 192.168.150.1 -> CT121:5515/udp. They should survive Workflow 02 guest destroy; if the entire PVE cluster is rebuilt or policy manually reset, restore the rules from a backup before relying on syslog. The job MUST NOT silently rewrite `cluster.fw`/HA rules.
+
+pfSense Remote Syslog is configured in the pfSense GUI and persists only while that firewall configuration persists; its setup is not automated by Workflow 01. If pfSense is rebuilt, restore its config backup or reconfigure remote logging. Firewall-rule logging on individual guest DROP rules must also remain enabled. Therefore 'automatic rebuild' of app components does not promise automatic reconstruction of external firewalls.
+
 On CT120 after updating the repo:
     cd /opt/meowcloud-iac/ansible
     ansible-playbook -i inventory.ini playbooks/29-setup-security-monitoring.yml --syntax-check

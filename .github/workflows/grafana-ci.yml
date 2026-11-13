@@ -11,7 +11,8 @@ permissions:
   contents: read
 jobs:
   integration:
-    runs-on: ubuntu-latest
+    # Playwright 1.56.1 Chromium dependency setup is not supported on ubuntu26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
