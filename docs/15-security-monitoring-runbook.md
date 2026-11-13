@@ -2,6 +2,8 @@
 
 Run this playbook by itself; never import into day-0 site.yml. CT121 is an etcd voter with 2 vCPU, 2 GiB RAM and 15 GiB disk. The preflight requires 768 MiB spare cgroup memory and 3 GiB free disk or FAILS CLOSED. There is no automatic resize. Loki and Alloy systemd limits are 512 MiB and 192 MiB; Loki retention is 72 hours but this is not a disk quota.
 
+On first install, the playbook temporarily masks absent Loki/Alloy services to avoid package post-install auto-start. It validates their configuration before unmasking. A validation or package failure may leave new services masked; inspect the failed task and runbook before retrying, rather than removing masks blindly. Config validation is not a guarantee of operational health.
+
 On CT120 after updating the repo:
     cd /opt/meowcloud-iac/ansible
     ansible-playbook -i inventory.ini playbooks/29-setup-security-monitoring.yml --syntax-check
