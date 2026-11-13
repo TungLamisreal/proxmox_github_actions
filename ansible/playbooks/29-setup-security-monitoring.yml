@@ -108,6 +108,18 @@
     - name: Refuse unexpected package layout
       ansible.builtin.assert:
         that: "security_bin.results | map(attribute='stat.exists') | min"
+    - name: Ensure Loki system group exists (some APT packages create only the user)
+      ansible.builtin.group:
+        name: loki
+        system: true
+        state: present
+    - name: Ensure Loki service account uses dedicated group
+      ansible.builtin.user:
+        name: loki
+        group: loki
+        system: true
+        create_home: false
+        state: present
     - name: Create Loki local data paths
       ansible.builtin.file:
         path: "{{ item }}"
