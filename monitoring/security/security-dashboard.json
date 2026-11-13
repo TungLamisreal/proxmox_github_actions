@@ -1,0 +1,139 @@
+{
+  "uid": "meow-security",
+  "title": "MeowCloud Security Monitoring",
+  "description": "Independent firewall log monitoring; original Autoscaling dashboard unchanged",
+  "tags": [
+    "meowcloud",
+    "security",
+    "firewall"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 40,
+  "version": 1,
+  "editable": false,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Proxmox firewall log events",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "meow-security-loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"proxmox\"} [1m]))",
+          "queryType": "range"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "pfSense firewall log events",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "meow-security-loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"pfsense\"} [1m]))",
+          "queryType": "range"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Proxmox Firewall Logs",
+      "type": "logs",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 13
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "meow-security-loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"firewall\",firewall=\"proxmox\"}",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true
+      }
+    },
+    {
+      "id": 4,
+      "title": "pfSense Firewall Logs",
+      "type": "logs",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 13
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "meow-security-loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"firewall\",firewall=\"pfsense\"}",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true
+      }
+    }
+  ]
+}
