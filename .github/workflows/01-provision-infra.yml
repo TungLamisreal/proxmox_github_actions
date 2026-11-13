@@ -35,6 +35,11 @@ on:
         options:
           - baseline
           - pinned
+      skip_security_monitoring:
+        description: "Skip optional Loki/Alloy auto-reinstall on CT121"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: meowcloud-iac-state
@@ -405,3 +410,39 @@ jobs:
           set -euo pipefail
           python3 scripts/pve_cluster_policy.py --mode apply-ha
           python3 scripts/pve_cluster_policy.py --mode audit
+
+  security-monitoring:
+    # This job runs only AFTER the original Day-0 job succeeds.
+    # Never make a logging stack failure invalidate a green 01 provision run.
+    name: "Optional Security Monitoring (CT121)"
+    needs: provision-and-configure
+    if: ${{ !inputs.skip_security_monitoring }}
+    runs-on: self-hosted
+    timeout-minutes: 15
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: "Checkout security monitoring code"
+        uses: actions/checkout@v4
+
+      - name: "Idempotently install Loki and Alloy on Observer only"
+        working-directory: ./ansible
+        shell: bash
+        run: |
+          set -uo pipefail
+          export HOME=/home/github-runner
+          export PATH="/home/github-runner/.venvs/ansible-2.21/bin:$PATH"
+          inventory=/opt/meowcloud-iac/ansible/inventory.ini
+          if [ ! -s "$inventory" ]; then
+            echo "::warning::Security Monitoring skipped: canonical Terraform inventory missing."
+            echo "### Security Monitoring: NOT installed (inventory missing)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Optional post-deploy action: never change PVE/pfSense forwarding or HA.
+          if ansible-playbook -i "$inventory" playbooks/29-setup-security-monitoring.yml --limit observer; then
+            echo "### Security Monitoring: Loki/Alloy deployed on CT121" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Security Monitoring installation failed; 01 core provisioning remains unaffected. Review this job before recording Security demo."
+            echo "### Security Monitoring: install FAILED; rerun playbook 29 after diagnosis" >> "$GITHUB_STEP_SUMMARY"
+          fi
