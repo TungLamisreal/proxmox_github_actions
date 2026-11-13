@@ -19,7 +19,7 @@
   "panels": [
     {
       "id": 1,
-      "title": "Proxmox blocked events",
+      "title": "Proxmox firewall log events",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -34,7 +34,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"proxmox\"} |~ \"(?i)drop|reject|deny|pvefw\" [1m]))",
+          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"proxmox\"} [1m]))",
           "queryType": "range"
         }
       ],
@@ -48,7 +48,7 @@
     },
     {
       "id": 2,
-      "title": "pfSense blocked events",
+      "title": "pfSense firewall log events",
       "type": "timeseries",
       "gridPos": {
         "x": 12,
@@ -63,7 +63,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"pfsense\"} |~ \"(?i)block|deny\" [1m]))",
+          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"pfsense\"} [1m]))",
           "queryType": "range"
         }
       ],
