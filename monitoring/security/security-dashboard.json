@@ -1,7 +1,7 @@
 {
   "uid": "meow-security",
-  "title": "MeowCloud Security Monitoring",
-  "description": "Human-readable Proxmox DROP logs with raw evidence and pfSense raw logs; independent of existing Autoscaling dashboard",
+  "title": "MeowCloud · Proxmox Firewall",
+  "description": "Focused Proxmox Firewall DROP monitoring for the thesis Nmap demo. One readable log stream and focused trend/statistics; no pfSense or duplicate raw log panels.",
   "tags": [
     "meowcloud",
     "security",
@@ -9,7 +9,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 40,
-  "version": 2,
+  "version": 3,
   "editable": false,
   "refresh": "5s",
   "time": {
@@ -19,13 +19,13 @@
   "panels": [
     {
       "id": 1,
-      "title": "Proxmox · DROP (5 phút)",
+      "title": "Tổng kết nối bị chặn · 5 phút",
       "type": "stat",
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 6,
-        "h": 7
+        "w": 7,
+        "h": 6
       },
       "datasource": {
         "type": "loki",
@@ -61,13 +61,13 @@
     },
     {
       "id": 2,
-      "title": "Proxmox · DROP mỗi phút",
+      "title": "Số kết nối bị chặn theo thời gian",
       "type": "timeseries",
       "gridPos": {
-        "x": 6,
+        "x": 7,
         "y": 0,
-        "w": 9,
-        "h": 7
+        "w": 17,
+        "h": 6
       },
       "datasource": {
         "type": "loki",
@@ -89,43 +89,14 @@
       }
     },
     {
-      "id": 3,
-      "title": "pfSense · sự kiện mỗi phút",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 15,
-        "y": 0,
-        "w": 9,
-        "h": 7
-      },
-      "datasource": {
-        "type": "loki",
-        "uid": "meow-security-loki"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"pfsense\"} [1m]))",
-          "queryType": "range"
-        }
-      ],
-      "options": {},
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        },
-        "overrides": []
-      }
-    },
-    {
       "id": 4,
-      "title": "Proxmox · DROP dễ đọc (TCP có cổng đích)",
+      "title": "Nhật ký chặn kết nối · Nguồn → Đích:Cổng",
       "type": "logs",
       "gridPos": {
         "x": 0,
-        "y": 7,
+        "y": 6,
         "w": 24,
-        "h": 12
+        "h": 13
       },
       "datasource": {
         "type": "loki",
@@ -153,17 +124,17 @@
         },
         "overrides": []
       },
-      "description": "Chỉ hiện bản ghi DROP có SRC, DST, PROTO, DPT. Dùng Proxmox raw logs bên dưới cho ICMP/UDP hoặc bản ghi khác. Dữ liệu gốc trong Loki không bị sửa."
+      "description": "Hiển thị các sự kiện Proxmox Firewall DROP có IP nguồn, IP đích và cổng đích. Không thay đổi nội dung gốc được lưu trong Loki."
     },
     {
       "id": 5,
-      "title": "Top IP nguồn bị DROP · 5 phút",
+      "title": "Top IP nguồn bị chặn · 5 phút",
       "type": "bargauge",
       "gridPos": {
         "x": 0,
         "y": 19,
         "w": 12,
-        "h": 8
+        "h": 9
       },
       "datasource": {
         "type": "loki",
@@ -199,13 +170,13 @@
     },
     {
       "id": 6,
-      "title": "Top cổng đích bị DROP · 5 phút",
+      "title": "Top cổng đích bị chặn · 5 phút",
       "type": "bargauge",
       "gridPos": {
         "x": 12,
         "y": 19,
         "w": 12,
-        "h": 8
+        "h": 9
       },
       "datasource": {
         "type": "loki",
@@ -238,82 +209,6 @@
         },
         "overrides": []
       }
-    },
-    {
-      "id": 7,
-      "title": "Proxmox · log gốc (mọi sự kiện)",
-      "type": "logs",
-      "gridPos": {
-        "x": 0,
-        "y": 27,
-        "w": 12,
-        "h": 12
-      },
-      "datasource": {
-        "type": "loki",
-        "uid": "meow-security-loki"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "{job=\"firewall\",firewall=\"proxmox\"}",
-          "queryType": "range"
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": true,
-        "showCommonLabels": false,
-        "wrapLogMessage": true,
-        "prettifyLogMessage": false,
-        "enableLogDetails": true,
-        "sortOrder": "Descending"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "description": "Giữ nguyên log gốc cho kiểm chứng, kể cả bản ghi không có DPT."
-    },
-    {
-      "id": 8,
-      "title": "pfSense · log gốc",
-      "type": "logs",
-      "gridPos": {
-        "x": 12,
-        "y": 27,
-        "w": 12,
-        "h": 12
-      },
-      "datasource": {
-        "type": "loki",
-        "uid": "meow-security-loki"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "{job=\"firewall\",firewall=\"pfsense\"}",
-          "queryType": "range"
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": true,
-        "showCommonLabels": false,
-        "wrapLogMessage": true,
-        "prettifyLogMessage": false,
-        "enableLogDetails": true,
-        "sortOrder": "Descending"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "description": "Chưa chuẩn hóa pfSense cho đến khi có mẫu filterlog thật từ hệ thống."
     }
   ]
 }
