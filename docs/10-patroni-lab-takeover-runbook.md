@@ -24,7 +24,7 @@ LB02 have no writer proxy at :5432. **Patroni is not yet running.**
 
 ## Workflow 07: exact sequence
 
-The new workflow is [07-db-patroni-lab.yml](../.github/workflows/07-db-patroni-lab.yml).
+In this historical DB07 iteration, the workflow was named `07-db-patroni-lab.yml` (removed from the current branch). The active equivalent is [workflow 06](../.github/workflows/06-db-streaming-replication.yml).
 Run from `main`, **only after merging a green PR**.
 
 ### 1. Controlled prep without downtime (optional but useful)
