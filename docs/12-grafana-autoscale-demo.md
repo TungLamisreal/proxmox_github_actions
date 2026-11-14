@@ -22,9 +22,9 @@ Token riêng được tạo một lần trên CT120 và đưa vào Grafana secur
 
 Log chỉ có khi listener thực tế ghi stdout/stderr vào journal. Nếu listener chạy trong terminal hoặc ghi ra file riêng thì chưa thể dùng cách này; cần chọn cách thu thập phù hợp trước khi triển khai, không tự đổi cách chạy listener. Không có chức năng truy hồi log đã bị journal vacuum. Quyền xem log kế thừa anonymous Viewer của Grafana hiện tại.
 
-## Triển khai sau khi merge — chạy thủ công từ CT120
+## Triển khai hoặc cập nhật dashboard — chạy thủ công từ CT120
 
-PR không tự deploy. Chờ các workflow IaC đang chạy kết thúc. Pull main vào checkout trên CT120, rồi:
+Cập nhật tài liệu không tự triển khai hay thay đổi hạ tầng. Chờ các workflow IaC đang chạy kết thúc. Pull main vào checkout trên CT120, rồi:
 
 ```sh
 cd ansible
@@ -40,4 +40,4 @@ Sau triển khai: mở dashboard, xác nhận cả ba panel nằm trong viewport
 
 ## Hoàn tác
 
-Revert PR trên repo rồi chạy playbook 06 để phục hồi dashboard và rule 80%. Playbook 28 là opt-in, không nằm trong deploy tự động. Nếu không cần log, dừng/disable `meowcloud-journal` trên CT120 và xóa datasource `webhook-journal.yaml` trên Observer rồi restart Grafana lúc bảo trì. Không dừng listener webhook. Unit cũ sau revert sẽ không allowlist plugin nữa; thư mục plugin dư không ảnh hưởng quyết định scale.
+Muốn hoàn tác, chọn đúng revision dashboard/rule cần khôi phục và xem diff trước khi revert; chạy playbook 06 sẽ áp dụng cấu hình đang có trong checkout, không mặc nhiên khôi phục ngưỡng 80%. Playbook 28 là opt-in, không nằm trong deploy tự động. Nếu không cần log, dừng/disable `meowcloud-journal` trên CT120 và xóa datasource `webhook-journal.yaml` trên Observer rồi restart Grafana lúc bảo trì. Không dừng listener webhook. Unit cũ sau revert sẽ không allowlist plugin nữa; thư mục plugin dư không ảnh hưởng quyết định scale.

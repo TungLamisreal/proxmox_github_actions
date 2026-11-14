@@ -1,10 +1,10 @@
 # MeowCloud Security Monitoring - optional Ansible
 
-Run this playbook by itself; never import into day-0 site.yml. CT121 is an etcd voter with 2 vCPU, 2 GiB RAM and 15 GiB disk. The preflight requires 768 MiB spare cgroup memory and 3 GiB free disk or FAILS CLOSED. There is no automatic resize. Loki and Alloy systemd limits are 512 MiB and 192 MiB; Loki retention is 72 hours but this is not a disk quota.
+Playbook 29 can run standalone. Workflow 01 also runs it from a **separate, optional post-provision job**; it is not imported into day-0 `site.yml`. CT121 is an etcd voter with 2 vCPU, 2 GiB RAM and 15 GiB disk. The preflight requires 768 MiB spare cgroup memory and 3 GiB free disk or FAILS CLOSED. There is no automatic resize. Loki and Alloy systemd limits are 512 MiB and 192 MiB; Loki retention is 72 hours but this is not a disk quota.
 
 On first install, the playbook temporarily masks absent Loki/Alloy services to avoid package post-install auto-start. It validates their configuration before unmasking. A validation or package failure may leave new services masked; inspect the failed task and runbook before retrying, rather than removing masks blindly. Config validation is not a guarantee of operational health.
 
-## Automatic rebuild behavior (requires the workflow integration PR to be merged)
+## Automatic rebuild behavior (integrated in current workflow 01)
 
 Workflow 01 now runs a **separate, non-blocking** `security-monitoring` job after the original `provision-and-configure` job succeeds. By default it calls playbook 29 on **Observer plus the 3 PVE firewall syslog forwarders** (`-e security_install_pve_forwarders=true`) using the freshly published canonical inventory; the main provision job and HA policy steps remain unchanged. For emergency exclusion, enable the `skip_security_monitoring` workflow-dispatch input. These optional PVE steps install/validate rsyslog and can restart rsyslog on configuration change, but do not change any Proxmox firewall rules.
 
@@ -46,7 +46,7 @@ Verify CT121:
 
 The Grafana dashboard `meow-security` now contains **only** Proxmox Firewall DROP monitoring: count over 5 minutes, drop rate, one short human-readable log panel, top source IP and top destination port. The redundant raw-log panel and both unfinished pfSense panels are removed. Loki retains full original log lines; dashboard query formatting does not mutate ingested data. The existing UDP 5515 pfSense Alloy listener remains configured for later integration but is **not shown in this dashboard**.
 
-Deploy dashboard JSON only after merging:
+To update only the dashboard JSON from the current `main` revision:
 ```bash
 cd /opt/meowcloud-iac
 git pull --ff-only origin main

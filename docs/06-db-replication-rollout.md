@@ -1,10 +1,10 @@
-> **UPDATED (2026-11-03):** The historical DB06/DB07 sequence below is
+> **HISTORICAL INCIDENT RECORD — NOT AN ACTIVE RUNBOOK (2026-11-14):** The historical DB06/DB07 sequence below is
 > retained only for incident history. Both were consolidated into **one
 > [Workflow 06](../.github/workflows/06-db-streaming-replication.yml)**.
 > The current `00 → 01 → 06 bootstrap-ha → 05 → 03/04` sequence and
 > safe `health` / `diagnose` / `adopt-vip` modes are documented in
 > [Unified Database HA](11-db-ha-unified-workflow.md). Do **not** run the old
-> DB07 takeover instructions on an already-adopted Patroni cluster.
+> DB07 takeover instructions on an already-adopted Patroni cluster. Current workflow 06 modes are `bootstrap-ha`, `health`, `diagnose`, `adopt-vip`, `gateway-repair`, and `resume`; older dispatch commands in this file are retained solely for incident history.
 
 # MeowCloud: controlled PostgreSQL 15 streaming replication (lab)
 

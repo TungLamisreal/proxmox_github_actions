@@ -1,21 +1,23 @@
 # MeowCloud CRUD v2 — Inventory Intelligence
 
-CRUD v1 release commit: `cd32cd5031cc37096fc64d0507d9328ae2329f32`. Frontend v1 version marker: `crud-v1`.
+> **Implemented in current `main` (2026-11-14).** The earlier Draft-PR and "DB replica later" language was a historical plan, not the present state. This page is a concise record of the v1-to-v2 application demonstration; use [workflow 05](05-app-cicd.md) and [workflow 06 DB HA](11-db-ha-unified-workflow.md) for current operations.
 
-V2 is a separate unmerged Draft PR. The current production app remains v1. When the v2 PR is merged to main, the existing CI/CD variables may automatically deploy it: do not merge before the planned demonstration or controlled rehearsal.
+Original CRUD v1 reference commit: `cd32cd5031cc37096fc64d0507d9328ae2329f32` (edition marker `crud-v1`). The current repository includes the `crud-v2` Frontend and Backend functionality.
 
-Backend v2 adds one authenticated read-only endpoint:
-`GET /api/reports/low-stock?threshold=5`.
-Valid thresholds: integers 0–1000. Response: threshold, total, items with stock, SKU, name, category and price. Invalid threshold gives 400; missing token gives 401.
+## Features delivered
 
-Frontend v2 has a new violet/coral theme and a prominently displayed stock analysis card. It retains all four CRUD sections and reads the same persistent PostgreSQL database. Alembic revision `0001_initial_crud` remains unchanged.
+- Authenticated, read-only Backend endpoint: `GET /api/reports/low-stock?threshold=5`.
+- Allowed threshold: an integer from 0 through 1000; invalid threshold returns HTTP 400, missing or invalid `X-Demo-Token` returns HTTP 401.
+- Response includes `threshold`, matching `total`, and up to 100 items with SKU, name, stock, price and category.
+- Frontend includes the inventory analysis panel and retains CRUD operations for categories, products, customers and orders.
+- Inventory report uses the existing schema; Alembic revision `0001_initial_crud` remains the initial CRUD migration.
 
-Demo:
-1. Provision a known-good lab through workflow 01.
-2. Deploy v1 through workflow 05; create two products, one with stock 2, one with stock 40.
-3. Deploy v2 through workflow 05; verify edition marker and new stock report (threshold 1 vs 5).
-4. Confirm records created on v1 persist on v2.
-5. Scale out using 03 and in using 04, testing CRUD availability and persistent data after each.
-6. Configure PostgreSQL replica and evaluate automatic failover as a later independent phase.
+## Controlled demo scenario
 
-When recreating lab using workflow 02, back up data first: 02 is destructive and is not a simple app rollback.
+1. In a disposable/rehearsal lab, follow the guarded infrastructure order `01 → 06 bootstrap-ha → 05`. Do not run `bootstrap-ha` again on an already adopted Patroni cluster.
+2. If demonstrating the historical v1-to-v2 Git rollout, deploy a reviewed v1 source commit through workflow 05; create sample records and note the version.
+3. Deploy v2 through workflow 05; verify `/api/version`, `/version.json` and the low-stock report using a private demo token.
+4. Confirm data from v1 persists after the image change, then test workflows 03 and 04 to demonstrate scale-out and scale-in.
+5. Use workflow 06 `health` to verify PostgreSQL/Patroni HA; replication and automatic failover are no longer "future phases" of this application demo.
+
+Workflow 02 is destructive; preserve an independently verified database backup before any rebuild. Removing the retired 05R workflow does not remove the ability to demonstrate CI/CD through new, ordinary Git commits.

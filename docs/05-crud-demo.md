@@ -1,4 +1,6 @@
-# Workflow 05 — MeowCloud CRUD v1: SQLAlchemy + Alembic + PostgreSQL
+# Historical CRUD v1 rollout — SQLAlchemy + Alembic + PostgreSQL
+
+> **HISTORICAL SNAPSHOT (pre-Patroni):** This document preserves the original CRUD v1 rollout plan. Its direct DB01 `.71` preflight, `meow-postgres` commands, and claims that DB02 lacks replication **are no longer operational instructions**. The current setup uses Patroni and the writer VIP `192.168.150.100:5432` after workflow 06. For an actual deployment follow [workflow 05](05-app-cicd.md) and [unified DB HA](11-db-ha-unified-workflow.md). Keep the old steps below only as evidence of the development sequence.
 
 ## Versioned application demo plan
 
@@ -6,7 +8,7 @@
 - CRUD app **v2**: a SECOND independent Git release planned only *after v1 is running and verified*. BE v2 gains a stock-report endpoint; FE v2 changes its layout/colors and displays that new report. Both versions will be identifiable by immutable images and a release label. Do not mix app v1/v2 with the previously running status-page release.
 - PostgreSQL schema migrations are independent of Docker image rollbacks. Future additive migration 0002 is appropriate only when v2 needs extra DB fields. Initial app v1 is revision `0001_initial_crud`.
 
-## Current architecture and limitations
+## Historical architecture and limitations (superseded)
 
 Frontend is an Nginx Docker image served via VIP 192.168.150.100; Backend is Flask/Gunicorn behind VIP /api/ on three or more LXC guests. Data lives only on existing PostgreSQL KVM `192.168.150.71` in separate DB `meowcloud_demo` with role `meowcrud`. Proxmox Terraform, KVM persistent data disk and Golden Images are untouched.
 
@@ -22,7 +24,7 @@ Workflow 05 application CD requires BOTH GitHub Actions repository variables:
 
 Keep the SECOND variable absent/false until you deliberately initialize the separate demo database and approve rollout. PR validation on GitHub-hosted runner builds Docker images locally and tests SQLAlchemy/Alembic migrations against **throwaway PostgreSQL 15**. PR CI never alters the real CT120 or PostgreSQL VM.
 
-## Preflight from CT120 (already passed in lab)
+## Historical CT120 preflight (do not run against the current Patroni deployment)
 
 SSH from github-runner to DB1 via trusted host key, and PostgreSQL port 5432 reachable from all BE LXC guests:
 
@@ -37,7 +39,7 @@ runuser -u github-runner -- env HOME=/home/github-runner \
   -m ansible.builtin.wait_for -a 'host=192.168.150.71 port=5432 timeout=8'
 ~~~
 
-## Step 1: create a SEPARATE database and owner only (after merging PR)
+## Historical Step 1: first-time CRUD bootstrap (superseded by workflow 01)
 
 Use a clean checkout on CT120, as github-runner. Do not overwrite the Terraform runtime or inventory:
 
@@ -57,7 +59,7 @@ Inspect without printing passwords or login tokens:
 jq '{initialized,db_host,db_name,db_user}' /opt/meowcloud-iac/state/meowcrud.json
 ~~~
 
-## Step 2: apply schema via Alembic BEFORE rolling out the new app
+## Historical Step 2: initial v1 Alembic rollout (current process in workflow 05)
 
 Only after Step 1 succeeds, set `MEOWCLOUD_CRUD_DEMO_ENABLED=true` in GitHub Actions variables, and manually run workflow 05 on `main`. Keep other IaC jobs idle; pause the webhook if needed, resume it afterward.
 
@@ -82,7 +84,7 @@ Via the browser open the MeowCloud URL and enter your demo token (retrieve priva
 
 For later scale-out, workflows 03/04 consume the published pinned BE/FE digests and pass the separate DB credentials to new BE hosts. They do NOT run schema migrations per-guest.
 
-## Future phases (not performed by this PR)
+## Formerly planned follow-up work (Patroni HA and CRUD v2 are now implemented)
 
 - CRUD application v2 via separate PR/commit, new BE feature and distinct FE visual theme; prove app v1 ↔ v2 release behavior with preserved data.
 - PostgreSQL replica .72 streaming replication, start with manual controlled promotion and verified read-only standby; Patroni only if automated HA is a stated requirement, and a proper DCS/quorum/fencing mechanism is available.

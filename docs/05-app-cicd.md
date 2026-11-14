@@ -1,41 +1,48 @@
-# Workflow 05 — MeowCloud Application CI/CD (GHCR)
+# Workflow 05 — MeowCloud application CI/CD (current)
 
-**Scope:** BE/FE app images only. Terraform, Golden Templates, PostgreSQL containers and volumes remain unchanged.
+> **Current implementation (2026-11-14).** The source of truth is [05-app-deploy.yml](../.github/workflows/05-app-deploy.yml); this document describes its gates and operational boundaries. Do not confuse it with the removed manual 05R replay workflow.
 
-## Before enabling
+## Triggers and deployment gates
 
-1. Review Draft PR and its changes. Workflow 05 has an automatic `push` trigger for changes under `apps/**` on `main`. **Merging this PR builds the images but does not deploy** until repository Actions variable `MEOWCLOUD_APP_CICD_ENABLED` is exactly `true`. This opt-in prevents an unreviewed merge from modifying live LXCs. Do not set the variable until preflight is complete. Keep IaC workflows idle before first deploy; consider pausing the webhook briefly. Update the runtime `/opt/meowcloud-iac/scripts/webhook_listener.py` after deployment, since the PR adds workflow 05 to the webhook busy-list.
-2. Set GitHub repository Actions variable `MEOWCLOUD_APP_CICD_ENABLED=true` only after verifying host readiness and images in GHCR, then manually dispatch workflow 05 on `main` to test; later `apps/**` pushes to `main` will deploy automatically. Ensure the GitHub repository has Actions enabled and GHCR package permissions. A GitHub-hosted Ubuntu runner builds images; CT120 self-hosted runner deploys. The workflow uses repo-scoped `GITHUB_TOKEN` and permissions `packages:write` (build) / `packages:read` (other IaC workflows).
-3. Ensure **each BE/FE LXC** can resolve and reach `ghcr.io` over HTTPS; image pulls happen *inside* guests. The containers need available disk space. If outbound access is blocked, deploy safely fails before publishing release state.
-4. Current runtime inventory and capacity state must exist at `/opt/meowcloud-iac/ansible/inventory.ini` and `/opt/meowcloud-iac/state/autoscale.tfvars.json`. Keep `main` code consistent with the CT120 runtime, and ensure no other Terraform/Ansible IaC workflow is active.
-5. Backend and Frontend images keep their existing API/UI health contracts; no DB changes or migrations occur.
+| Event | What happens |
+| --- | --- |
+| Pull request touching the workflow's configured paths | Run offline/local build and PostgreSQL CRUD compatibility checks; do not deploy to MeowCluster |
+| Push to `main` changing `apps/**` | Build, test and publish versioned Backend and Frontend images to GHCR; production migration and rollout run **only** when both repository variables are `true` |
+| Manual `workflow_dispatch` on `main` | Same guarded build/migrate/deploy workflow |
 
-## Flow
+The live migration and deployment jobs require **both** `MEOWCLOUD_APP_CICD_ENABLED=true` and `MEOWCLOUD_CRUD_DEMO_ENABLED=true`. These flags do **not** prevent the build/publish job from running. Changes to documentation alone do not trigger the `apps/**` push workflow.
 
-`apps/**` push to `main` (or workflow_dispatch) → build two Docker images on GitHub-hosted runner → push to GHCR with commit-SHA tags → retrieve immutable SHA256 digests → test containers locally → self-hosted CT120 Ansible deployment to all **currently inventoried** BE and FE, **serial: 1** with per-node healthcheck → VIP health/version checks → atomically publish `/opt/meowcloud-iac/state/app-release.json` (mode 0600).
+## Required MeowCluster state
 
-The manifest is *not* a Terraform variable or part of the Git repository. A successful app release makes workflows 01/03/04 select the same pinned images on freshly cloned or subsequently configured BE/FE. No Golden Template rebuild is needed. If there is no manifest, existing pre-baked `meow-backend:latest` and `nginx:alpine` remain the default.
+1. Workflow 01 has provisioned the BE/FE/LB pools and initial CRUD database state; for a fresh lab, workflow 06 has completed **one-time** `bootstrap-ha` before workflow 05. On an adopted cluster use workflow 06 `health`, not another `bootstrap-ha`.
+2. CT120 contains `/opt/meowcloud-iac/ansible/inventory.ini`, `state/autoscale.tfvars.json` and the protected `state/meowcrud.json`. That state must point to database **writer VIP `192.168.150.100:5432`**, not to DB01 `192.168.150.71`.
+3. Backend guests can reach the writer VIP and the images in `ghcr.io`. The workflow checks a healthy Patroni writer endpoint using `scripts/db_ha_vip.py --check` before altering the application.
+4. Run no competing infrastructure operations; production jobs share the `meowcloud-iac-state` concurrency group.
 
-Secrets are not written to release state. When a missing GHCR image needs pulling, Ansible performs a temporary Docker login using `GITHUB_TOKEN` and logs out. If the image is cached, no login is needed.
+See [Unified DB HA](11-db-ha-unified-workflow.md) for the exact workflow 06 modes, security prerequisites and risks. Do not print the `demo_token` or database password in a video or public issue.
 
-## Rollback and operational limitations
+## What workflow 05 changes
 
-If rolling rollout or VIP checks fail, workflow 05 attempts rollback by running BE/FE playbooks with the **last successful release manifest** (or original Golden Template images if no manifest existed). This is a best-effort rollback; inspect individual LXC state if rollback fails. The desired release manifest is written only after healthchecks pass.
+1. On a GitHub-hosted runner, validate code, build Backend and Frontend images, publish immutable GHCR digests and smoke-test CRUD against disposable PostgreSQL 15.
+2. On CT120, run Ansible `09-migrate-crud.yml` through Backend01 against **`192.168.150.100:5432`**. Alembic schema changes are real database operations and must not be treated as image-only deployments.
+3. Roll BE then FE images one LXC at a time using current runtime inventory, checking instance health and both versions through the HTTP VIP.
+4. Verify `/api/health`, `/api/db-health`, `/api/version`, `/version.json` and authenticated `/api/stats`; publish `state/app-release.json` only after those checks pass.
+5. Archive a verified CRUD release snapshot with `scripts/demo_release.py` when its edition/commit gate permits. The 05R replay workflow has been removed; **do not delete** this script because workflow 01 and 05 still use it.
 
-Rolling replacement restarts one application container at a time; the Nginx HA load balancer can retry failed GET requests, but this workflow does **not** implement a dedicated request-drain gate and does not guarantee zero dropped in-flight requests.
+## Read-only checks after a successful release
 
-`/api/health` verifies the BE is running; it does **not** verify DB connectivity. `/api/version` and `/version.json` prove BE/FE application version through VIP. Database schema migration/rollback must be planned separately with backups.
-
-## Verifying after a successful rollout
-
-On CT120:
+On CT120, without exposing secrets:
 
 ```sh
-cat /opt/meowcloud-iac/state/app-release.json
+jq '{version,backend_image,frontend_image}' /opt/meowcloud-iac/state/app-release.json
+curl -fsS http://192.168.150.100/api/health
+curl -fsS http://192.168.150.100/api/db-health
 curl -fsS http://192.168.150.100/api/version
 curl -fsS http://192.168.150.100/version.json
 ```
 
-Verify the commit-SHA version matches both responses; view full GitHub Actions logs for each BE/FE healthcheck. Then exercise one controlled scale-out (workflow 03) to verify the new LXC pulls the exact released digest. Monitor webhook notifications after updating the runtime webhook file to the new revision, which includes workflow 05 in its busy-check allowlist.
+Use the privately retrieved `demo_token` from `state/meowcrud.json` for CRUD UI/API tests. Browser access uses `X-Demo-Token`; do not store tokens in Git.
 
-To change the UI, edit `apps/frontend/index.html`; to change the API, edit `apps/backend/app.py`, then push to `main`. The CI/CD workflow builds both images at that commit and rolls them out; DB is untouched.
+## Failure and rollback boundaries
+
+The workflow attempts a **best-effort** rollback to the previously published BE/FE image selection if a rollout or VIP smoke check fails before publishing the new manifest. This does **not** roll back Alembic migrations or database contents and does not guarantee zero dropped in-flight requests. Inspect the actual guests and Patroni state before retrying a failed deploy. Do not use workflow 02 as an application rollback: it destroys lab workloads and may delete database disks.

@@ -1,3 +1,4 @@
+> **HISTORICAL DESIGN / INCIDENT NOTES (2026-11-14) — NOT CURRENT OPERATIONS.** This document preserves the standalone etcd milestone and the 2026-11-02 recovery incident. Its references to old DB06/DB07 jobs and modes (such as `ha-readiness`, `dcs-bootstrap`, `dcs-health` or `patroni-stage`) are **not valid dispatch instructions** for the current pipeline. Use [Unified DB HA — workflow 06](11-db-ha-unified-workflow.md); current modes are `bootstrap-ha`, `health`, `diagnose`, `adopt-vip`, `gateway-repair` and `resume`. Never re-bootstrap an already adopted Patroni cluster.
 # MeowCloud DB06: three-member etcd DCS bootstrap (not PostgreSQL failover)
 
 This change implements the **etcd DCS milestone only**. It does **not**

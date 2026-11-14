@@ -1,10 +1,4 @@
-> **UPDATED (2026-11-03):** The historical DB06/DB07 sequence below is
-> retained only for incident history. Both were consolidated into **one
-> [Workflow 06](../.github/workflows/06-db-streaming-replication.yml)**.
-> The current `00 → 01 → 06 bootstrap-ha → 05 → 03/04` sequence and
-> safe `health` / `diagnose` / `adopt-vip` modes are documented in
-> [Unified Database HA](11-db-ha-unified-workflow.md). Do **not** run the old
-> DB07 takeover instructions on an already-adopted Patroni cluster.
+> **DEMO REHEARSAL / HISTORICAL NOTES (2026-11-14):** This is the original clean-rebuild and two-Git-push recording plan, not a verified report of today's running cluster. The current sequence is **02 (only with backups, if a rebuild is intended) → 01 → 06 `bootstrap-ha` (first-time only) → 05 → 03/04**. Consult [Unified DB HA](11-db-ha-unified-workflow.md) and [current application CI/CD](05-app-cicd.md) before executing. Never rerun the legacy DB07 takeover against an adopted Patroni cluster.
 
 # MeowCloud: Clean IaC rebuild and two-push CRUD CI/CD demo
 
@@ -188,7 +182,7 @@ change files under `apps/**` on `main`** to automatically trigger workflow 05.
 Both deploy gates must still be enabled:
 `MEOWCLOUD_APP_CICD_ENABLED=true` and `MEOWCLOUD_CRUD_DEMO_ENABLED=true`.
 
-Prepare a local, clean clone on `main` after the patch PR is merged.
+Prepare a local, clean clone on `main`; verify the referenced historical commit SHAs still exist before rehearsing the two-push demo.
 Do **not** use `git reset --hard` or force push to rewind Git history.
 Use Git history's known-good source revisions to make *new* ordinary commits:
 
