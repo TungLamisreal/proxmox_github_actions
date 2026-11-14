@@ -21,7 +21,7 @@ stop. Stop it and verify `inactive` before any destructive operation; consider
 disabling auto-start during the rebuild if further reboots are expected, and
 restore intended service policy only after the demo.
 
-Stop `meowcloud-webhook.service` before the recording. Check GitHub Actions has no active 00/01/02/03/04/05/05R run,
+Stop `meowcloud-webhook.service` before the recording. Check GitHub Actions has no active 00/01/02/03/04/05 run,
 the 3-node PVE cluster and Ceph are healthy, and capacity is back to BE=3 / FE=3.
 Do not run workflow 00 to rebuild Golden Images merely because the application code changed;
 01 reuses the verified 9100/9101/9102 LXC and 9001/9002/9003 DB templates.
@@ -30,10 +30,10 @@ Do not run workflow 00 to rebuild Golden Images merely because the application c
 ## Full Golden Image rehearsal (workflow 00, one run)
 
 For the **recorded demo**, require a clean start and a single successful 00 workflow
-run on `main`; do not stitch together 00R runs and claim workflow 00 passed.
+run on `main`; a partial recovery is not evidence that the complete workflow 00 passed.
 
 After 02 has completed and Terraform state is empty:
-1. Verify no active GitHub Actions 00/00R/01/02 or Proxmox clone/backup tasks.
+1. Verify no active GitHub Actions 00/01/02 or Proxmox clone/backup tasks.
 2. Check `pvesh get /cluster/resources --type vm`: preserve CT120 (runner)
    and VM9000 (DB seed), and verify all workload CT/VM IDs are gone.
 3. Remove **only** stale Golden Templates `9100,9101,9102` (LXC) and
@@ -52,8 +52,8 @@ After 02 has completed and Terraform state is empty:
    CephFS role/base archives and preserved seed VM9000.
 
 If any stage fails, mark **00 failed**. Review the error and actual template
-inventory before cleaning up or retrying the **full** 00. Workflow 00R is an
-operational recovery tool, **not** part of the one-shot recorded demonstration.
+inventory before cleaning up or retrying the **full** 00. The former 00R
+partial-recovery workflow has been retired; repair failures before re-running 00.
 CI only checks static/regression contracts; it cannot guarantee that live
 APT, network, PVE, Ceph and Packer will be healthy at recording time.
 
@@ -181,7 +181,7 @@ test -s /opt/meowcloud-iac/ansible/inventory.ini
 jq -e '.initialized == true' /opt/meowcloud-iac/state/meowcrud.json >/dev/null
 ```
 
-## Record two real Git pushes (not 05R)
+## Record two real Git pushes (workflow 05)
 
 The repository's current `main` already contains v2 source. Each code push **must actually
 change files under `apps/**` on `main`** to automatically trigger workflow 05.

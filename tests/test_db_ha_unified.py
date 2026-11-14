@@ -60,7 +60,6 @@ class DBHAUnifiedTests(unittest.TestCase):
         self.assertIn("meow_db_config.db_host == '192.168.150.100'", migration)
         for path in [
             ".github/workflows/05-app-deploy.yml",
-            ".github/workflows/05-replay-demo.yml",
         ]:
             source = (ROOT / path).read_text()
             self.assertNotIn('db_host == "192.168.150.71"', source)

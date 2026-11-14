@@ -18,7 +18,6 @@ on:
       - "tests/test_scale_in_provider_lock.py"
       - ".github/workflows/00-validate-iac-pr.yml"
       - ".github/workflows/00-build-golden-images.yml"
-      - ".github/workflows/00-resume-db.yml"
       - "packer/**"
       - "tests/test_packer_golden_build.py"
       - "tests/test_db_bootstrap_readiness.py"

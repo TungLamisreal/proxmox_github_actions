@@ -1,4 +1,6 @@
-# Workflow 05R: controlled baseline / CRUD v1 / CRUD v2 replay
+# Historical workflow 05R: controlled baseline / CRUD v1 / CRUD v2 replay
+
+> **Archived 2026-11-14:** Workflow `05-replay-demo.yml` has been removed from GitHub Actions. The instructions below describe historical behavior and must not be followed as an active runbook. For current application deployment use `05-app-deploy.yml`; `scripts/demo_release.py` remains in use by workflows 01 and 05.
 
 ## Purpose and boundaries
 
