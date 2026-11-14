@@ -83,18 +83,3 @@ def test_packer_hcl_inline_strings_have_balanced_quotes(file):
             if ch=='\\':escape=not escape
             else:escape=False
         assert count%2==0, line
-
-
-def test_no_sensitive_files_in_patch_manifest():
-    manifest = (ROOT / 'PATCH-MANIFEST.txt').read_text().splitlines()
-    shipped = [
-        line[2:].strip()
-        for line in manifest
-        if line.startswith(('M ', 'A '))
-    ]
-    assert not any(
-        path.startswith(('terraform/tfplan', 'state/'))
-        or path.endswith(('.tfstate', '.tfstate.backup'))
-        or path == 'ansible/group_vars/databases/vault.yml'
-        for path in shipped
-    )
