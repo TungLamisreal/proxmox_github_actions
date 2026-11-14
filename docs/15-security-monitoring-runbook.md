@@ -42,9 +42,11 @@ Verify CT121:
     curl -fsS http://127.0.0.1:3100/ready
     curl -fsS http://127.0.0.1:3000/api/dashboards/uid/meow-security >/dev/null
 
-## Proxmox-only Security Dashboard (dashboard v3)
+## Unified Proxmox + pfSense Firewall Dashboard (dashboard v4)
 
-The Grafana dashboard `meow-security` now contains **only** Proxmox Firewall DROP monitoring: count over 5 minutes, drop rate, one short human-readable log panel, top source IP and top destination port. The redundant raw-log panel and both unfinished pfSense panels are removed. Loki retains full original log lines; dashboard query formatting does not mutate ingested data. The existing UDP 5515 pfSense Alloy listener remains configured for later integration but is **not shown in this dashboard**.
+The dashboard is renamed to **MeowCloud · Firewall Monitoring** (same UID `meow-security` and URL). Existing Proxmox DROP count, trend, single short log panel, source-IP and destination-port statistics remain unchanged. Below all existing Proxmox panels is a dedicated **pfSense** section with BLOCK count (last 5 min), BLOCK trend, and ONE firewall log panel. This allows the thesis demo to scroll from Proxmox to pfSense in one dashboard, without duplicated log panels or modifying the Autoscaling dashboard.
+
+The pfSense statistics count native `filterlog` CSV actions containing `,block,`. The pfSense log panel intentionally shows the actual received events rather than guessing a parser without a captured real pfSense log sample; a future parser change should be verified against live pfSense `filterlog`. These panels show no data until pfSense forwards **Firewall Events** to Alloy on CT121 UDP 5515. Proxmox + pfSense Loki labels and listeners were already configured; **dashboard JSON alone does not enable pfSense forwarding**.
 
 To update only the dashboard JSON from the current `main` revision:
 ```bash
