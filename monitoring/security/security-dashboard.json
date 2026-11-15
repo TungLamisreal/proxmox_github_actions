@@ -1,7 +1,7 @@
 {
   "uid": "meow-security",
   "title": "MeowCloud · Firewall Monitoring",
-  "description": "Unified firewall monitoring with readable pfSense IPv4 TCP/UDP filterlog, per-interface/action/IP/protocol/port filters, and unchanged Proxmox DROP panels.",
+  "description": "Unified firewall monitoring for Proxmox and pfSense, with expandable sections and searchable IPv4 TCP/UDP firewall event logs.",
   "tags": [
     "meowcloud",
     "security",
@@ -9,7 +9,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 40,
-  "version": 5,
+  "version": 7,
   "editable": false,
   "refresh": "5s",
   "time": {
@@ -18,12 +18,25 @@
   },
   "panels": [
     {
-      "id": 1,
-      "title": "Tổng kết nối bị chặn · 5 phút",
-      "type": "stat",
+      "id": 3,
+      "type": "row",
+      "title": "Proxmox Firewall",
+      "collapsed": false,
       "gridPos": {
         "x": 0,
         "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "title": "Blocked Connections · Last 5 Minutes",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
         "w": 7,
         "h": 6
       },
@@ -61,11 +74,11 @@
     },
     {
       "id": 2,
-      "title": "Số kết nối bị chặn theo thời gian",
+      "title": "Blocked Connections Over Time",
       "type": "timeseries",
       "gridPos": {
         "x": 7,
-        "y": 0,
+        "y": 1,
         "w": 17,
         "h": 6
       },
@@ -90,11 +103,11 @@
     },
     {
       "id": 4,
-      "title": "Nhật ký chặn kết nối · Nguồn → Đích:Cổng",
+      "title": "Firewall Logs",
       "type": "logs",
       "gridPos": {
         "x": 0,
-        "y": 6,
+        "y": 7,
         "w": 24,
         "h": 13
       },
@@ -124,15 +137,15 @@
         },
         "overrides": []
       },
-      "description": "Hiển thị các sự kiện Proxmox Firewall DROP có IP nguồn, IP đích và cổng đích. Không thay đổi nội dung gốc được lưu trong Loki."
+      "description": "Displays Proxmox Firewall DROP events with source IP, destination IP and destination port. Original log records remain unchanged in Loki."
     },
     {
       "id": 5,
-      "title": "Top IP nguồn bị chặn · 5 phút",
+      "title": "Top Blocked Source IPs · Last 5 Minutes",
       "type": "bargauge",
       "gridPos": {
         "x": 0,
-        "y": 19,
+        "y": 20,
         "w": 12,
         "h": 9
       },
@@ -170,11 +183,11 @@
     },
     {
       "id": 6,
-      "title": "Top cổng đích bị chặn · 5 phút",
+      "title": "Top Blocked Destination Ports · Last 5 Minutes",
       "type": "bargauge",
       "gridPos": {
         "x": 12,
-        "y": 19,
+        "y": 20,
         "w": 12,
         "h": 9
       },
@@ -213,11 +226,11 @@
     {
       "id": 10,
       "type": "row",
-      "title": "pfSense Firewall · Gateway 192.168.150.1",
+      "title": "pfSense Firewall",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 29,
         "w": 24,
         "h": 1
       },
@@ -225,12 +238,12 @@
     },
     {
       "id": 11,
-      "title": "pfSense · Sự kiện theo bộ lọc (5 phút)",
+      "title": "pfSense · Filtered Events · Last 5 Minutes",
       "type": "stat",
-      "description": "Đếm filterlog IPv4 TCP/UDP khớp các bộ lọc ở đầu dashboard (Action mặc định Block). Không bao gồm IPv6, IGMP, ICMP hoặc các sự kiện không có cổng.",
+      "description": "Counts IPv4 TCP/UDP filterlog events matching the dashboard filters (Block by default). IPv6, IGMP, ICMP and events without destination ports are excluded.",
       "gridPos": {
         "x": 0,
-        "y": 29,
+        "y": 30,
         "w": 7,
         "h": 6
       },
@@ -268,12 +281,12 @@
     },
     {
       "id": 12,
-      "title": "pfSense · Sự kiện theo thời gian",
+      "title": "pfSense · Events Over Time",
       "type": "timeseries",
-      "description": "Sự kiện pfSense IPv4 TCP/UDP khớp các bộ lọc (Action mặc định Block).",
+      "description": "Shows filtered pfSense IPv4 TCP/UDP events (Block by default).",
       "gridPos": {
         "x": 7,
-        "y": 29,
+        "y": 30,
         "w": 17,
         "h": 6
       },
@@ -298,12 +311,12 @@
     },
     {
       "id": 13,
-      "title": "pfSense · Nhật ký dễ đọc · Nguồn → Đích:Cổng",
+      "title": "Firewall Logs",
       "type": "logs",
-      "description": "LogQL chuẩn hóa filterlog IPv4 TCP/UDP, dữ liệu gốc Loki không bị sửa. em0=WAN và em1=LAN theo dữ liệu thực; loại trừ các loại log khác thay vì đoán sai vị trí cột.",
+      "description": "Displays normalized pfSense IPv4 TCP/UDP events matching the filters above. The original log records remain unchanged in Loki.",
       "gridPos": {
         "x": 0,
-        "y": 43,
+        "y": 44,
         "w": 24,
         "h": 14
       },
@@ -336,11 +349,11 @@
     },
     {
       "id": 14,
-      "title": "pfSense · Top IP nguồn · 5 phút",
+      "title": "pfSense · Top Source IPs · Last 5 Minutes",
       "type": "bargauge",
       "gridPos": {
         "x": 0,
-        "y": 35,
+        "y": 36,
         "w": 12,
         "h": 8
       },
@@ -378,11 +391,11 @@
     },
     {
       "id": 15,
-      "title": "pfSense · Top cổng đích · 5 phút",
+      "title": "pfSense · Top Destination Ports · Last 5 Minutes",
       "type": "bargauge",
       "gridPos": {
         "x": 12,
-        "y": 35,
+        "y": 36,
         "w": 12,
         "h": 8
       },
