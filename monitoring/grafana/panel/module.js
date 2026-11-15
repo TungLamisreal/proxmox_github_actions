@@ -2,6 +2,30 @@
 System.register(["react", "@grafana/data", "@grafana/runtime", "@grafana/ui"], function (exports) {
   "use strict";
   var React, PanelPlugin, getBackendSrv, useTheme2;
+  // Presentation-only translation of known historical webhook journal messages.
+  // Raw service logs are preserved; unrecognized messages are shown verbatim.
+  var logTranslations = [
+    [/\[\*\] Nhận Webhook từ Alertmanager:/g, "[INFO] Received Alertmanager webhook:"],
+    [/\[\*\] Từ chối SCALE-OUT/g, "[INFO] SCALE-OUT skipped"],
+    [/\[\*\] Từ chối SCALE-IN/g, "[INFO] SCALE-IN skipped"],
+    [/Đang Cooldown/g, "Cooldown active"],
+    [/\[\!\] QUÁ TẢI CPU \(BATCH\): Gửi lệnh Scale-Out/g, "[WARN] HIGH CPU (BATCH): Dispatching scale-out"],
+    [/\[\*\] CHẶN SCALE-IN: Hệ thống vừa Scale-Out/g, "[INFO] SCALE-IN blocked: scale-out occurred"],
+    [/s trước \(/g, "s ago ("],
+    [/\)\. Bảo vệ luồng Scale-Out không bị đè!/g, "). Waiting for stabilization."],
+    [/\[-\] TẢI THẤP: Gửi lệnh Scale-In/g, "[INFO] LOW CPU: Dispatching scale-in"],
+    [/\[OK\] Đã gửi Trigger tới/g, "[OK] Dispatched workflow"],
+    [/ với inputs=/g, " with inputs="],
+    [/\[ERROR\] Lỗi khi gọi GitHub API:/g, "[ERROR] GitHub API call failed:"],
+    [/\[\!\] Lỗi phân tích payload:/g, "[ERROR] Failed to parse webhook payload:"],
+    [/\[\!\] Lỗi: Chưa cấu hình biến môi trường GITHUB_PAT_TOKEN\./g, "[ERROR] GITHUB_PAT_TOKEN environment variable not configured."],
+    [/Khởi Động/g, "Started"],
+    [/log kiểm tra/g, "test log"]
+  ];
+  function englishLogMessage(message) {
+    return logTranslations.reduce(function (value, rule) { return value.replace(rule[0], rule[1]); }, String(message));
+  }
+
   function Panel(props) {
     var h = React.createElement, theme = useTheme2(), colors = theme.colors;
     var state = React.useState({rows: [], error: "", loading: true});
@@ -24,7 +48,7 @@ System.register(["react", "@grafana/data", "@grafana/runtime", "@grafana/ui"], f
         setLogs({rows: rows, error: "", loading: false});
         if (scroll.current) scroll.current.scrollTop = 0;
       }).catch(function () {
-        if (active) setLogs({rows: [], error: "Không đọc được log. Kiểm tra dịch vụ journal và datasource meow-journal.", loading: false});
+        if (active) setLogs({rows: [], error: "Unable to load logs. Check the journal service and meow-journal datasource.", loading: false});
       });
       return function () { active = false; };
     }, [from, to, request]);
@@ -46,21 +70,21 @@ System.register(["react", "@grafana/data", "@grafana/runtime", "@grafana/ui"], f
     return h("div", {"data-testid": "meow-alertlog", style: {height: props.height, width: props.width, display: "flex", flexDirection: "column", overflow: "hidden", color: colors.text.primary}},
       h("div", {style: {display: "flex", flexWrap: "wrap", gap: 24, padding: "0 8px 8px", flexShrink: 0, borderBottom: "1px solid " + colors.border.weak}},
         stat("PENDING", "Pending", colors.warning.text), stat("FIRING", "Firing", colors.error.text),
-        h("div", {style: {marginLeft: "auto", fontSize: 12}}, h("div", null, "CPU pool > 75% · 10 giây"), h("div", {style: {color: colors.text.secondary}}, "Backend & Frontend"))),
-      props.data.error ? h("div", {role: "alert", style: {color: colors.error.text}}, "Không đọc được trạng thái alert từ Prometheus") : null,
-      h("div", {style: {fontSize: 12, padding: "8px", flexShrink: 0, color: colors.text.secondary}}, "webhook_listener.py · Mới nhất trước · Giờ Việt Nam"),
+        h("div", {style: {marginLeft: "auto", fontSize: 12}}, h("div", null, "CPU pool > 75% · 10 seconds"), h("div", {style: {color: colors.text.secondary}}, "Backend & Frontend"))),
+      props.data.error ? h("div", {role: "alert", style: {color: colors.error.text}}, "Unable to load alert status from Prometheus.") : null,
+      h("div", {style: {fontSize: 12, padding: "8px", flexShrink: 0, color: colors.text.secondary}}, "webhook_listener.py · Newest first · Vietnam time (UTC+7)"),
       logs.error ? h("div", {role: "alert", style: {padding: 12, color: colors.error.text}}, logs.error) : null,
       h("div", {ref: scroll, "data-testid": "meow-log-scroll", style: {flex: 1, minHeight: 0, overflow: "auto"}},
         h("table", {style: {width: "100%", tableLayout: "fixed", borderCollapse: "collapse", fontSize: 12}},
           h("thead", {style: {position: "sticky", top: 0, background: colors.background.primary}},
-            h("tr", null, h("th", {style: Object.assign({}, td, {width: 98, textAlign: "left"})}, "Thời gian"), h("th", {style: Object.assign({}, td, {textAlign: "left"})}, "Nội dung log"))),
+            h("tr", null, h("th", {style: Object.assign({}, td, {width: 98, textAlign: "left"})}, "Time"), h("th", {style: Object.assign({}, td, {textAlign: "left"})}, "Log message"))),
           h("tbody", null, logs.rows.map(function (row, index) {
             return h("tr", {key: row.time + ":" + index},
-              h("td", {style: Object.assign({}, td, {fontVariantNumeric: "tabular-nums", color: colors.text.secondary}), title: new Date(row.time).toLocaleString("vi-VN", {timeZone: "Asia/Ho_Chi_Minh"})}, new Date(row.time).toLocaleTimeString("vi-VN", {timeZone: "Asia/Ho_Chi_Minh", hour12: false})),
-              h("td", {style: Object.assign({}, td, {fontFamily: "monospace", whiteSpace: "pre-wrap", overflowWrap: "anywhere"})}, row.message));
+              h("td", {style: Object.assign({}, td, {fontVariantNumeric: "tabular-nums", color: colors.text.secondary}), title: new Date(row.time).toLocaleString("en-GB", {timeZone: "Asia/Ho_Chi_Minh"})}, new Date(row.time).toLocaleTimeString("en-GB", {timeZone: "Asia/Ho_Chi_Minh", hour12: false})),
+              h("td", {style: Object.assign({}, td, {fontFamily: "monospace", whiteSpace: "pre-wrap", overflowWrap: "anywhere"})}, englishLogMessage(row.message)));
           }))),
-        !logs.error && !logs.rows.length ? h("div", {style: {padding: 12, color: colors.text.secondary}}, logs.loading ? "Đang đọc log…" : "Không có log trong khoảng thời gian đã chọn.") : null),
-      h("div", {style: {fontSize: 11, padding: "6px 8px", color: colors.text.secondary, flexShrink: 0}}, logs.error ? "Nguồn log không khả dụng" : logs.rows.length + " dòng · tối đa 200 dòng mới nhất"));
+        !logs.error && !logs.rows.length ? h("div", {style: {padding: 12, color: colors.text.secondary}}, logs.loading ? "Loading logs..." : "No logs in the selected time range.") : null),
+      h("div", {style: {fontSize: 11, padding: "6px 8px", color: colors.text.secondary, flexShrink: 0}}, logs.error ? "Log source unavailable" : logs.rows.length + " entries · up to 200 most recent"));
   }
   return {
     setters: [function (m) { React = m; }, function (m) { PanelPlugin = m.PanelPlugin; }, function (m) { getBackendSrv = m.getBackendSrv; }, function (m) { useTheme2 = m.useTheme2; }],
