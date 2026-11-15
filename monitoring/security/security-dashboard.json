@@ -1,7 +1,7 @@
 {
   "uid": "meow-security",
   "title": "MeowCloud · Firewall Monitoring",
-  "description": "Unified Proxmox and pfSense firewall monitoring: preserve the existing Proxmox DROP dashboard, with pfSense events immediately below for scrolling during the lab demo.",
+  "description": "Unified firewall monitoring with readable pfSense IPv4 TCP/UDP filterlog, per-interface/action/IP/protocol/port filters, and unchanged Proxmox DROP panels.",
   "tags": [
     "meowcloud",
     "security",
@@ -9,7 +9,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 40,
-  "version": 4,
+  "version": 5,
   "editable": false,
   "refresh": "5s",
   "time": {
@@ -225,9 +225,9 @@
     },
     {
       "id": 11,
-      "title": "pfSense · Kết nối BLOCK (5 phút)",
+      "title": "pfSense · Sự kiện theo bộ lọc (5 phút)",
       "type": "stat",
-      "description": "Đếm sự kiện filterlog action=block; cần bật Remote Logging trên pfSense đến 192.168.150.21:5515.",
+      "description": "Đếm filterlog IPv4 TCP/UDP khớp các bộ lọc ở đầu dashboard (Action mặc định Block). Không bao gồm IPv6, IGMP, ICMP hoặc các sự kiện không có cổng.",
       "gridPos": {
         "x": 0,
         "y": 29,
@@ -241,7 +241,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"pfsense\"} |= \",block,\" [5m]))",
+          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"pfsense\"} | regexp \"^(?:[^,]*,){4}(?P<iface>[^,]+),[^,]*,(?P<action>block|pass),[^,]*,4,(?:[^,]*,){7}(?P<proto>tcp|udp),[^,]*,(?P<src>[0-9.]+),(?P<dst>[0-9.]+),(?P<spt>[0-9]+),(?P<dpt>[0-9]+)(?:,|$)\" | __error__=\"\" | iface=~\".+\" | iface=~\"${pf_iface:raw}\" | action=~\"${pf_action:raw}\" | proto=~\"${pf_proto:raw}\" | src=~\"${pf_src:raw}\" | dst=~\"${pf_dst:raw}\" | dpt=~\"${pf_dpt:raw}\" [5m]))",
           "queryType": "instant"
         }
       ],
@@ -268,9 +268,9 @@
     },
     {
       "id": 12,
-      "title": "pfSense · BLOCK theo thời gian",
+      "title": "pfSense · Sự kiện theo thời gian",
       "type": "timeseries",
-      "description": "Đếm các sự kiện action=block trong filterlog, không bao gồm pass.",
+      "description": "Sự kiện pfSense IPv4 TCP/UDP khớp các bộ lọc (Action mặc định Block).",
       "gridPos": {
         "x": 7,
         "y": 29,
@@ -284,7 +284,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"pfsense\"} |= \",block,\" [1m]))",
+          "expr": "sum(count_over_time({job=\"firewall\",firewall=\"pfsense\"} | regexp \"^(?:[^,]*,){4}(?P<iface>[^,]+),[^,]*,(?P<action>block|pass),[^,]*,4,(?:[^,]*,){7}(?P<proto>tcp|udp),[^,]*,(?P<src>[0-9.]+),(?P<dst>[0-9.]+),(?P<spt>[0-9]+),(?P<dpt>[0-9]+)(?:,|$)\" | __error__=\"\" | iface=~\".+\" | iface=~\"${pf_iface:raw}\" | action=~\"${pf_action:raw}\" | proto=~\"${pf_proto:raw}\" | src=~\"${pf_src:raw}\" | dst=~\"${pf_dst:raw}\" | dpt=~\"${pf_dpt:raw}\" [1m]))",
           "queryType": "range"
         }
       ],
@@ -298,12 +298,12 @@
     },
     {
       "id": 13,
-      "title": "pfSense · Nhật ký Firewall",
+      "title": "pfSense · Nhật ký dễ đọc · Nguồn → Đích:Cổng",
       "type": "logs",
-      "description": "Hiển thị tất cả sự kiện pfSense do Alloy nhận trên UDP 5515. Dùng để xác nhận source/destination/action khi chạy Nmap. Nội dung chỉ xuất hiện khi pfSense đã bật Remote Syslog (Firewall Events).",
+      "description": "LogQL chuẩn hóa filterlog IPv4 TCP/UDP, dữ liệu gốc Loki không bị sửa. em0=WAN và em1=LAN theo dữ liệu thực; loại trừ các loại log khác thay vì đoán sai vị trí cột.",
       "gridPos": {
         "x": 0,
-        "y": 35,
+        "y": 43,
         "w": 24,
         "h": 14
       },
@@ -314,7 +314,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{job=\"firewall\",firewall=\"pfsense\"}",
+          "expr": "{job=\"firewall\",firewall=\"pfsense\"} | regexp \"^(?:[^,]*,){4}(?P<iface>[^,]+),[^,]*,(?P<action>block|pass),[^,]*,4,(?:[^,]*,){7}(?P<proto>tcp|udp),[^,]*,(?P<src>[0-9.]+),(?P<dst>[0-9.]+),(?P<spt>[0-9]+),(?P<dpt>[0-9]+)(?:,|$)\" | __error__=\"\" | iface=~\".+\" | iface=~\"${pf_iface:raw}\" | action=~\"${pf_action:raw}\" | proto=~\"${pf_proto:raw}\" | src=~\"${pf_src:raw}\" | dst=~\"${pf_dst:raw}\" | dpt=~\"${pf_dpt:raw}\" | line_format \"{{ if eq .action \\\"block\\\" }}BLOCK{{ else }}PASS{{ end }} | {{ if eq .iface \\\"em0\\\" }}WAN{{ else if eq .iface \\\"em1\\\" }}LAN{{ else }}{{ .iface }}{{ end }} | {{.src}} -> {{.dst}}:{{.dpt}} | {{ if eq .proto \\\"tcp\\\" }}TCP{{ else }}UDP{{ end }}\"",
           "queryType": "range"
         }
       ],
@@ -333,6 +333,232 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 14,
+      "title": "pfSense · Top IP nguồn · 5 phút",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "meow-security-loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(8, sum by (src) (count_over_time({job=\"firewall\",firewall=\"pfsense\"} | regexp \"^(?:[^,]*,){4}(?P<iface>[^,]+),[^,]*,(?P<action>block|pass),[^,]*,4,(?:[^,]*,){7}(?P<proto>tcp|udp),[^,]*,(?P<src>[0-9.]+),(?P<dst>[0-9.]+),(?P<spt>[0-9]+),(?P<dpt>[0-9]+)(?:,|$)\" | __error__=\"\" | iface=~\".+\" | iface=~\"${pf_iface:raw}\" | action=~\"${pf_action:raw}\" | proto=~\"${pf_proto:raw}\" | src=~\"${pf_src:raw}\" | dst=~\"${pf_dst:raw}\" | dpt=~\"${pf_dpt:raw}\" [5m])))",
+          "queryType": "instant",
+          "legendFormat": "{{src}}"
+        }
+      ],
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "showLegend": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "title": "pfSense · Top cổng đích · 5 phút",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 12,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "meow-security-loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(8, sum by (dpt) (count_over_time({job=\"firewall\",firewall=\"pfsense\"} | regexp \"^(?:[^,]*,){4}(?P<iface>[^,]+),[^,]*,(?P<action>block|pass),[^,]*,4,(?:[^,]*,){7}(?P<proto>tcp|udp),[^,]*,(?P<src>[0-9.]+),(?P<dst>[0-9.]+),(?P<spt>[0-9]+),(?P<dpt>[0-9]+)(?:,|$)\" | __error__=\"\" | iface=~\".+\" | iface=~\"${pf_iface:raw}\" | action=~\"${pf_action:raw}\" | proto=~\"${pf_proto:raw}\" | src=~\"${pf_src:raw}\" | dst=~\"${pf_dst:raw}\" | dpt=~\"${pf_dpt:raw}\" [5m])))",
+          "queryType": "instant",
+          "legendFormat": "{{dpt}}"
+        }
+      ],
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "showLegend": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
     }
-  ]
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "pf_iface",
+        "label": "pfSense · Interface",
+        "type": "custom",
+        "hide": 0,
+        "query": "WAN : em0, LAN : em1",
+        "skipUrlSync": false,
+        "multi": false,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": ".*"
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": ".*",
+            "selected": true
+          },
+          {
+            "text": "WAN",
+            "value": "em0",
+            "selected": false
+          },
+          {
+            "text": "LAN",
+            "value": "em1",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "pf_action",
+        "label": "pfSense · Action",
+        "type": "custom",
+        "hide": 0,
+        "query": "Block : block, Pass : pass",
+        "skipUrlSync": false,
+        "multi": false,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "Block",
+          "value": "block"
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": ".*",
+            "selected": false
+          },
+          {
+            "text": "Block",
+            "value": "block",
+            "selected": true
+          },
+          {
+            "text": "Pass",
+            "value": "pass",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "pf_proto",
+        "label": "pfSense · Protocol",
+        "type": "custom",
+        "hide": 0,
+        "query": "TCP : tcp, UDP : udp",
+        "skipUrlSync": false,
+        "multi": false,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": ".*"
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": ".*",
+            "selected": true
+          },
+          {
+            "text": "TCP",
+            "value": "tcp",
+            "selected": false
+          },
+          {
+            "text": "UDP",
+            "value": "udp",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "pf_src",
+        "label": "pfSense · Source IP (regex)",
+        "type": "textbox",
+        "hide": 0,
+        "query": ".*",
+        "current": {
+          "selected": true,
+          "text": ".*",
+          "value": ".*"
+        },
+        "options": []
+      },
+      {
+        "name": "pf_dst",
+        "label": "pfSense · Destination IP (regex)",
+        "type": "textbox",
+        "hide": 0,
+        "query": ".*",
+        "current": {
+          "selected": true,
+          "text": ".*",
+          "value": ".*"
+        },
+        "options": []
+      },
+      {
+        "name": "pf_dpt",
+        "label": "pfSense · Destination port (regex)",
+        "type": "textbox",
+        "hide": 0,
+        "query": ".*",
+        "current": {
+          "selected": true,
+          "text": ".*",
+          "value": ".*"
+        },
+        "options": []
+      }
+    ]
+  }
 }
