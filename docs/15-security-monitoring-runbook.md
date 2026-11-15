@@ -71,3 +71,13 @@ If optional PVE forwarding was enabled, on each PVE node:
     rsyslogd -N1 && systemctl restart rsyslog
 
 Turn off pfSense remote syslog and remove only added UDP allow rules. No automatic deletion of collected logs.
+
+## Readable pfSense filterlog with dashboard variables (v5)
+
+pfSense panel 13 now parses native Loki CSV `filterlog` IPv4 TCP/UDP lines with the actual samples shared by the operator. It extracts interface, action, IP protocol, source/destination IP and ports at query time, formatting them as `BLOCK | WAN | 192.168.5.200 -> 192.168.5.255:138 | UDP`. The raw Loki event is not changed. One raw UDP example: `4,,,1000000103,em0,match,block,in,4,0x0,,128,60990,0,none,17,udp,229,192.168.5.200,192.168.5.255,138,138,209`.
+
+Dashboard variables in the top toolbar affect pfSense only: Interface (All / WAN em0 / LAN em1), Action (Block default / Pass / All), Protocol (All / TCP / UDP), Source IP regex, Destination IP regex and Destination Port regex. Enter `.*` to match any. For the Nmap demo use WAN, Block, TCP, source `192[.]168[.]5[.]200`, destination `192[.]168[.]5[.]128`. For DB01 egress use LAN, Block and source `192[.]168[.]150[.]71`.
+
+pfSense event count, trend, top source IPs, top destination ports and a single readable log panel all use the same variable filters. Metric titles deliberately say `Events`, not `BLOCK` alone, because Action can be changed to Pass or All. Parsed panel/statistics omit ICMP/IGMP/IPv6 and unexpected CSV formats rather than misrepresenting them; they are not total pfSense firewall event counts. The em0/em1 interface mapping is from this lab and must be reviewed if pfSense adapters change.
+
+Offline validation: the parser fields were tested against two actual UDP CSV samples and one synthetic TCP sample with the same IPv4 field positions. The real TCP stream and the dashboard variable interpolation/renderer have **not** been tested live; confirm with a real Loki TCP example before treating the dashboard as production-ready. All existing Proxmox panels are unchanged; no modifications to pfSense/PVE rules, NAT, Alloy, Loki, rsyslog, CI/CD or Autoscale. To apply, use the dashboard-only copy command above after merging; do not rerun workflow 01 or restart monitoring services. Roll back by restoring the previous JSON and copying it into the same provisioning path.
