@@ -9,7 +9,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 40,
-  "version": 5,
+  "version": 6,
   "editable": false,
   "refresh": "5s",
   "time": {
@@ -18,12 +18,25 @@
   },
   "panels": [
     {
+      "id": 3,
+      "type": "row",
+      "title": "Proxmox Firewall",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
       "id": 1,
       "title": "Tổng kết nối bị chặn · 5 phút",
       "type": "stat",
       "gridPos": {
         "x": 0,
-        "y": 0,
+        "y": 1,
         "w": 7,
         "h": 6
       },
@@ -65,7 +78,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 7,
-        "y": 0,
+        "y": 1,
         "w": 17,
         "h": 6
       },
@@ -90,11 +103,11 @@
     },
     {
       "id": 4,
-      "title": "Nhật ký chặn kết nối · Nguồn → Đích:Cổng",
+      "title": "Nhật ký Firewall",
       "type": "logs",
       "gridPos": {
         "x": 0,
-        "y": 6,
+        "y": 7,
         "w": 24,
         "h": 13
       },
@@ -132,7 +145,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 0,
-        "y": 19,
+        "y": 20,
         "w": 12,
         "h": 9
       },
@@ -174,7 +187,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 12,
-        "y": 19,
+        "y": 20,
         "w": 12,
         "h": 9
       },
@@ -213,11 +226,11 @@
     {
       "id": 10,
       "type": "row",
-      "title": "pfSense Firewall · Gateway 192.168.150.1",
+      "title": "pfSense Firewall",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 29,
         "w": 24,
         "h": 1
       },
@@ -230,7 +243,7 @@
       "description": "Đếm filterlog IPv4 TCP/UDP khớp các bộ lọc ở đầu dashboard (Action mặc định Block). Không bao gồm IPv6, IGMP, ICMP hoặc các sự kiện không có cổng.",
       "gridPos": {
         "x": 0,
-        "y": 29,
+        "y": 30,
         "w": 7,
         "h": 6
       },
@@ -273,7 +286,7 @@
       "description": "Sự kiện pfSense IPv4 TCP/UDP khớp các bộ lọc (Action mặc định Block).",
       "gridPos": {
         "x": 7,
-        "y": 29,
+        "y": 30,
         "w": 17,
         "h": 6
       },
@@ -298,12 +311,12 @@
     },
     {
       "id": 13,
-      "title": "pfSense · Nhật ký dễ đọc · Nguồn → Đích:Cổng",
+      "title": "Nhật ký Firewall",
       "type": "logs",
-      "description": "LogQL chuẩn hóa filterlog IPv4 TCP/UDP, dữ liệu gốc Loki không bị sửa. em0=WAN và em1=LAN theo dữ liệu thực; loại trừ các loại log khác thay vì đoán sai vị trí cột.",
+      "description": "Hiển thị sự kiện pfSense được chuẩn hóa theo mẫu IPv4 TCP/UDP; bộ lọc áp dụng ở thanh phía trên. Dữ liệu log gốc Loki vẫn được giữ nguyên.",
       "gridPos": {
         "x": 0,
-        "y": 43,
+        "y": 44,
         "w": 24,
         "h": 14
       },
@@ -340,7 +353,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 0,
-        "y": 35,
+        "y": 36,
         "w": 12,
         "h": 8
       },
@@ -382,7 +395,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 12,
-        "y": 35,
+        "y": 36,
         "w": 12,
         "h": 8
       },
