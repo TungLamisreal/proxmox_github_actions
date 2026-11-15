@@ -17,7 +17,7 @@
     {
       "id": 4,
       "type": "meowcloud-alertlog-panel",
-      "title": "Alert & nhật ký autoscale",
+      "title": "Autoscaling Alerts & Event Log",
       "gridPos": {
         "x": 0,
         "y": 0,
@@ -61,8 +61,8 @@
     {
       "id": 5,
       "type": "bargauge",
-      "title": "CPU từng máy · Backend",
-      "description": "CPU theo quota từng LXC. Ngưỡng scale-out CPU pool >75% trong 10s. Máy mất exporter không được coi là 0%.",
+      "title": "Backend CPU Usage by Instance",
+      "description": "LXC CPU utilization normalized by allocated CPU quota. Scale-out when pool CPU exceeds 75% for 10 seconds. Unavailable exporters are not treated as 0% usage.",
       "gridPos": {
         "x": 0,
         "y": 10,
@@ -109,7 +109,7 @@
               }
             ]
           },
-          "noValue": "Không có dữ liệu"
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -135,8 +135,8 @@
     {
       "id": 6,
       "type": "bargauge",
-      "title": "CPU từng máy · Frontend",
-      "description": "CPU theo quota từng LXC. Ngưỡng scale-out CPU pool >75% trong 10s. Máy mất exporter không được coi là 0%.",
+      "title": "Frontend CPU Usage by Instance",
+      "description": "LXC CPU utilization normalized by allocated CPU quota. Scale-out when pool CPU exceeds 75% for 10 seconds. Unavailable exporters are not treated as 0% usage.",
       "gridPos": {
         "x": 11,
         "y": 10,
@@ -183,7 +183,7 @@
               }
             ]
           },
-          "noValue": "Không có dữ liệu"
+          "noValue": "No data"
         },
         "overrides": []
       },
@@ -207,6 +207,6 @@
       }
     }
   ],
-  "description": "Ba khung quay video: Alert + journal webhook, CPU từng Backend, CPU từng Frontend. Log mới nhất trước, cuộn riêng.",
-  "version": 1
+  "description": "Three-panel demonstration dashboard: autoscaling alerts and webhook events, backend CPU utilization, and frontend CPU utilization. Newest events first with independent log scrolling.",
+  "version": 2
 }
